@@ -9,13 +9,15 @@ import wandb
 
 from transformers import AutoConfig, AutoTokenizer, CONFIG_MAPPING, LongformerConfig, LongformerModel
 
+from eval import Evaluator
+from modeling import Adi
 
 logger = logging.getLogger(__name__)
 
 
 def main():
+    print("FML")
     args = parse_args()
-
     transformers_logger = logging.getLogger("transformers")
     transformers_logger.setLevel(logging.ERROR)
 
@@ -65,12 +67,14 @@ def main():
     base_model_prefix = "longformer"
     model = LongformerModel.from_pretrained(args.model_name_or_path,
                                 config=config,
-                                cache_dir=args.cache_dir,
-                                args=args)
+                                cache_dir=args.cache_dir)
 
     model.to(args.device)
 
+    evaluator = Evaluator(args, tokenizer)
+    train_dataset = get_dataset(args, tokenizer, evaluate=False)
 
+    global_step, tr_loss = train(args, train_dataset, model, tokenizer, evaluator)
 
 
 # Press the green button in the gutter to run the script.
