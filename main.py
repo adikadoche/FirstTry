@@ -11,6 +11,8 @@ from transformers import AutoConfig, AutoTokenizer, CONFIG_MAPPING, LongformerCo
 
 from eval import Evaluator
 from modeling import Adi
+from data import get_dataset
+
 
 logger = logging.getLogger(__name__)
 
