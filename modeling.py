@@ -3,7 +3,7 @@ from torch.nn import Module, Linear, LayerNorm, Dropout
 from transformers import BertPreTrainedModel, LongformerModel
 from transformers.modeling_bert import ACT2FN
 # from utils import extract_clusters, extract_mentions_to_predicted_clusters_from_clusters, mask_tensor
-
+from deformable_detr import DeformableDETR
 
 # class FullyConnectedLayer(Module):
 #     def __init__(self, config, input_dim, output_dim, dropout_prob):
@@ -31,13 +31,14 @@ class Adi(BertPreTrainedModel):
     def __init__(self, config, args):
         super().__init__(config)
         self.max_span_length = args.max_span_length
-        self.top_lambda = args.top_lambda
-        self.ffnn_size = args.ffnn_size
-        self.do_mlps = self.ffnn_size > 0
-        self.ffnn_size = self.ffnn_size if self.do_mlps else config.hidden_size
+        # self.top_lambda = args.top_lambda
+        # self.ffnn_size = args.ffnn_size
+        # self.do_mlps = self.ffnn_size > 0
+        # self.ffnn_size = self.ffnn_size if self.do_mlps else config.hidden_size
         self.normalise_loss = args.normalise_loss
 
         self.longformer = LongformerModel(config)
+        self.deformableDETR = DeformableDETR()
 
     #     self.start_mention_mlp = FullyConnectedLayer(config, config.hidden_size, self.ffnn_size, args.dropout_prob) if self.do_mlps else None
     #     self.end_mention_mlp = FullyConnectedLayer(config, config.hidden_size, self.ffnn_size, args.dropout_prob) if self.do_mlps else None
