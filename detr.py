@@ -60,8 +60,8 @@ class DETR(nn.Module):
         hs, memory = self.transformer(sequence_output, mask, self.query_embed.weight,
                               positional_encoding(sequence_output.shape[1], sequence_output.shape[2]))[0]
 
-        outputs_class_center, outputs_clusters = self.find_mentions(hs, memory)
-        out = {'pred_logits': outputs_class_center, 'pred_clusters':outputs_clusters}
+        output_logits, outputs_clusters = self.find_mentions(hs, memory)
+        out = {'pred_logits': output_logits, 'pred_clusters': outputs_clusters}
         # if self.aux_loss:  #TODO return
         #     out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
         return out
@@ -70,7 +70,11 @@ class DETR(nn.Module):
         # cluster memory according to hs. must pass some threshold in order to open cluster and be part of cluster.
         # return list of clusters and the mentions in it
         pass  #TODO
-        # return outputs_class_center, outputs_clusters
+        # memory size: [text_length, hidden_size]
+        # hs size: [n_queries, hidden_size]
+        output_logits = memory * hs.transpose() # logits_size = [text_length, n_queries]
+        outputs_clusters = F.softmax(output_logits, dim=-1) # output_cluster_size = [text_length, 1] - query assign for each word #TODO decide penalty for non mentions
+        return output_logits, outputs_clusters
 
     @torch.jit.unused
     def _set_aux_loss(self, outputs_class, outputs_coord):
