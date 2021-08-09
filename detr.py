@@ -5,7 +5,7 @@ DETR model and criterion classes.
 import torch
 import torch.nn.functional as F
 from torch import nn
-from consts import NUM_QUERIES
+from consts import NUM_QUERIES, OUT_KEYS
 
 from utils import positional_encoding
 from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
@@ -13,10 +13,10 @@ from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
                        is_dist_avail_and_initialized)
 
 from .backbone import build_backbone
-from .matcher import build_matcher
+from matcher import build_matcher
 from .segmentation import (DETRsegm, PostProcessPanoptic, PostProcessSegm,
                            dice_loss, sigmoid_focal_loss)
-from .transformer import build_transformer
+from transformer import build_transformer
 
 
 class DETR(nn.Module):
@@ -34,6 +34,7 @@ class DETR(nn.Module):
         self.num_queries = num_queries
         self.transformer = transformer
         hidden_dim = transformer.d_model
+        self.is_bkgd = nn.Linear(hidden_dim, 1)
         self.query_embed = nn.Embedding(num_queries, hidden_dim)
         self.backbone = backbone
         self.aux_loss = aux_loss
@@ -56,33 +57,34 @@ class DETR(nn.Module):
         outputs = self.backbone(input_ids, attention_mask=attention_mask)  # Getting representation for each token in the text
         sequence_output = outputs[0]  # [batch_size, seq_len, dim]
 
-        mask = None #TODO: is it right? where di i get the mask from?
+        mask = None #TODO: is it right? where do i get the mask from?
         hs, memory = self.transformer(sequence_output, mask, self.query_embed.weight,
                               positional_encoding(sequence_output.shape[1], sequence_output.shape[2]))[0]
 
         output_logits, outputs_clusters = self.find_mentions(hs, memory)
-        out = {'pred_logits': output_logits, 'pred_clusters': outputs_clusters}
-        # if self.aux_loss:  #TODO return
-        #     out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
+        outputs_is_bkgd = self.is_bkgd(hs)
+        out = {OUT_KEYS[0]: output_logits[-1], OUT_KEYS[1]: outputs_clusters[-1], OUT_KEYS[2]: outputs_is_bkgd[-1]}
+        if self.aux_loss:  #TODO make it work
+            out[OUT_KEYS[3]] = self._set_aux_loss(output_logits, outputs_clusters, outputs_is_bkgd)
         return out
 
     def find_mentions(self, hs, memory):
         # cluster memory according to hs. must pass some threshold in order to open cluster and be part of cluster.
         # return list of clusters and the mentions in it
-        pass  #TODO
+        # pass  #TODO
         # memory size: [text_length, hidden_size]
         # hs size: [n_queries, hidden_size]
-        output_logits = memory * hs.transpose() # logits_size = [text_length, n_queries]
+        output_logits = hs * memory.transpose() # logits_size = [n_queries, text_length]
         outputs_clusters = F.softmax(output_logits, dim=-1) # output_cluster_size = [text_length, 1] - query assign for each word #TODO decide penalty for non mentions
         return output_logits, outputs_clusters
 
     @torch.jit.unused
-    def _set_aux_loss(self, outputs_class, outputs_coord):
+    def _set_aux_loss(self, output_logits, outputs_clusters, outputs_is_bkgd):
         # this is a workaround to make torchscript happy, as torchscript
         # doesn't support dictionary with non-homogeneous values, such
         # as a dict having both a Tensor and a list.
-        return [{'pred_logits': a, 'pred_boxes': b}
-                for a, b in zip(outputs_class[:-1], outputs_coord[:-1])]
+        return [{OUT_KEYS[0]: a, OUT_KEYS[1]: b, OUT_KEYS[2]: c}
+                for a, b, c in zip(output_logits[:-1], outputs_clusters[:-1], outputs_is_bkgd[:-1])]
 
 
 class SetCriterion(nn.Module):
@@ -91,31 +93,27 @@ class SetCriterion(nn.Module):
         1) we compute hungarian assignment between ground truth boxes and the outputs of the model
         2) we supervise each pair of matched ground-truth / prediction (supervise class and box)
     """
-    def __init__(self, num_classes, matcher, weight_dict, eos_coef, losses):
+    def __init__(self, matcher, weight_dict, eos_coef, losses):
         """ Create the criterion.
         Parameters:
-            num_classes: number of object categories, omitting the special no-object category
             matcher: module able to compute a matching between targets and proposals
             weight_dict: dict containing as key the names of the losses and as values their relative weight.
             eos_coef: relative classification weight applied to the no-object category
             losses: list of all the losses to be applied. See get_loss for list of available losses.
         """
         super().__init__()
-        self.num_classes = num_classes
         self.matcher = matcher
         self.weight_dict = weight_dict
         self.eos_coef = eos_coef
         self.losses = losses
-        empty_weight = torch.ones(self.num_classes + 1)
-        empty_weight[-1] = self.eos_coef
-        self.register_buffer('empty_weight', empty_weight)
+
 
     def loss_labels(self, outputs, targets, indices, num_boxes, log=True):
         """Classification loss (NLL)
         targets dicts must contain the key "labels" containing a tensor of dim [nb_target_boxes]
         """
-        assert 'pred_logits' in outputs
-        src_logits = outputs['pred_logits']
+        assert OUT_KEYS[0] in outputs
+        src_logits = outputs[OUT_KEYS[0]]
 
         idx = self._get_src_permutation_idx(indices)
         target_classes_o = torch.cat([t["labels"][J] for t, (_, J) in zip(targets, indices)])
@@ -136,7 +134,7 @@ class SetCriterion(nn.Module):
         """ Compute the cardinality error, ie the absolute error in the number of predicted non-empty boxes
         This is not really a loss, it is intended for logging purposes only. It doesn't propagate gradients
         """
-        pred_logits = outputs['pred_logits']
+        pred_logits = outputs[OUT_KEYS[0]]
         device = pred_logits.device
         tgt_lengths = torch.as_tensor([len(v["labels"]) for v in targets], device=device)
         # Count the number of predictions that are NOT "no-object" (which is the last class)
@@ -150,9 +148,9 @@ class SetCriterion(nn.Module):
            targets dicts must contain the key "boxes" containing a tensor of dim [nb_target_boxes, 4]
            The target boxes are expected in format (center_x, center_y, w, h), normalized by the image size.
         """
-        assert 'pred_boxes' in outputs
+        assert OUT_KEYS[1] in outputs
         idx = self._get_src_permutation_idx(indices)
-        src_boxes = outputs['pred_boxes'][idx]
+        src_boxes = outputs[OUT_KEYS[1]][idx]
         target_boxes = torch.cat([t['boxes'][i] for t, (_, i) in zip(targets, indices)], dim=0)
 
         loss_bbox = F.l1_loss(src_boxes, target_boxes, reduction='none')
@@ -224,7 +222,7 @@ class SetCriterion(nn.Module):
              targets: list of dicts, such that len(targets) == batch_size.
                       The expected keys in each dict depends on the losses applied, see each loss' doc
         """
-        outputs_without_aux = {k: v for k, v in outputs.items() if k != 'aux_outputs'}
+        outputs_without_aux = {k: v for k, v in outputs.items() if k != OUT_KEYS[3]}
 
         # Retrieve the matching between the outputs of the last layer and the targets
         indices = self.matcher(outputs_without_aux, targets)
@@ -242,8 +240,8 @@ class SetCriterion(nn.Module):
             losses.update(self.get_loss(loss, outputs, targets, indices, num_boxes))
 
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
-        if 'aux_outputs' in outputs:
-            for i, aux_outputs in enumerate(outputs['aux_outputs']):
+        if OUT_KEYS[3] in outputs:
+            for i, aux_outputs in enumerate(outputs[OUT_KEYS[3]]):
                 indices = self.matcher(aux_outputs, targets)
                 for loss in self.losses:
                     if loss == 'masks':
@@ -271,7 +269,7 @@ class PostProcess(nn.Module):
                           For evaluation, this must be the original image size (before any data augmentation)
                           For visualization, this should be the image size after data augment, but before padding
         """
-        out_logits, out_bbox = outputs['pred_logits'], outputs['pred_boxes']
+        out_logits, out_bbox = outputs[OUT_KEYS[0]], outputs[OUT_KEYS[1]]
 
         assert len(out_logits) == len(target_sizes)
         assert target_sizes.shape[1] == 2
@@ -335,7 +333,7 @@ def build(args):
     )
     if args.masks:
         model = DETRsegm(model, freeze_detr=(args.frozen_weights is not None))
-    matcher = build_matcher(args)
+    matcher = build_matcher()
     weight_dict = {'loss_ce': 1, 'loss_bbox': args.bbox_loss_coef}
     weight_dict['loss_giou'] = args.giou_loss_coef
     if args.masks:
