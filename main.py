@@ -10,7 +10,7 @@ import wandb #TODO
 from transformers import AutoConfig, AutoTokenizer, CONFIG_MAPPING, LongformerConfig, LongformerModel
 
 from eval import Evaluator
-from modeling import Adi
+# from modeling import Adi
 from data import get_dataset
 
 
@@ -67,6 +67,7 @@ def main():
 
     config_class = LongformerConfig
     base_model_prefix = "longformer"
+    train_dataset = get_dataset(args, tokenizer, evaluate=False)
     model = LongformerModel.from_pretrained(args.model_name_or_path,
                                 config=config,
                                 cache_dir=args.cache_dir)
@@ -74,7 +75,6 @@ def main():
     model.to(args.device)
 
     evaluator = Evaluator(args, tokenizer)
-    train_dataset = get_dataset(args, tokenizer, evaluate=False)
 
     global_step, tr_loss = train(args, train_dataset, model, tokenizer, evaluator)
 

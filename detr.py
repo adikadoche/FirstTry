@@ -8,11 +8,11 @@ from torch import nn
 from consts import NUM_QUERIES, OUT_KEYS
 
 from utils import positional_encoding
-from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
-                       accuracy, get_world_size, interpolate,
-                       is_dist_avail_and_initialized)
-
-from .backbone import build_backbone
+# from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
+#                        accuracy, get_world_size, interpolate,
+#                        is_dist_avail_and_initialized)
+#
+# from .backbone import build_backbone
 from matcher import build_matcher
 from transformer import build_transformer
 
