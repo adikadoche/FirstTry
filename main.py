@@ -7,11 +7,13 @@ from cli import parse_args
 import torch
 import wandb #TODO
 
-from transformers import AutoConfig, AutoTokenizer, CONFIG_MAPPING, LongformerConfig, LongformerModel
+from transformers import AutoConfig, AutoTokenizer, CONFIG_MAPPING, LongformerConfig
 
 from eval import Evaluator
 # from modeling import Adi
 from data import get_dataset
+from detr import build_DETR
+from training import train
 
 
 logger = logging.getLogger(__name__)
@@ -68,15 +70,13 @@ def main():
     config_class = LongformerConfig
     base_model_prefix = "longformer"
     train_dataset = get_dataset(args, tokenizer, evaluate=False)
-    model = LongformerModel.from_pretrained(args.model_name_or_path,
-                                config=config,
-                                cache_dir=args.cache_dir)
+    model, criterion = build_DETR(args, config)
 
     model.to(args.device)
 
     evaluator = Evaluator(args, tokenizer)
 
-    global_step, tr_loss = train(args, train_dataset, model, tokenizer, evaluator)
+    global_step, tr_loss = train(args, train_dataset, model, tokenizer, criterion, evaluator)
 
 
 # Press the green button in the gutter to run the script.

@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from torch import nn
 from consts import NUM_QUERIES, OUT_KEYS
 
-from utils import positional_encoding
+from utils import build_positional_encoding
 # from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
 #                        accuracy, get_world_size, interpolate,
 #                        is_dist_avail_and_initialized)
@@ -15,6 +15,10 @@ from utils import positional_encoding
 # from .backbone import build_backbone
 from matcher import build_matcher
 from transformer import build_transformer
+from transformers import LongformerModel
+from typing import List
+from misc import NestedTensor
+
 
 
 class DETR(nn.Module):
@@ -202,35 +206,35 @@ class SetCriterion(nn.Module):
         return losses
 
 
-class PostProcess(nn.Module):
-    """ This module converts the model's output into the format expected by the coco api"""
-    @torch.no_grad()
-    def forward(self, outputs, target_sizes):
-        """ Perform the computation
-        Parameters:
-            outputs: raw outputs of the model
-            target_sizes: tensor of dimension [batch_size x 2] containing the size of each images of the batch
-                          For evaluation, this must be the original image size (before any data augmentation)
-                          For visualization, this should be the image size after data augment, but before padding
-        """
-        out_logits, out_bbox = outputs[OUT_KEYS[0]], outputs[OUT_KEYS[1]]
-
-        assert len(out_logits) == len(target_sizes)
-        assert target_sizes.shape[1] == 2
-
-        prob = F.softmax(out_logits, -1)
-        scores, labels = prob[..., :-1].max(-1)
-
-        # convert to [x0, y0, x1, y1] format
-        boxes = box_ops.box_cxcywh_to_xyxy(out_bbox)
-        # and from relative [0, 1] to absolute [0, height] coordinates
-        img_h, img_w = target_sizes.unbind(1)
-        scale_fct = torch.stack([img_w, img_h, img_w, img_h], dim=1)
-        boxes = boxes * scale_fct[:, None, :]
-
-        results = [{'scores': s, 'labels': l, 'boxes': b} for s, l, b in zip(scores, labels, boxes)]
-
-        return results
+# class PostProcess(nn.Module):
+#     """ This module converts the model's output into the format expected by the coco api"""
+#     @torch.no_grad()
+#     def forward(self, outputs, target_sizes):
+#         """ Perform the computation
+#         Parameters:
+#             outputs: raw outputs of the model
+#             target_sizes: tensor of dimension [batch_size x 2] containing the size of each images of the batch
+#                           For evaluation, this must be the original image size (before any data augmentation)
+#                           For visualization, this should be the image size after data augment, but before padding
+#         """
+#         out_logits, out_bbox = outputs[OUT_KEYS[0]], outputs[OUT_KEYS[1]]
+#
+#         assert len(out_logits) == len(target_sizes)
+#         assert target_sizes.shape[1] == 2
+#
+#         prob = F.softmax(out_logits, -1)
+#         scores, labels = prob[..., :-1].max(-1)
+#
+#         # convert to [x0, y0, x1, y1] format
+#         boxes = box_ops.box_cxcywh_to_xyxy(out_bbox)
+#         # and from relative [0, 1] to absolute [0, height] coordinates
+#         img_h, img_w = target_sizes.unbind(1)
+#         scale_fct = torch.stack([img_w, img_h, img_w, img_h], dim=1)
+#         boxes = boxes * scale_fct[:, None, :]
+#
+#         results = [{'scores': s, 'labels': l, 'boxes': b} for s, l, b in zip(scores, labels, boxes)]
+#
+#         return results
 
 
 class MLP(nn.Module):
@@ -248,7 +252,32 @@ class MLP(nn.Module):
         return x
 
 
-def build(args):
+class Joiner(nn.Sequential):
+    def __init__(self, backbone, position_embedding):
+        super().__init__(backbone, position_embedding)
+
+    def forward(self, tensor_list: NestedTensor):
+        xs = self[0](tensor_list)
+        out: List[NestedTensor] = []
+        pos = []
+        for name, x in xs.items():
+            out.append(x)
+            # position encoding
+            pos.append(self[1](x).to(x.tensors.dtype))
+
+        return out, pos
+
+
+def build_backbone(args, config):
+    position_embedding = build_positional_encoding(10000, config.hidden_size) #TODO: replace magic number with text length?
+    backbone = LongformerModel.from_pretrained(args.model_name_or_path,
+                                               config=config,
+                                               cache_dir=args.cache_dir)
+    model = Joiner(backbone, position_embedding)
+    return model
+
+
+def build_DETR(args, config):
     # the `num_classes` naming here is somewhat misleading.
     # it indeed corresponds to `max_obj_id + 1`, where max_obj_id
     # is the maximum id for a class in your dataset. For example,
@@ -257,14 +286,10 @@ def build(args):
     # you should pass `num_classes` to be 2 (max_obj_id + 1).
     # For more details on this, check the following discussion
     # https://github.com/facebookresearch/detr/issues/108#issuecomment-650269223
-    num_classes = 20 if args.dataset_file != 'coco' else 91
-    if args.dataset_file == "coco_panoptic":
-        # for panoptic, we just add a num_classes that is large enough to hold
-        # max_obj_id + 1, but the exact value doesn't really matter
-        num_classes = 250
+
     device = torch.device(args.device)
 
-    backbone = build_backbone(args)
+    backbone = build_backbone(args, config)
 
     transformer = build_transformer(args)
 
@@ -282,6 +307,6 @@ def build(args):
     criterion = SetCriterion(matcher=matcher,
                              eos_coef=args.eos_coef, losses=losses)
     criterion.to(device)
-    postprocessors = {'bbox': PostProcess()}
+    # postprocessors = {'bbox': PostProcess()}
 
-    return model, criterion, postprocessors
+    return model, criterion #, postprocessors

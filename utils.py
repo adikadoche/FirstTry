@@ -70,11 +70,13 @@ def write_meta_data(output_dir, args):
             sort_keys=True)
         print(file=f)
 
+
 def get_angles(pos, i, d_model):
     angle_rates = 1 / np.power(10000, (2 * (i//2)) / d_model) #TODO: make sure returns float
     return pos * angle_rates
 
-def positional_encoding(position, d_model):
+
+def build_positional_encoding(position, d_model):
     angle_rads = get_angles(np.arange(position)[:, np.newaxis],
                           np.arange(d_model)[np.newaxis, :],
                           d_model)
