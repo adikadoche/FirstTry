@@ -137,5 +137,25 @@ def parse_args():
 
     parser.add_argument("--conll_path_for_eval", type=str, default=None)
 
+
+    # * Transformer
+    parser.add_argument('--enc_layers', default=6, type=int,
+                        help="Number of encoding layers in the transformer")
+    parser.add_argument('--dec_layers', default=6, type=int,
+                        help="Number of decoding layers in the transformer")
+    parser.add_argument('--dim_feedforward', default=2048, type=int,
+                        help="Intermediate size of the feedforward layers in the transformer blocks")
+    parser.add_argument('--dropout', default=0.1, type=float,
+                        help="Dropout applied in the transformer")
+    parser.add_argument('--nheads', default=8, type=int,
+                        help="Number of attention heads inside the transformer's attentions")
+    parser.add_argument('--num_queries', default=100, type=int,
+                        help="Number of query slots")
+    parser.add_argument('--pre_norm', action='store_true')
+
+    # Loss
+    parser.add_argument('--no_aux_loss', dest='aux_loss', action='store_false',
+                        help="Disables auxiliary decoding losses (loss at each layer)")
+
     args = parser.parse_args()
     return args

@@ -4,8 +4,10 @@ DETR model and criterion classes.
 """
 import torch
 import torch.nn.functional as F
-from torch import nn
-from consts import NUM_QUERIES, OUT_KEYS
+from torch import nn, Tensor
+from consts import OUT_KEYS
+import math
+
 
 from utils import build_positional_encoding
 # from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
@@ -23,7 +25,7 @@ from misc import NestedTensor
 
 class DETR(nn.Module):
     """ This is the DETR module that performs object detection """
-    def __init__(self, backbone, transformer, num_queries=NUM_QUERIES, aux_loss=False):
+    def __init__(self, backbone, transformer, num_queries, aux_loss=False):
         """ Initializes the model.
         Parameters:
             backbone: torch module of the backbone to be used. See backbone.py
@@ -252,6 +254,28 @@ class MLP(nn.Module):
         return x
 
 
+class PositionalEncoding(nn.Module):
+
+    def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 5000): #TODO: replace magic number with text length?
+        super().__init__()
+        self.dropout = nn.Dropout(p=dropout)
+
+        position = torch.arange(max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
+        pe = torch.zeros(max_len, 1, d_model)
+        pe[:, 0, 0::2] = torch.sin(position * div_term)
+        pe[:, 0, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x: Tensor) -> Tensor:
+        """
+        Args:
+            x: Tensor, shape [seq_len, batch_size, embedding_dim]
+        """
+        x = x + self.pe[:x.size(0)]
+        return self.dropout(x)
+
+
 class Joiner(nn.Sequential):
     def __init__(self, backbone, position_embedding):
         super().__init__(backbone, position_embedding)
@@ -269,7 +293,7 @@ class Joiner(nn.Sequential):
 
 
 def build_backbone(args, config):
-    position_embedding = build_positional_encoding(10000, config.hidden_size) #TODO: replace magic number with text length?
+    position_embedding = PositionalEncoding(config.hidden_size)
     backbone = LongformerModel.from_pretrained(args.model_name_or_path,
                                                config=config,
                                                cache_dir=args.cache_dir)
@@ -291,7 +315,7 @@ def build_DETR(args, config):
 
     backbone = build_backbone(args, config)
 
-    transformer = build_transformer(args)
+    transformer = build_transformer(args, config)
 
     model = DETR(
         backbone,

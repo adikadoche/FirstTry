@@ -9,6 +9,7 @@ from coref_bucket_batch_sampler import BucketBatchSampler
 from tqdm import tqdm, trange
 import time, datetime
 from misc import save_on_master, is_main_process
+from utils import reduce_dict
 
 
 from transformers import AdamW, get_linear_schedule_with_warmup
@@ -17,27 +18,30 @@ logger = logging.getLogger(__name__)
 
 
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
-                    data_loader: Iterable, optimizer: torch.optim.Optimizer,
+                    epoch_iterator, optimizer: torch.optim.Optimizer,
                     device: torch.device, epoch: int, max_norm: float = 0):
-    model.train()
-    criterion.train()
-    metric_logger = utils.MetricLogger(delimiter="  ")
-    metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
-    metric_logger.add_meter('class_error', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
-    header = 'Epoch: [{}]'.format(epoch)
-    print_freq = 10
+    for step, batch in enumerate(epoch_iterator):
+        batch = tuple(tensor.to(device) for tensor in batch)
+        input_ids, attention_mask, gold_clusters = batch
+        model.train()
+        criterion.train()
+        # metric_logger = utils.MetricLogger(delimiter="  ")
+        # metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
+        # metric_logger.add_meter('class_error', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
+        # header = 'Epoch: [{}]'.format(epoch)
+        # print_freq = 10
 
-    for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
-        samples = samples.to(device)
-        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+        # for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
+        #     samples = samples.to(device)
+        #     targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
-        outputs = model(samples)
-        loss_dict = criterion(outputs, targets)
+        outputs = model(input_ids, attention_mask=attention_mask)
+        loss_dict = criterion(outputs, gold_clusters)
         weight_dict = criterion.weight_dict
         losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
 
         # reduce losses over all GPUs for logging purposes
-        loss_dict_reduced = utils.reduce_dict(loss_dict)
+        loss_dict_reduced = reduce_dict(loss_dict)
         loss_dict_reduced_unscaled = {f'{k}_unscaled': v
                                       for k, v in loss_dict_reduced.items()}
         loss_dict_reduced_scaled = {k: v * weight_dict[k]
@@ -165,8 +169,9 @@ def train(args, train_dataset, model, tokenizer, criterion, evaluator):
     for epoch in range(start_epoch, args.num_train_epochs):
         # if args.distributed:
         #     sampler_train.set_epoch(epoch)
+        epoch_iterator = tqdm(data_loader_train, desc="Iteration", disable=args.local_rank not in [-1, 0])
         train_stats = train_one_epoch(
-            model, criterion, data_loader_train, optimizer, args.device, epoch)
+            model, criterion, epoch_iterator, optimizer, args.device, epoch)
         scheduler.step()
         if args.output_dir:
             checkpoint_paths = [args.output_dir / 'checkpoint.pth']
