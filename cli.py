@@ -91,7 +91,7 @@ def parse_args():
                         help="Epsilon for Adam optimizer.")
     parser.add_argument("--adam_epsilon", default=1e-8, type=float, help="Epsilon for Adam optimizer.")
     parser.add_argument(
-        "--num_train_epochs", default=3.0, type=float, help="Total number of training epochs to perform."
+        "--num_train_epochs", default=3, type=int, help="Total number of training epochs to perform."
     )
 
     parser.add_argument("--warmup_steps", default=0, type=int, help="Linear warmup over warmup_steps.")
@@ -156,6 +156,19 @@ def parse_args():
     # Loss
     parser.add_argument('--no_aux_loss', dest='aux_loss', action='store_false',
                         help="Disables auxiliary decoding losses (loss at each layer)")
+
+    # * Loss coefficients
+    # parser.add_argument('--mask_loss_coef', default=1, type=float)
+    # parser.add_argument('--dice_loss_coef', default=1, type=float)
+    # parser.add_argument('--bbox_loss_coef', default=5, type=float)
+    # parser.add_argument('--giou_loss_coef', default=2, type=float)
+    parser.add_argument('--eos_coef', default=0.1, type=float,
+                        help="Relative classification weight of the no-object class")
+
+    parser.add_argument('--lr_backbone', default=1e-5, type=float) #TODO: remove
+    parser.add_argument('--lr', default=1e-4, type=float) #TODO:?
+    parser.add_argument('--lr_drop', default=200, type=int) #TODO:?
+
 
     args = parser.parse_args()
     return args

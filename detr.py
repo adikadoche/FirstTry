@@ -19,7 +19,7 @@ from matcher import build_matcher
 from transformer import build_transformer
 from transformers import LongformerModel
 from typing import List
-from misc import NestedTensor
+from misc import NestedTensor, accuracy
 
 
 

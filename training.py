@@ -87,7 +87,7 @@ def train(args, train_dataset, model, tokenizer, criterion, evaluator):
         {"params": [p for n, p in model.named_parameters() if "backbone" not in n and p.requires_grad]},
         {
             "params": [p for n, p in model.named_parameters() if "backbone" in n and p.requires_grad],
-            "lr": args.lr_backbone,
+            "lr": args.lr_backbone, #TODO: learn how to freeze backbone
         },
     ]
 
