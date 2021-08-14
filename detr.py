@@ -58,12 +58,10 @@ class DETR(nn.Module):
                - "aux_outputs": Optional, only returned when auxilary losses are activated. It is a list of
                                 dictionnaries containing the two above keys for each decoder layer.
         """
-        outputs = self.backbone(input_ids, attention_mask=attention_mask)  # Getting representation for each token in the text
-        sequence_output = outputs[0]  # [batch_size, seq_len, dim]
+        features, pos = self.backbone(NestedTensor(input_ids, attention_mask))  # Getting representation for each token in the text
 
         mask = None #TODO: is it right? where do i get the mask from?
-        hs, memory = self.transformer(sequence_output, mask, self.query_embed.weight,
-                              positional_encoding(sequence_output.shape[1], sequence_output.shape[2]))[0]
+        hs, memory = self.transformer(features, mask, self.query_embed.weight, pos)[0]
 
         output_logits, outputs_clusters = self.find_mentions(hs, memory)
         outputs_is_bkgd = self.is_bkgd(hs)
@@ -280,14 +278,16 @@ class Joiner(nn.Sequential):
     def __init__(self, backbone, position_embedding):
         super().__init__(backbone, position_embedding)
 
-    def forward(self, tensor_list: NestedTensor):
-        xs = self[0](tensor_list)
-        out: List[NestedTensor] = []
-        pos = []
-        for name, x in xs.items():
-            out.append(x)
-            # position encoding
-            pos.append(self[1](x).to(x.tensors.dtype))
+    def forward(self, tensor: NestedTensor):
+        xs = self[0](tensor.tensors, tensor.mask)
+        out = xs[0]  # [batch_size, seq_len, dim]
+        pos = self[1](out)
+        # out: List[NestedTensor] = []
+        # pos = []
+        # for name, x in xs.items():
+        #     out.append(x)
+        #     # position encoding
+        #     pos.append(self[1](x).to(x.tensors.dtype))
 
         return out, pos
 
