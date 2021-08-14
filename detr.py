@@ -61,7 +61,7 @@ class DETR(nn.Module):
         features, pos = self.backbone(NestedTensor(input_ids, attention_mask))  # Getting representation for each token in the text
 
         mask = None #TODO: is it right? where do i get the mask from?
-        hs, memory = self.transformer(features, mask, self.query_embed.weight, pos)[0]
+        hs, memory = self.transformer(features, mask, self.query_embed.weight, pos)
 
         output_logits, outputs_clusters = self.find_mentions(hs, memory)
         outputs_is_bkgd = self.is_bkgd(hs)
