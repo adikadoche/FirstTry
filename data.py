@@ -8,7 +8,9 @@ import torch
 
 from consts import SPEAKER_START, SPEAKER_END, NULL_ID_FOR_COREF
 from utils import flatten_list_of_lists
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, RandomSampler, DistributedSampler, SequentialSampler, DataLoader
+from ontonotes import OntonotesDataset
+
 
 CorefExample = namedtuple("CorefExample", ["token_ids", "clusters"])
 
@@ -139,3 +141,23 @@ def get_dataset(args, tokenizer, evaluate=False):
         pickle.dump(coref_dataset, f)
 
     return coref_dataset
+
+
+def get_data_objects(args, data_file_name, is_training):
+    dataset = OntonotesDataset(os.path.join(args.data_dir, data_file_name), is_training, args)
+    # Note that DistributedSampler samples randomly
+    if is_training:
+        sampler = RandomSampler(dataset) if args.local_rank == -1 else DistributedSampler(dataset)
+        per_gpu_batch_size = args.per_gpu_eval_batch_size
+        logger.info("Loaded train data")
+    else:
+        sampler = SequentialSampler(dataset) if args.local_rank == -1 else DistributedSampler(dataset)
+        per_gpu_batch_size = args.per_gpu_train_batch_size
+        logger.info("Loaded eval data")
+
+    batch_size = per_gpu_batch_size * max(1, args.n_gpu)
+    loader = DataLoader(dataset, sampler=sampler, batch_size=batch_size,
+                             pin_memory=not args.no_cuda, collate_fn=lambda batch: batch[0], num_workers=args.num_workers,
+                             worker_init_fn=lambda worker_id: np.random.seed(torch.initial_seed() % 2**32))
+
+    return dataset, sampler, loader, batch_size

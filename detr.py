@@ -2,6 +2,7 @@
 """
 DETR model and criterion classes.
 """
+import logging
 import torch
 import torch.nn.functional as F
 from torch import nn, Tensor
@@ -19,8 +20,10 @@ from matcher import build_matcher
 from transformer import build_transformer
 from transformers import LongformerModel
 from typing import List
+from transformers import AutoConfig, CONFIG_MAPPING
 from misc import NestedTensor, accuracy
 
+logger = logging.getLogger(__name__)
 
 
 class DETR(nn.Module):
@@ -301,7 +304,7 @@ def build_backbone(args, config):
     return model
 
 
-def build_DETR(args, config):
+def build_DETR(args):
     # the `num_classes` naming here is somewhat misleading.
     # it indeed corresponds to `max_obj_id + 1`, where max_obj_id
     # is the maximum id for a class in your dataset. For example,
@@ -312,6 +315,14 @@ def build_DETR(args, config):
     # https://github.com/facebookresearch/detr/issues/108#issuecomment-650269223
 
     device = torch.device(args.device)
+
+    if args.config_name:
+        config = AutoConfig.from_pretrained(args.config_name, cache_dir=args.cache_dir)
+    elif args.model_name_or_path:
+        config = AutoConfig.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir)
+    else:
+        config = CONFIG_MAPPING[args.model_type]()
+        logger.warning("You are instantiating a new config instance from scratch.")
 
     backbone = build_backbone(args, config)
 

@@ -10,11 +10,38 @@ from tqdm import tqdm, trange
 import time, datetime
 from misc import save_on_master, is_main_process
 from utils import reduce_dict
+from optimization import WarmupLinearSchedule
+from data import get_dataset, get_data_objects
+
 
 
 from transformers import AdamW, get_linear_schedule_with_warmup
 
 logger = logging.getLogger(__name__)
+
+
+def load_from_checkpoint(model, checkpoint_path, device=None, optimizer=None, amp=None):
+    global_step = checkpoint_path.rstrip('/').split('-')[-1]
+    model_to_load = model.module if hasattr(model, 'module') else model  # Take care of distributed/parallel training
+    try:
+        model_to_load.load_state_dict(torch.load(checkpoint_path + '/model.step-' + global_step + '.pt', map_location=device))
+    except Exception as e:
+        logger.error(e)
+        model_to_load.load_state_dict(
+            torch.load(checkpoint_path + '/model.step-' + global_step + '.pt', map_location=device), strict=False)
+    if optimizer is not None:
+        opt_path = os.path.join(checkpoint_path, 'optimizer.pt')
+        if os.path.exists(opt_path):
+            optimizer.load_state_dict(torch.load(opt_path, map_location=device))
+            # TODO make this more robust for different trees of states
+            for state in optimizer.state.values():
+                for k, v in state.items():
+                    if torch.is_tensor(v):
+                        state[k] = v.to(device)
+    if amp is not None:
+        amp.load_state_dict(torch.load(os.path.join(checkpoint_path, 'amp.pt')))
+    return {'global_step':global_step}
+
 
 
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
@@ -71,7 +98,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
 
 
-def train(args, train_dataset, model, tokenizer, criterion, evaluator):
+def train(args, model, tokenizer, criterion, evaluator):
     """ Train the model """
     # output_dir = Path(args.output_dir)
 
@@ -79,9 +106,10 @@ def train(args, train_dataset, model, tokenizer, criterion, evaluator):
     tb_writer = SummaryWriter(tb_path, flush_secs=30)
     logger.info('Tensorboard summary path: %s' % tb_path)
 
-    data_loader_train = BucketBatchSampler(train_dataset, max_total_seq_len=args.max_total_seq_len, batch_size_1=args.batch_size_1)
-
-    t_total = len(data_loader_train) // args.gradient_accumulation_steps * args.num_train_epochs
+    # train_dataset = get_dataset(args, tokenizer, evaluate=False)
+    # data_loader_train = BucketBatchSampler(train_dataset, max_total_seq_len=args.max_total_seq_len, batch_size_1=args.batch_size_1)
+    # t_total = len(data_loader_train) // args.gradient_accumulation_steps * args.num_train_epochs
+    train_dataset, train_sampler, train_loader, args.train_batch_size = get_data_objects(args, 'train.english.512.jsonlines', True)
 
     param_dicts = [
         {"params": [p for n, p in model.named_parameters() if "backbone" not in n and p.requires_grad]},
@@ -93,19 +121,25 @@ def train(args, train_dataset, model, tokenizer, criterion, evaluator):
 
     optimizer = torch.optim.AdamW(param_dicts, lr=args.lr,
                                   weight_decay=args.weight_decay)
-    # scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=args.warmup_steps,
+    # lr_scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=args.warmup_steps,
     #                                             num_training_steps=t_total)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop)
-
+    # lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop)
+    lr_scheduler = WarmupLinearSchedule(optimizer, warmup_steps=args.warmup_steps,
+                                        t_total=args.t_total)  # ConstantLRSchedule(optimizer)
     loaded_saved_optimizer = False
-    # Check if saved optimizer or scheduler states exist
-    if os.path.isfile(os.path.join(args.model_name_or_path, "optimizer.pt")) and os.path.isfile(
-            os.path.join(args.model_name_or_path, "scheduler.pt")
-    ):
-        # Load in optimizer and scheduler states
-        optimizer.load_state_dict(torch.load(os.path.join(args.model_name_or_path, "optimizer.pt")))
-        scheduler.load_state_dict(torch.load(os.path.join(args.model_name_or_path, "scheduler.pt")))
-        loaded_saved_optimizer = True
+    # Check if saved optimizer or lr_scheduler states exist
+    # if os.path.isfile(os.path.join(args.model_name_or_path, "optimizer.pt")) and os.path.isfile(
+    #         os.path.join(args.model_name_or_path, "lr_scheduler.pt")
+    # ):
+    #     # Load in optimizer and lr_scheduler states
+    #     optimizer.load_state_dict(torch.load(os.path.join(args.model_name_or_path, "optimizer.pt")))
+    #     lr_scheduler.load_state_dict(torch.load(os.path.join(args.model_name_or_path, "lr_scheduler.pt")))
+    #     loaded_saved_optimizer = True
+    if args.resume_from:
+        logger.info("Loading from checkpoint {}".format(args.resume_from))
+        loaded_args = load_from_checkpoint(model, args.resume_from, args.device, optimizer)
+        args.resume_global_step = int(loaded_args['global_step'])
+
 
     # if args.amp:
     #     try:
@@ -114,13 +148,15 @@ def train(args, train_dataset, model, tokenizer, criterion, evaluator):
     #         raise ImportError("Please install apex from https://www.github.com/nvidia/apex to use fp16 training.")
     #     model, optimizer = amp.initialize(model, optimizer, opt_level=args.fp16_opt_level)
     #
-    # # multi-gpu training (should be after apex fp16 initialization)
-    # if args.n_gpu > 1:
-    #     model = torch.nn.DataParallel(model)
-    #
-    # # Distributed training (should be after apex fp16 initialization)
-    # if args.local_rank != -1:
-    #     model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank],
+    # multi-gpu training (should be after apex fp16 initialization)
+    if args.n_gpu > 1:
+        model = torch.nn.DataParallel(model)
+
+    # Distributed training (should be after apex fp16 initialization)
+    if args.local_rank != -1:
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank],
+                                                          output_device=args.local_rank,
+                                                          find_unused_parameters=True)
 
     # Train!
     logger.info("***** Running training *****")
@@ -139,7 +175,7 @@ def train(args, train_dataset, model, tokenizer, criterion, evaluator):
             logger.info("  Continuing training from checkpoint, will skip to saved global_step")
             logger.info("  Continuing training from global step %d", start_epoch)
             if not loaded_saved_optimizer:
-                logger.warning("Training is continued from checkpoint, but didn't load optimizer and scheduler")
+                logger.warning("Training is continued from checkpoint, but didn't load optimizer and lr_scheduler")
         except ValueError:
             logger.info("  Starting fine-tuning.")
     tr_loss, logging_loss = 0.0, 0.0
@@ -172,7 +208,7 @@ def train(args, train_dataset, model, tokenizer, criterion, evaluator):
         epoch_iterator = tqdm(data_loader_train, desc="Iteration", disable=args.local_rank not in [-1, 0])
         train_stats = train_one_epoch(
             model, criterion, epoch_iterator, optimizer, args.device, epoch)
-        scheduler.step()
+        lr_scheduler.step()
         if args.output_dir:
             checkpoint_paths = [args.output_dir / 'checkpoint.pth']
             # extra checkpoint before LR drop and every 100 epochs
@@ -182,7 +218,7 @@ def train(args, train_dataset, model, tokenizer, criterion, evaluator):
                 save_on_master({
                     'model': model.state_dict(),
                     'optimizer': optimizer.state_dict(),
-                    'lr_scheduler': scheduler.state_dict(),
+                    'lr_scheduler': lr_scheduler.state_dict(),
                     'epoch': epoch,
                     'args': args,
                 }, checkpoint_path)
@@ -238,17 +274,17 @@ def train(args, train_dataset, model, tokenizer, criterion, evaluator):
     #                   lr=args.learning_rate,
     #                   betas=(args.adam_beta1, args.adam_beta2),
     #                   eps=args.adam_epsilon)
-    # scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=args.warmup_steps,
+    # lr_scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=args.warmup_steps,
     #                                             num_training_steps=t_total)
     #
     # loaded_saved_optimizer = False
-    # # Check if saved optimizer or scheduler states exist
+    # # Check if saved optimizer or lr_scheduler states exist
     # if os.path.isfile(os.path.join(args.model_name_or_path, "optimizer.pt")) and os.path.isfile(
-    #         os.path.join(args.model_name_or_path, "scheduler.pt")
+    #         os.path.join(args.model_name_or_path, "lr_scheduler.pt")
     # ):
-    #     # Load in optimizer and scheduler states
+    #     # Load in optimizer and lr_scheduler states
     #     optimizer.load_state_dict(torch.load(os.path.join(args.model_name_or_path, "optimizer.pt")))
-    #     scheduler.load_state_dict(torch.load(os.path.join(args.model_name_or_path, "scheduler.pt")))
+    #     lr_scheduler.load_state_dict(torch.load(os.path.join(args.model_name_or_path, "lr_scheduler.pt")))
     #     loaded_saved_optimizer = True
     #
     # if args.amp:
@@ -285,7 +321,7 @@ def train(args, train_dataset, model, tokenizer, criterion, evaluator):
     #         logger.info("  Continuing training from checkpoint, will skip to saved global_step")
     #         logger.info("  Continuing training from global step %d", global_step)
     #         if not loaded_saved_optimizer:
-    #             logger.warning("Training is continued from checkpoint, but didn't load optimizer and scheduler")
+    #             logger.warning("Training is continued from checkpoint, but didn't load optimizer and lr_scheduler")
     #     except ValueError:
     #         logger.info("  Starting fine-tuning.")
     # tr_loss, logging_loss = 0.0, 0.0
@@ -345,7 +381,7 @@ def train(args, train_dataset, model, tokenizer, criterion, evaluator):
     #         tr_loss += loss.item()
     #         if (step + 1) % args.gradient_accumulation_steps == 0:
     #             optimizer.step()
-    #             scheduler.step()  # Update learning rate schedule
+    #             lr_scheduler.step()  # Update learning rate schedule
     #             model.zero_grad()
     #             global_step += 1
     #
@@ -376,8 +412,8 @@ def train(args, train_dataset, model, tokenizer, criterion, evaluator):
     #                     logger.info("Saving model checkpoint to %s", output_dir)
     #
     #                     torch.save(optimizer.state_dict(), os.path.join(output_dir, "optimizer.pt"))
-    #                     torch.save(scheduler.state_dict(), os.path.join(output_dir, "scheduler.pt"))
-    #                     logger.info("Saving optimizer and scheduler states to %s", output_dir)
+    #                     torch.save(lr_scheduler.state_dict(), os.path.join(output_dir, "lr_scheduler.pt"))
+    #                     logger.info("Saving optimizer and lr_scheduler states to %s", output_dir)
     #                 logger.info(f"best f1 is {best_f1} on global step {best_global_step}")
     #             if args.local_rank in [-1, 0] and args.save_steps > 0 and global_step % args.save_steps == 0 and \
     #                     (not args.save_if_best or (best_global_step == global_step)):
@@ -394,8 +430,8 @@ def train(args, train_dataset, model, tokenizer, criterion, evaluator):
     #                 logger.info("Saving model checkpoint to %s", output_dir)
     #
     #                 torch.save(optimizer.state_dict(), os.path.join(output_dir, "optimizer.pt"))
-    #                 torch.save(scheduler.state_dict(), os.path.join(output_dir, "scheduler.pt"))
-    #                 logger.info("Saving optimizer and scheduler states to %s", output_dir)
+    #                 torch.save(lr_scheduler.state_dict(), os.path.join(output_dir, "lr_scheduler.pt"))
+    #                 logger.info("Saving optimizer and lr_scheduler states to %s", output_dir)
     #
     #     if 0 < t_total < global_step:
     #         train_iterator.close()

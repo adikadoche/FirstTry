@@ -7,11 +7,10 @@ from cli import parse_args
 import torch
 import wandb #TODO
 
-from transformers import AutoConfig, AutoTokenizer, CONFIG_MAPPING, LongformerConfig
+from transformers import AutoTokenizer, LongformerConfig
 
 from eval import Evaluator
 # from modeling import Adi
-from data import get_dataset
 from detr import build_DETR
 from training import train
 
@@ -49,14 +48,6 @@ def main():
         torch.distributed.barrier()
 
 
-    if args.config_name:
-        config = AutoConfig.from_pretrained(args.config_name, cache_dir=args.cache_dir)
-    elif args.model_name_or_path:
-        config = AutoConfig.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir)
-    else:
-        config = CONFIG_MAPPING[args.model_type]()
-        logger.warning("You are instantiating a new config instance from scratch.")
-
     if args.tokenizer_name:
         tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name, cache_dir=args.cache_dir)
     elif args.model_name_or_path:
@@ -67,16 +58,15 @@ def main():
             "and load it from here, using --tokenizer_name"
         )
 
-    config_class = LongformerConfig
-    base_model_prefix = "longformer"
-    train_dataset = get_dataset(args, tokenizer, evaluate=False)
-    model, criterion = build_DETR(args, config)
+    # config_class = LongformerConfig
+    # base_model_prefix = "longformer"
+    model, criterion = build_DETR(args)
 
     model.to(args.device)
 
     evaluator = Evaluator(args, tokenizer)
 
-    global_step, tr_loss = train(args, train_dataset, model, tokenizer, criterion, evaluator)
+    global_step, tr_loss = train(args, model, tokenizer, criterion, evaluator)
 
 
 # Press the green button in the gutter to run the script.
