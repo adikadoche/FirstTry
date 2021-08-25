@@ -2,6 +2,7 @@ import json
 import os
 from datetime import datetime
 from time import time
+from typing import List
 import git
 import torch
 import numpy as np
@@ -131,3 +132,60 @@ def reduce_dict(input_dict, average=True):
             values /= world_size
         reduced_dict = {k: v for k, v in zip(names, values)}
     return reduced_dict
+
+def create_gold_matrix(device, doc_len, num_queries, gold_clusters, gold_mentions: List):
+    if gold_mentions is None:
+        gold_per_token = torch.zeros(num_queries, doc_len, device=device)
+        for cluster_id, cluster in enumerate(gold_clusters):
+            for start, end in cluster:
+                gold_per_token[cluster_id, start: end + 1] = 1
+    else:
+        gold_per_token = torch.zeros(num_queries, len(gold_mentions), device=device)
+        for cluster_id, cluster in enumerate(gold_clusters):
+            for mention in cluster:
+                mention_index = gold_mentions.index(tuple(mention))
+                assert mention_index >= 0
+                gold_per_token[cluster_id, mention_index] = 1
+
+    return gold_per_token
+
+def calc_predicted_clusters(cluster_logits, coref_logits, threshold, gold_mentions: List):
+    if gold_mentions is None:
+        cluster_logits = cluster_logits.numpy() >= threshold
+        coref_logits = coref_logits.numpy() >= threshold
+
+        bsz, num_of_clusters, _ = coref_logits.shape
+        clusters = []
+        for i in range(0, num_of_clusters):
+            current_cluster = []
+
+            first_token_index = None
+            for token_index, token_logit in enumerate(coref_logits[0, i]):
+                if token_logit:
+                    if first_token_index is None:
+                        first_token_index = token_index
+                elif first_token_index is not None:
+                    current_cluster.append((first_token_index, token_index-1))
+                    first_token_index = None
+
+            if first_token_index is not None:
+                current_cluster.append((first_token_index, token_index))
+
+            if len(current_cluster) > 0:
+                clusters.append(current_cluster)
+    else:
+        clusters = []
+
+        if coref_logits.shape[-1] > 0:
+            mention_to_cluster_id = coref_logits.squeeze(0).argmax(0) # [mentions]
+            cluster_ids = mention_to_cluster_id.unique()
+
+            for cluster_id in cluster_ids:
+                current_cluster = []
+                for mention_id in (mention_to_cluster_id == cluster_id).nonzero():
+                    current_cluster.append(gold_mentions[mention_id])
+                clusters.append(current_cluster)
+
+    return clusters
+
+

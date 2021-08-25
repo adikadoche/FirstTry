@@ -9,15 +9,21 @@ from coref_bucket_batch_sampler import BucketBatchSampler
 from tqdm import tqdm, trange
 import time, datetime
 from misc import save_on_master, is_main_process
-from utils import reduce_dict
+from utils import create_gold_matrix, calc_predicted_clusters
 from optimization import WarmupLinearSchedule
 from data import get_dataset, get_data_objects
-
+import itertools
 
 
 from transformers import AdamW, get_linear_schedule_with_warmup
 
 logger = logging.getLogger(__name__)
+
+def try_measure_len(iter):
+    try:
+        return len(iter)
+    except:
+        return -1
 
 
 def load_from_checkpoint(model, checkpoint_path, device=None, optimizer=None, amp=None):
@@ -42,60 +48,105 @@ def load_from_checkpoint(model, checkpoint_path, device=None, optimizer=None, am
         amp.load_state_dict(torch.load(os.path.join(checkpoint_path, 'amp.pt')))
     return {'global_step':global_step}
 
+def report_eval(args, eval_dataloader, global_step, model, criterion, tb_writer):
+    if args.local_rank == -1:  # Only evaluate when single GPU otherwise metrics may not average well
+        results = evaluate(args, eval_dataloader, model, criterion, str(global_step))
+        for key, value in results.items():
+            tb_writer.add_scalar('eval_{}'.format(key), value, global_step)
+
+        return results
+    return None
+
 
 
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     epoch_iterator, optimizer: torch.optim.Optimizer,
-                    device: torch.device, epoch: int, max_norm: float = 0):
+                    args, evaluator, skip_steps, recent_grad_norms, recent_cluster_logits,
+        recent_coref_logits, recent_losses, recent_logits_sums, global_step, tb_writer, lr_scheduler, eval_loader):
     for step, batch in enumerate(epoch_iterator):
-        batch = tuple(tensor.to(device) for tensor in batch)
-        input_ids, attention_mask, gold_clusters = batch
+        if skip_steps > 0:
+            skip_steps -= 1
+            continue
+
         model.train()
-        criterion.train()
-        # metric_logger = utils.MetricLogger(delimiter="  ")
-        # metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
-        # metric_logger.add_meter('class_error', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
-        # header = 'Epoch: [{}]'.format(epoch)
-        # print_freq = 10
+        batch = tuple(t.to(args.device) if torch.is_tensor(t) else t for t in batch)
+        input_ids, input_mask, text_len, speaker_ids, genre, gold_starts, gold_ends, cluster_ids, sentence_map, gold_clusters = batch
 
-        # for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
-        #     samples = samples.to(device)
-        #     targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+        if len(gold_clusters) == 0:
+            continue
 
-        outputs = model(input_ids, attention_mask=attention_mask)
-        loss_dict = criterion(outputs, gold_clusters)
-        weight_dict = criterion.weight_dict
-        losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
+        gold_mentions = None
+        if args.use_gold_mentions:
+            gold_mentions = list(set([tuple(m) for c in gold_clusters for m in c]))
 
-        # reduce losses over all GPUs for logging purposes
-        loss_dict_reduced = reduce_dict(loss_dict)
-        loss_dict_reduced_unscaled = {f'{k}_unscaled': v
-                                      for k, v in loss_dict_reduced.items()}
-        loss_dict_reduced_scaled = {k: v * weight_dict[k]
-                                    for k, v in loss_dict_reduced.items() if k in weight_dict}
-        losses_reduced_scaled = sum(loss_dict_reduced_scaled.values())
+        gold_matrix = create_gold_matrix(args.device, text_len.sum(), args.num_queries, gold_clusters, gold_mentions)
 
-        loss_value = losses_reduced_scaled.item()
+        outputs = model(input_ids, input_mask, gold_mentions)
+        cluster_logits, coref_logits = outputs['cluster_logits'], outputs['coref_logits']
 
-        if not math.isfinite(loss_value):
-            print("Loss is {}, stopping training".format(loss_value))
-            print(loss_dict_reduced)
-            sys.exit(1)
+        predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(),
+                                                     threshold, gold_mentions)
+        evaluator.update(predicted_clusters, gold_clusters)
+        loss = criterion(outputs, gold_matrix)
 
-        optimizer.zero_grad()
-        losses.backward()
-        if max_norm > 0:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
-        optimizer.step()
+        recent_cluster_logits.append(cluster_logits.detach().cpu().numpy())
+        recent_coref_logits.append(coref_logits.detach().cpu().numpy().flatten())
+        recent_logits_sums.append(coref_logits.detach().sum(1).flatten().cpu().numpy())
 
-        metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled)
-        metric_logger.update(class_error=loss_dict_reduced['class_error'])
-        metric_logger.update(lr=optimizer.param_groups[0]["lr"])
-    # gather the stats from all processes
-    metric_logger.synchronize_between_processes()
-    print("Averaged stats:", metric_logger)
-    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+        # TODO handle NaNs and +-infs
 
+        if args.n_gpu > 1:
+            loss = loss.mean()  # mean() to average on multi-gpu parallel training
+        if args.gradient_accumulation_steps > 1:
+            loss = loss / args.gradient_accumulation_steps
+
+        # if args.fp16:
+        #     with amp.scale_loss(loss, optimizer) as scaled_loss:
+        #         scaled_loss.backward()
+        #     total_norm = torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.max_grad_norm)
+        # else:
+        loss.backward()
+        total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+
+        recent_grad_norms.append(total_norm.item())
+        recent_losses.append(loss.item())
+        epoch_iterator.set_postfix({'loss': loss.item()})
+
+        if (step + 1) % args.gradient_accumulation_steps == 0:
+            optimizer.step()
+            if args.lr_drop_interval == 'step':
+                lr_scheduler.step()  # Update learning rate schedule
+            model.zero_grad()
+            global_step += 1
+
+            if args.local_rank in [-1, 0] and args.eval_steps > 0 and global_step % args.eval_steps == 0:
+                results = report_eval(args, eval_loader, global_step, model, criterion, tb_writer)
+                threshold = results['threshold']
+
+            if args.local_rank in [-1, 0] and args.save_steps > 0 and global_step % args.save_steps == 0:
+                save_checkpoint(args, global_step, model, optimizer)
+
+            if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
+                logits = np.concatenate(recent_cluster_logits)
+                tb_writer.add_histogram('cluster_logits', logits, global_step)
+                recent_cluster_logits.clear()
+                logits = np.concatenate(recent_coref_logits)
+                tb_writer.add_histogram('recent_coref_logits', logits, global_step)
+                recent_coref_logits.clear()
+                tb_writer.add_scalar('grad_total_norm', np.mean(recent_grad_norms), global_step)
+                recent_grad_norms.clear()
+                tb_writer.add_scalar('lr', optimizer.param_groups[0]['lr'], global_step)
+                tb_writer.add_scalar('lr_bert', optimizer.param_groups[1]['lr'], global_step)
+                tb_writer.add_scalar('loss', np.mean(recent_losses), global_step)
+                recent_losses.clear()
+                tb_writer.add_histogram('coref_logits_sum_over_clusters', np.concatenate(recent_logits_sums),
+                                        global_step)
+                recent_logits_sums.clear()
+
+        if args.max_steps > 0 and global_step > args.max_steps:
+            epoch_iterator.close()
+            break
+    return global_step
 
 
 def train(args, model, tokenizer, criterion, evaluator):
@@ -110,6 +161,13 @@ def train(args, model, tokenizer, criterion, evaluator):
     # data_loader_train = BucketBatchSampler(train_dataset, max_total_seq_len=args.max_total_seq_len, batch_size_1=args.batch_size_1)
     # t_total = len(data_loader_train) // args.gradient_accumulation_steps * args.num_train_epochs
     train_dataset, train_sampler, train_loader, args.train_batch_size = get_data_objects(args, 'train.english.512.jsonlines', True)
+    eval_dataset, eval_sampler, eval_loader, args.eval_batch_size = get_data_objects(args, 'eval.english.512.jsonlines', False)
+
+    if args.max_steps > 0:
+        args.t_total = args.max_steps
+        args.num_train_epochs = args.max_steps // (len(train_loader) // args.gradient_accumulation_steps) + 1
+    else:
+        args.t_total = len(train_loader) // args.gradient_accumulation_steps * args.num_train_epochs
 
     param_dicts = [
         {"params": [p for n, p in model.named_parameters() if "backbone" not in n and p.requires_grad]},
@@ -160,54 +218,35 @@ def train(args, model, tokenizer, criterion, evaluator):
 
     # Train!
     logger.info("***** Running training *****")
-    logger.info("  Num examples = %d", len(train_dataset))
-    logger.info("  Num Epochs = %d", args.num_train_epochs)
+    logger.info("  Num steps per epoch = %d", try_measure_len(train_loader))
+    logger.info("  Num Epochs = %d", args.num_train_epochs if args.num_train_epochs is not None else -1)
+    logger.info("  Instantaneous batch size per GPU = %d", args.per_gpu_train_batch_size)
+    logger.info("  Total train batch size (w. parallel, distributed & accumulation) = %d",
+                args.train_batch_size * args.gradient_accumulation_steps * (
+                    torch.distributed.get_world_size() if args.local_rank != -1 else 1))
     logger.info("  Gradient Accumulation steps = %d", args.gradient_accumulation_steps)
-    logger.info("  Total optimization steps = %d", t_total)
+    logger.info("  Total optimization steps = %d", args.t_total)
 
-    start_epoch = 0
-    if os.path.exists(args.model_name_or_path) and 'checkpoint' in args.model_name_or_path:
-        try:
-            # set global_step to gobal_step of last saved checkpoint from model path
-            checkpoint_suffix = args.model_name_or_path.split("-")[-1].split("/")[0]
-            start_epoch = int(checkpoint_suffix)
 
-            logger.info("  Continuing training from checkpoint, will skip to saved global_step")
-            logger.info("  Continuing training from global step %d", start_epoch)
-            if not loaded_saved_optimizer:
-                logger.warning("Training is continued from checkpoint, but didn't load optimizer and lr_scheduler")
-        except ValueError:
-            logger.info("  Starting fine-tuning.")
-    tr_loss, logging_loss = 0.0, 0.0
     model.zero_grad()
+    recent_grad_norms = []
+    recent_cluster_logits = []
+    recent_coref_logits = []
+    recent_losses = []
+    recent_logits_sums = []
+    train_iterator = itertools.count() if args.num_train_epochs is None else range(int(args.num_train_epochs))
+    train_iterator = tqdm(train_iterator, desc="Epoch", disable=args.local_rank not in [-1, 0])
     set_seed(args)  # Added here for reproducibility (even between python 2 and 3)
+    skip_steps = args.skip_steps
+    threshold = 0.5 # starting threshold, later fixed by eval
 
-    # If nonfreeze_params is not empty, keep all params that are
-    # not in nonfreeze_params fixed.
-    if args.nonfreeze_params:
-        names = []
-        for name, param in model.named_parameters():
-            freeze = True
-            for nonfreeze_p in args.nonfreeze_params.split(','):
-                if nonfreeze_p in name:
-                    freeze = False
-
-            if freeze:
-                param.requires_grad = False
-            else:
-                names.append(name)
-
-        print('nonfreezing layers: {}'.format(names))
-
-    best_f1 = -1
-    best_epoch = -1
     start_time = time.time()
-    for epoch in range(start_epoch, args.num_train_epochs):
-        # if args.distributed:
-        #     sampler_train.set_epoch(epoch)
-        epoch_iterator = tqdm(data_loader_train, desc="Iteration", disable=args.local_rank not in [-1, 0])
-        train_stats = train_one_epoch(
-            model, criterion, epoch_iterator, optimizer, args.device, epoch)
+    for epoch in train_iterator:
+        evaluator = CorefEvaluator()
+        epoch_iterator = tqdm(train_loader, desc="Iteration in Epoch {}".format(epoch), disable=args.local_rank not in [-1, 0], leave=False)
+        global_step = train_one_epoch(
+            model, criterion, epoch_iterator, optimizer, args, evaluator, skip_steps, recent_grad_norms, recent_cluster_logits,
+        recent_coref_logits, recent_losses, recent_logits_sums, global_step, tb_writer, lr_scheduler, eval_loader)
         lr_scheduler.step()
         if args.output_dir:
             checkpoint_paths = [args.output_dir / 'checkpoint.pth']
