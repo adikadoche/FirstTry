@@ -29,6 +29,14 @@ def parse_args():
         help="The output directory where the model checkpoints and predictions will be written.",
     )
     parser.add_argument(
+        "--data_dir",
+        default=None,
+        type=str,
+        required=True,
+        help="The input data dir. Should contain the .tsv files (or other data files) for the task.",
+    )
+    parser.add_argument("--resume_from", default='', type=str)
+    parser.add_argument(
         "--train_file_cache",
         default=None,
         type=str,
@@ -80,21 +88,12 @@ def parse_args():
     parser.add_argument("--learning_rate", default=1e-5, type=float, help="The initial learning rate for Adam.")
     parser.add_argument("--head_learning_rate", default=3e-4, type=float, help="The initial learning rate for Adam.")
     parser.add_argument("--dropout_prob", default=0.3, type=float)
-    parser.add_argument("--gradient_accumulation_steps",
-                        type=int,
-                        default=1,
-                        help="Number of updates steps to accumulate before performing a backward/update pass.")
     parser.add_argument("--weight_decay", default=0.01, type=float, help="Weight deay if we apply some.")
     parser.add_argument("--adam_beta1", default=0.9, type=float,
                         help="Epsilon for Adam optimizer.")
     parser.add_argument("--adam_beta2", default=0.98, type=float,
                         help="Epsilon for Adam optimizer.")
     parser.add_argument("--adam_epsilon", default=1e-8, type=float, help="Epsilon for Adam optimizer.")
-    parser.add_argument(
-        "--num_train_epochs", default=3, type=int, help="Total number of training epochs to perform."
-    )
-
-    parser.add_argument("--warmup_steps", default=0, type=int, help="Linear warmup over warmup_steps.")
 
     parser.add_argument("--logging_steps", type=int, default=500, help="Log every X updates steps.")
     parser.add_argument("--eval_steps", type=int, default=500, help="Eval every X updates steps.")
@@ -167,6 +166,39 @@ def parse_args():
                         help="L1 box coefficient in the matching cost")
     parser.add_argument('--eos_coef', default=0.1, type=float,
                         help="Relative classification weight of the no-object class")
+
+    parser.add_argument('--max_training_sentences', default=3, type=int)
+    parser.add_argument('--max_num_speakers', default=20, type=int)
+    parser.add_argument('--max_segment_len', default=512, type=int)
+    parser.add_argument('--limit_trainset', default=-1, type=int)
+    parser.add_argument('--eval_as_train', action='store_true')
+    parser.add_argument('--use_gold_mentions', action='store_true')
+    parser.add_argument('--softmax_coref', action='store_true')
+    parser.add_argument('--random_queries', action='store_true')
+    parser.add_argument('--single_distribution_queries', action='store_true')
+    parser.add_argument('--fc_coref_head', action='store_true')
+    parser.add_argument('--pairwise_score', action='store_true')
+    parser.add_argument('--sum_attn', action='store_true')
+    parser.add_argument('--attn_softmax_clusters', action='store_true')
+
+    # Batch
+    parser.add_argument("--per_gpu_train_batch_size", default=1, type=int,
+                        help="Batch size per GPU/CPU for training.")
+    parser.add_argument("--per_gpu_eval_batch_size", default=1, type=int,
+                        help="Batch size per GPU/CPU for evaluation.")
+    parser.add_argument('--gradient_accumulation_steps', type=int, default=1,
+                        help="Number of updates steps to accumulate before performing a backward/update pass.")
+    parser.add_argument('--num_workers', type=int, default=0)
+
+    # Epochs
+    parser.add_argument("--num_train_epochs", default=300.0, type=float,
+                        help="Total number of training epochs to perform.")
+    parser.add_argument("--max_steps", default=-1, type=int,
+                        help="If > 0: set total number of training steps to perform. Override num_train_epochs.")
+    parser.add_argument("--warmup_steps", default=5000, type=int,
+                        help="Linear warmup over warmup_steps.")
+    parser.add_argument("--skip_steps", default=0, type=int)
+
 
     parser.add_argument('--lr_backbone', default=1e-5, type=float) #TODO: remove
     parser.add_argument('--lr', default=1e-4, type=float) #TODO:?

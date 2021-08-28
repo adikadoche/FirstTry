@@ -10,7 +10,7 @@ import wandb #TODO
 from eval import Evaluator
 # from modeling import Adi
 from detr import build_DETR
-from training import train
+from training import set_seed, train
 
 
 logger = logging.getLogger(__name__)
@@ -40,6 +40,8 @@ def main():
     for key, val in vars(args).items():
         logger.info(f"{key} - {val}")
 
+    set_seed(args)
+
     # Load pretrained model and tokenizer
     if args.local_rank not in [-1, 0]:
         # Barrier to make sure only the first process in distributed training download model & vocab
@@ -49,6 +51,9 @@ def main():
     # config_class = LongformerConfig
     # base_model_prefix = "longformer"
     model, criterion = build_DETR(args)
+
+    if args.local_rank == 0:
+        torch.distributed.barrier()  # Make sure only the first process in distributed training will download model & vocab
 
     model.to(args.device)
 

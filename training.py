@@ -230,21 +230,7 @@ def train(args, model, criterion):
     """ Train the model """
     # output_dir = Path(args.output_dir)
 
-    tb_path = os.path.join(args.tensorboard_dir, os.path.basename(args.output_dir))
-    tb_writer = SummaryWriter(tb_path, flush_secs=30)
-    logger.info('Tensorboard summary path: %s' % tb_path)
-
-    # train_dataset = get_dataset(args, tokenizer, evaluate=False)
-    # data_loader_train = BucketBatchSampler(train_dataset, max_total_seq_len=args.max_total_seq_len, batch_size_1=args.batch_size_1)
-    # t_total = len(data_loader_train) // args.gradient_accumulation_steps * args.num_train_epochs
-    train_dataset, train_sampler, train_loader, args.train_batch_size = get_data_objects(args, 'train.english.512.jsonlines', True)
-    eval_dataset, eval_sampler, eval_loader, args.eval_batch_size = get_data_objects(args, 'eval.english.512.jsonlines', False)
-
-    if args.max_steps > 0:
-        args.t_total = args.max_steps
-        args.num_train_epochs = args.max_steps // (len(train_loader) // args.gradient_accumulation_steps) + 1
-    else:
-        args.t_total = len(train_loader) // args.gradient_accumulation_steps * args.num_train_epochs
+    logger.info("Training/evaluation parameters %s", args)
 
     param_dicts = [
         {"params": [p for n, p in model.named_parameters() if "backbone" not in n and p.requires_grad]},
@@ -256,12 +242,25 @@ def train(args, model, criterion):
 
     optimizer = torch.optim.AdamW(param_dicts, lr=args.lr,
                                   weight_decay=args.weight_decay)
+    
+    if args.resume_from:
+        logger.info("Loading from checkpoint {}".format(args.resume_from))
+        loaded_args = load_from_checkpoint(model, args.resume_from, args.device, optimizer)
+        args.resume_global_step = int(loaded_args['global_step'])
+                                 
+
+    # tb_path = os.path.join(args.tensorboard_dir, os.path.basename(args.output_dir))
+    # tb_writer = SummaryWriter(tb_path, flush_secs=30)
+    # logger.info('Tensorboard summary path: %s' % tb_path)
+
+    # train_dataset = get_dataset(args, tokenizer, evaluate=False)
+    # data_loader_train = BucketBatchSampler(train_dataset, max_total_seq_len=args.max_total_seq_len, batch_size_1=args.batch_size_1)
+    # t_total = len(data_loader_train) // args.gradient_accumulation_steps * args.num_train_epochs
+
     # lr_scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=args.warmup_steps,
     #                                             num_training_steps=t_total)
     # lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop)
-    lr_scheduler = WarmupLinearSchedule(optimizer, warmup_steps=args.warmup_steps,
-                                        t_total=args.t_total)  # ConstantLRSchedule(optimizer)
-    loaded_saved_optimizer = False
+    # loaded_saved_optimizer = False
     # Check if saved optimizer or lr_scheduler states exist
     # if os.path.isfile(os.path.join(args.model_name_or_path, "optimizer.pt")) and os.path.isfile(
     #         os.path.join(args.model_name_or_path, "lr_scheduler.pt")
@@ -270,10 +269,6 @@ def train(args, model, criterion):
     #     optimizer.load_state_dict(torch.load(os.path.join(args.model_name_or_path, "optimizer.pt")))
     #     lr_scheduler.load_state_dict(torch.load(os.path.join(args.model_name_or_path, "lr_scheduler.pt")))
     #     loaded_saved_optimizer = True
-    if args.resume_from:
-        logger.info("Loading from checkpoint {}".format(args.resume_from))
-        loaded_args = load_from_checkpoint(model, args.resume_from, args.device, optimizer)
-        args.resume_global_step = int(loaded_args['global_step'])
 
 
     # if args.amp:
@@ -292,6 +287,24 @@ def train(args, model, criterion):
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank],
                                                           output_device=args.local_rank,
                                                           find_unused_parameters=True)
+    
+    train_dataset, train_sampler, train_loader, args.train_batch_size = get_data_objects(args, 'train.english.512.jsonlines', True)
+    eval_dataset, eval_sampler, eval_loader, args.eval_batch_size = get_data_objects(args, 'dev.english.512.jsonlines', False)
+
+    if args.max_steps > 0:
+        args.t_total = args.max_steps
+        args.num_train_epochs = args.max_steps // (len(train_loader) // args.gradient_accumulation_steps) + 1
+    else:
+        args.t_total = len(train_loader) // args.gradient_accumulation_steps * args.num_train_epochs
+
+    lr_scheduler = WarmupLinearSchedule(optimizer, warmup_steps=args.warmup_steps,
+                                        t_total=args.t_total)  # ConstantLRSchedule(optimizer)
+
+
+    global_step = 0 if not args.resume_from else args.resume_global_step
+    if args.local_rank in [-1, 0]:
+        purge_step = None if not args.resume_from else args.resume_global_step
+        tb_writer = SummaryWriter(log_dir=args.output_dir, flush_secs=15, purge_step=purge_step)
 
     # Train!
     logger.info("***** Running training *****")

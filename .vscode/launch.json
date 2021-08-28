@@ -13,6 +13,7 @@
             "args": [
                 "--output_dir", "/home/gamir/adiz/Code/runs/s2e-coref/output_dir/",
                 "--cache_dir", "/home/gamir/adiz/Code/runs/s2e-coref/cache_dir/",
+                "--data_dir", "/home/gamir/adiz/datasets/ontonotes/",
                 "--model_type", "longformer",
                 "--model_name_or_path", "allenai/longformer-large-4096",
                 "--tokenizer_name", "allenai/longformer-large-4096",
