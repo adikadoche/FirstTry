@@ -156,12 +156,15 @@ def parse_args():
     # Loss
     parser.add_argument('--no_aux_loss', dest='aux_loss', action='store_false',
                         help="Disables auxiliary decoding losses (loss at each layer)")
-
     # * Loss coefficients
     # parser.add_argument('--mask_loss_coef', default=1, type=float)
     # parser.add_argument('--dice_loss_coef', default=1, type=float)
     # parser.add_argument('--bbox_loss_coef', default=5, type=float)
     # parser.add_argument('--giou_loss_coef', default=2, type=float)
+    parser.add_argument('--cost_is_cluster', default=0, type=float,
+                        help="Class coefficient in the matching cost")
+    parser.add_argument('--cost_coref', default=0.01, type=float,
+                        help="L1 box coefficient in the matching cost")
     parser.add_argument('--eos_coef', default=0.1, type=float,
                         help="Relative classification weight of the no-object class")
 

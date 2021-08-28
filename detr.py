@@ -295,6 +295,112 @@ class Joiner(nn.Sequential):
         return out, pos
 
 
+class MatchingLoss(nn.Module):
+    """ This class computes the loss for DETR.
+    The process happens in two steps:
+        1) we compute hungarian assignment between ground truth boxes and the outputs of the model
+        2) we supervise each pair of matched ground-truth / prediction (supervise class and box)
+    """
+    def __init__(self, matcher, eos_coef, cost_is_cluster, cost_coref, args):
+        """ Create the criterion.
+        Parameters:
+            matcher: module able to compute a matching between targets and proposals
+            weight_dict: dict containing as key the names of the losses and as values their relative weight.
+            eos_coef: relative classification weight applied to the no-object category
+            losses: list of all the losses to be applied. See get_loss for list of available losses.
+        """
+        super().__init__()
+        self.matcher = matcher
+        self.cost_is_cluster = cost_is_cluster
+        self.cost_coref = cost_coref
+        self.args = args
+
+    def forward(self, outputs, targets):
+        """ This performs the loss computation.
+        Parameters:
+             outputs: dict of tensors, see the output specification of the model for the format
+             targets: list of dicts, such that len(targets) == batch_size.
+                      The expected keys in each dict depends on the losses applied, see each loss' doc
+        """
+        # outputs_without_aux = {k: v for k, v in outputs.items() if k != 'aux_outputs'}
+
+
+
+        # Retrieve the matching between the outputs of the last layer and the targets
+        matched_predicted_cluster_id, matched_gold_cluster_id = self.matcher(outputs, targets)
+
+        # # TODO remove this
+        # matched_gold_cluster_id = list(range(len(targets)))
+        # matched_predicted_cluster_id = matched_gold_cluster_id
+
+        # Compute the average number of target boxes accross all nodes, for normalization purposes
+        coref_logits = outputs["coref_logits"].squeeze(0)  # [num_queries, tokens]
+        cluster_logits = outputs["cluster_logits"].squeeze(0) # [num_queries]
+        num_queries, doc_len = coref_logits.shape
+
+        # num_of_gold_clusters = len(targets)
+        # num_of_gold_clusters = torch.as_tensor([num_of_gold_clusters], dtype=torch.float, device=coref_logits.device)
+        # if is_dist_avail_and_initialized():
+        #     torch.distributed.all_reduce(num_of_gold_clusters)
+        # num_of_gold_clusters = torch.clamp(num_of_gold_clusters / get_world_size(), min=1).item()
+
+        gold_is_cluster = torch.zeros_like(cluster_logits)
+        gold_is_cluster[matched_predicted_cluster_id] = 1
+        cost_is_cluster = F.binary_cross_entropy(cluster_logits, gold_is_cluster)
+
+        permuted_coref_logits = coref_logits[matched_predicted_cluster_id]
+        permuted_gold = targets[matched_gold_cluster_id]
+
+        if self.args.multiclass_ce:
+            logits = permuted_coref_logits.transpose(0, 1)  # [mentions, num_queries]
+            gold = permuted_gold.transpose(0, 1).nonzero()[:, 1]  # [mentions]
+            cost_coref = F.cross_entropy(logits, gold, reduction='sum')
+        else:
+            if self.args.sum_attn:
+                permuted_coref_logits = permuted_coref_logits.clamp(0, 1)
+            cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_gold, reduction='sum')
+
+
+        # cost_coref = []
+        # for predicted_cluster_id, gold_cluster_id in zip(matched_predicted_cluster_id, matched_gold_cluster_id):
+        #     # generate gold label for this cluster for all doc tokens
+        #     gold_per_token = torch.zeros(doc_len, device=coref_logits.device)
+        #     for start, end in targets[gold_cluster_id]:
+        #         gold_per_token[start: end + 1] = 1
+        #
+        #     loss_fn = F.binary_cross_entropy
+        #     # loss_fn = F.mse_loss
+        #     loss_for_predicted_gold_match = loss_fn(coref_logits[predicted_cluster_id], gold_per_token,
+        #                                             reduction='sum')
+        #     cost_coref.append(loss_for_predicted_gold_match)
+        #
+        # cost_coref = torch.stack(cost_coref).sum() if len(cost_coref) > 0 else 0
+        total_cost = self.cost_is_cluster * cost_is_cluster + self.cost_coref * cost_coref
+        return total_cost
+
+        # # Compute all the requested losses
+        # losses = {}
+        # for loss in self.losses:
+        #     losses.update(self.get_loss(loss, outputs, targets, indices, num_of_gold_clusters))
+        #
+        # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
+        # if 'aux_outputs' in outputs:
+        #     for i, aux_outputs in enumerate(outputs['aux_outputs']):
+        #         indices = self.matcher(aux_outputs, targets)
+        #         for loss in self.losses:
+        #             if loss == 'masks':
+        #                 # Intermediate masks losses are too costly to compute, we ignore them.
+        #                 continue
+        #             kwargs = {}
+        #             if loss == 'labels':
+        #                 # Logging is enabled only for the last layer
+        #                 kwargs = {'log': False}
+        #             l_dict = self.get_loss(loss, aux_outputs, targets, indices, num_of_gold_clusters, **kwargs)
+        #             l_dict = {k + f'_{i}': v for k, v in l_dict.items()}
+        #             losses.update(l_dict)
+        #
+        # return losses
+
 def build_backbone(args, config):
     position_embedding = PositionalEncoding(config.hidden_size)
     backbone = LongformerModel.from_pretrained(args.model_name_or_path,
@@ -338,9 +444,14 @@ def build_DETR(args):
     matcher = build_matcher()
     # TODO maybe return consideration of aux loss
 
-    losses = ['labels', 'boxes', 'cardinality']
-    criterion = SetCriterion(matcher=matcher,
-                             eos_coef=args.eos_coef, losses=losses)
+    criterion = MatchingLoss(matcher=matcher, eos_coef=args.eos_coef, cost_is_cluster=args.cost_is_cluster,
+                             cost_coref=args.cost_coref, args=args)
+
+    # if args.loss == 'match':
+    #     criterion = MatchingLoss(matcher=matcher, eos_coef=args.eos_coef, cost_is_cluster=args.cost_is_cluster, cost_coref=args.cost_coref, args=args)
+    # elif args.loss == 'bcubed':
+    #     criterion = BCubedLoss()
+
     criterion.to(device)
     # postprocessors = {'bbox': PostProcess()}
 

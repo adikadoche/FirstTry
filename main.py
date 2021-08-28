@@ -7,8 +7,6 @@ from cli import parse_args
 import torch
 import wandb #TODO
 
-from transformers import AutoTokenizer, LongformerConfig
-
 from eval import Evaluator
 # from modeling import Adi
 from detr import build_DETR
@@ -48,25 +46,13 @@ def main():
         torch.distributed.barrier()
 
 
-    if args.tokenizer_name:
-        tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name, cache_dir=args.cache_dir)
-    elif args.model_name_or_path:
-        tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir)
-    else:
-        raise ValueError(
-            "You are instantiating a new tokenizer from scratch. This is not supported, but you can do it from another script, save it,"
-            "and load it from here, using --tokenizer_name"
-        )
-
     # config_class = LongformerConfig
     # base_model_prefix = "longformer"
     model, criterion = build_DETR(args)
 
     model.to(args.device)
 
-    evaluator = Evaluator(args, tokenizer)
-
-    global_step, tr_loss = train(args, model, tokenizer, criterion, evaluator)
+    global_step = train(args, model, criterion)
 
 
 # Press the green button in the gutter to run the script.

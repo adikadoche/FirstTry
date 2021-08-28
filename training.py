@@ -13,6 +13,7 @@ from utils import create_gold_matrix, calc_predicted_clusters
 from optimization import WarmupLinearSchedule
 from data import get_dataset, get_data_objects
 import itertools
+from eval import CorefEvaluator
 
 
 from transformers import AdamW, get_linear_schedule_with_warmup
@@ -48,6 +49,69 @@ def load_from_checkpoint(model, checkpoint_path, device=None, optimizer=None, am
         amp.load_state_dict(torch.load(os.path.join(checkpoint_path, 'amp.pt')))
     return {'global_step':global_step}
 
+
+def evaluate(args, eval_dataloader, model, criterion, prefix=""):
+    if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]:
+        os.makedirs(args.output_dir)
+
+    # Eval!
+    logger.info("***** Running evaluation {} *****".format(prefix))
+    logger.info("  Num steps = %d", try_measure_len(eval_dataloader))
+    logger.info("  Batch size = %d", args.eval_batch_size)
+    losses = []
+    batch_sizes = []
+    all_cluster_logits = []
+    all_coref_logits = []
+    all_gold_clusters = []
+    all_gold_mentions = []
+    for batch in tqdm(eval_dataloader, desc="Evaluating"):
+        model.eval()
+
+        batch = tuple(t.to(args.device) if torch.is_tensor(t) else t for t in batch)
+        input_ids, input_mask, text_len, speaker_ids, genre, gold_starts, gold_ends, cluster_ids, sentence_map, gold_clusters = batch
+        all_gold_clusters.append(gold_clusters)
+
+        gold_mentions = None
+        if args.use_gold_mentions:
+            gold_mentions = list(set([tuple(m) for c in gold_clusters for m in c]))
+        all_gold_mentions.append(gold_mentions)
+
+        with torch.no_grad():
+            outputs = model(input_ids, input_mask, gold_mentions)
+            cluster_logits, coref_logits = outputs['cluster_logits'], outputs['coref_logits']
+            gold_matrix = create_gold_matrix(args.device, text_len.sum(), args.num_queries, gold_clusters, gold_mentions)
+            loss = criterion(outputs, gold_matrix)
+            losses.append(loss.item())
+            batch_sizes.append(1) # TODO support batches
+
+        all_cluster_logits.append(cluster_logits.detach().cpu())
+        all_coref_logits.append(coref_logits.detach().cpu())
+
+    eval_loss = np.average(losses, weights=batch_sizes)
+
+    p, r, f1, threshold = calc_best_avg_f1(all_cluster_logits, all_coref_logits, all_gold_clusters, all_gold_mentions)
+    results = {'loss': eval_loss,
+               'avg_f1': f1,
+               'threshold': threshold,
+               'precision': p,
+               'recall': r}
+
+    output_eval_file = os.path.join(args.output_dir, "eval_results.txt")
+    with open(output_eval_file, "a") as writer:
+
+        def out(s):
+            logger.info(str(s))
+            writer.write(str(s) + '\n')
+
+        out("***** Eval results {} *****".format(prefix))
+
+        for key in sorted(results.keys()):
+            out("eval %s = %s" % (key, str(results[key])))
+
+    return results
+
+
+
 def report_eval(args, eval_dataloader, global_step, model, criterion, tb_writer):
     if args.local_rank == -1:  # Only evaluate when single GPU otherwise metrics may not average well
         results = evaluate(args, eval_dataloader, model, criterion, str(global_step))
@@ -57,6 +121,19 @@ def report_eval(args, eval_dataloader, global_step, model, criterion, tb_writer)
         return results
     return None
 
+def save_checkpoint(args, global_step, model, optimizer, amp=None):
+    # Save model checkpoint
+    output_dir = os.path.join(args.output_dir, 'checkpoint-{}'.format(global_step))
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    model_to_save = model.module if hasattr(model, 'module') else model  # Take care of distributed/parallel training
+    # model_to_save.save_pretrained(output_dir)
+    torch.save(model_to_save.state_dict(), os.path.join(output_dir, 'model.step-{}.pt'.format(global_step)))
+    torch.save(optimizer.state_dict(), os.path.join(output_dir, 'optimizer.pt'))
+    if amp is not None:
+        torch.save(amp.state_dict(), os.path.join(output_dir, 'amp.pt'))
+    torch.save(args, os.path.join(output_dir, 'training_args.bin'))
+    logger.info("Saved model checkpoint to %s", output_dir)
 
 
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
@@ -149,7 +226,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     return global_step
 
 
-def train(args, model, tokenizer, criterion, evaluator):
+def train(args, model, criterion):
     """ Train the model """
     # output_dir = Path(args.output_dir)
 
@@ -245,49 +322,40 @@ def train(args, model, tokenizer, criterion, evaluator):
         evaluator = CorefEvaluator()
         epoch_iterator = tqdm(train_loader, desc="Iteration in Epoch {}".format(epoch), disable=args.local_rank not in [-1, 0], leave=False)
         global_step = train_one_epoch(
-            model, criterion, epoch_iterator, optimizer, args, evaluator, skip_steps, recent_grad_norms, recent_cluster_logits,
-        recent_coref_logits, recent_losses, recent_logits_sums, global_step, tb_writer, lr_scheduler, eval_loader)
-        lr_scheduler.step()
-        if args.output_dir:
-            checkpoint_paths = [args.output_dir / 'checkpoint.pth']
-            # extra checkpoint before LR drop and every 100 epochs
-            if (epoch + 1) % args.lr_drop == 0 or (epoch + 1) % 100 == 0:
-                checkpoint_paths.append(args.output_dir / f'checkpoint{epoch:04}.pth')
-            for checkpoint_path in checkpoint_paths:
-                save_on_master({
-                    'model': model.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'lr_scheduler': lr_scheduler.state_dict(),
-                    'epoch': epoch,
-                    'args': args,
-                }, checkpoint_path)
+            model, criterion, epoch_iterator, optimizer, args, evaluator, skip_steps, recent_grad_norms,
+            recent_cluster_logits, recent_coref_logits, recent_losses, recent_logits_sums, global_step,
+            tb_writer, lr_scheduler, eval_loader)
 
-        results = evaluator.evaluate(model, prefix=f'step_{epoch}', tb_writer=tb_writer, global_step=epoch)
+        p, r, f1 = evaluator.get_prf()
+        if args.local_rank in [-1, 0]:
+            tb_writer.add_scalar('Train Precision', p, global_step)
+            tb_writer.add_scalar('Train Recall', r, global_step)
+            tb_writer.add_scalar('Train F1', f1, global_step)
+            logger.info('Train precision, recall, f1: {}'.format((p, r, f1)))
 
+        if args.lr_drop_interval == 'epoch':
+            lr_scheduler.step()  # Update learning rate schedule
 
-        log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
-                     **{f'test_{k}': v for k, v in test_stats.items()},
-                     'epoch': epoch,
-                     'n_parameters': n_parameters}
+        if args.local_rank in [-1, 0]:
+            if args.save_epochs > 0 and (epoch + 1) % args.save_epochs == 0 or epoch + 1 == args.num_train_epochs:
+                save_checkpoint(args, global_step, model, optimizer)
 
-        if args.output_dir and is_main_process():
-            with (args.output_dir / "log.txt").open("a") as f:
-                f.write(json.dumps(log_stats) + "\n")
+            if args.eval_epochs > 0 and (epoch + 1) % args.eval_epochs == 0 or \
+                    epoch + 1 == args.num_train_epochs and (args.eval_epochs > 0 or args.eval_steps > 0):
+                report_eval(args, eval_loader, global_step, model, criterion, tb_writer)
 
-            # for evaluation logs
-            if coco_evaluator is not None:
-                (output_dir / 'eval').mkdir(exist_ok=True)
-                if "bbox" in coco_evaluator.coco_eval:
-                    filenames = ['latest.pth']
-                    if epoch % 50 == 0:
-                        filenames.append(f'{epoch:03}.pth')
-                    for name in filenames:
-                        torch.save(coco_evaluator.coco_eval["bbox"].eval,
-                                   output_dir / "eval" / name)
+        if 0 < args.max_steps < global_step:
+            train_iterator.close()
+            break
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
+
+    if args.local_rank in [-1, 0]:
+        tb_writer.close()
+
+    return global_step
 
     # # Prepare optimizer and schedule (linear warmup and decay)
     # no_decay = ['bias', 'LayerNorm.weight']
@@ -478,9 +546,9 @@ def train(args, model, tokenizer, criterion, evaluator):
     #
     # with open(os.path.join(args.output_dir, f"best_f1.json"), "w") as f:
     #     json.dump({"best_f1": best_f1, "best_global_step": best_global_step}, f)
-
-    tb_writer.close()
-    return global_step, tr_loss / global_step
+    #
+    # tb_writer.close()
+    # return global_step, tr_loss / global_step
 
 
 def set_seed(args):

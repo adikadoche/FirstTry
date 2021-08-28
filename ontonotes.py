@@ -4,7 +4,7 @@ import random
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-from transformers import BertTokenizer
+from transformers import AutoTokenizer
 
 
 class OntonotesDataset(Dataset):
@@ -19,7 +19,16 @@ class OntonotesDataset(Dataset):
         self.args = args
         self.subtoken_maps = {}
         self.genres = {g: i for i, g in enumerate(["bc", "bn", "mz", "nw", "pt", "tc", "wb"])}
-        self.tokenizer = BertTokenizer.from_pretrained(args.bert_type)
+        if args.tokenizer_name:
+            self.tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name, cache_dir=args.cache_dir)
+        elif args.model_name_or_path:
+            self.tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir)
+        else:
+            raise ValueError(
+                "You are instantiating a new tokenizer from scratch. This is not supported, but you can do it from another script, save it,"
+                "and load it from here, using --tokenizer_name"
+            )
+
 
         # clusters_counts = []
         # for x in self:
