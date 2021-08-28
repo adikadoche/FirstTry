@@ -1,0 +1,56 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Current File",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": [
+                "--output_dir", "/home/gamir/adiz/Code/runs/s2e-coref/output_dir/",
+                "--cache_dir", "/home/gamir/adiz/Code/runs/s2e-coref/cache_dir/",
+                "--model_type", "longformer",
+                "--model_name_or_path", "allenai/longformer-large-4096",
+                "--tokenizer_name", "allenai/longformer-large-4096",
+                "--config_name", "allenai/longformer-large-4096",
+                "--train_file", "/home/gamir/datasets/e2e-coref/train.english.jsonlines",
+                "--predict_file", "/home/gamir/datasets/e2e-coref/dev.english.jsonlines",
+                "--do_train",
+                "--do_eval",
+                "--num_train_epochs", "129",
+                "--logging_steps", "500",
+                "--save_steps", "3000",
+                "--eval_steps", "1000",
+                "--max_seq_length", "4096",
+                "--train_file_cache", "/home/gamir/adiz/Code/runs/s2e-coref/cache_dir/train.english.4096.pkl",
+                "--predict_file_cache", "/home/gamir/adiz/Code/runs/s2e-coref/cache_dir/dev.english.4096.pkl",
+                "--gradient_accumulation_steps", "1",
+                "--amp",
+                "--normalise_loss",
+                "--max_total_seq_len", "5000",
+                "--experiment_name", "s2e-model",
+                "--warmup_steps", "5600",
+                "--adam_epsilon", "1e-6",
+                "--head_learning_rate", "3e-4",
+                "--learning_rate", "1e-5",
+                "--adam_beta2", "0.98",
+                "--weight_decay", "0.01",
+                "--dropout_prob", "0.3",
+                "--save_if_best",
+                "--top_lambda", "0.4",
+                "--tensorboard_dir", "/home/gamir/adiz/Code/runs/s2e-coref/output_dir/tb",
+                "--conll_path_for_eval", "/home/gamir/datasets/e2e-coref/dev.english.v4_gold_conll",
+                "--overwrite_output_dir"
+            ],
+            "env": {
+                "DATA_DIR": "/home/gamir/adiz/datasets/ontonotes",
+                "OUTPUT_DIR": "/home/gamir/adiz/Code/runs/s2e-coref/output_dir",
+                "CACHE_DIR": "/home/gamir/adiz/Code/runs/s2e-coref/cache_dir"
+            }
+        }
+    ]
+}

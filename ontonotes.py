@@ -12,7 +12,8 @@ class OntonotesDataset(Dataset):
     def __init__(self, filepath, is_training, args) -> None:
         super().__init__()
         with open(filepath) as f:
-            self.examples = [json.loads(jsonline) for jsonline in f.readlines()]
+            lines = f.readlines()
+            self.examples = [json.loads(jsonline) for jsonline in lines]
         if args.limit_trainset >= 0:
             self.examples = self.examples[:args.limit_trainset]
         self.is_training = is_training
