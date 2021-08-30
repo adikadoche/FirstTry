@@ -139,7 +139,7 @@ def save_checkpoint(args, global_step, model, optimizer, amp=None):
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     epoch_iterator, optimizer: torch.optim.Optimizer,
                     args, evaluator, skip_steps, recent_grad_norms, recent_cluster_logits,
-        recent_coref_logits, recent_losses, recent_logits_sums, global_step, tb_writer, lr_scheduler, eval_loader):
+        recent_coref_logits, recent_losses, recent_logits_sums, global_step, tb_writer, lr_scheduler, eval_loader, threshold):
     for step, batch in enumerate(epoch_iterator):
         if skip_steps > 0:
             skip_steps -= 1
@@ -337,7 +337,7 @@ def train(args, model, criterion):
         global_step = train_one_epoch(
             model, criterion, epoch_iterator, optimizer, args, evaluator, skip_steps, recent_grad_norms,
             recent_cluster_logits, recent_coref_logits, recent_losses, recent_logits_sums, global_step,
-            tb_writer, lr_scheduler, eval_loader)
+            tb_writer, lr_scheduler, eval_loader, threshold)
 
         p, r, f1 = evaluator.get_prf()
         if args.local_rank in [-1, 0]:

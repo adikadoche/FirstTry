@@ -54,22 +54,22 @@ class DETR(nn.Module):
             self.query_mu = nn.Parameter(torch.randn(num_queries, hidden_dim))
             self.query_sigma = nn.Parameter(torch.randn(num_queries, hidden_dim))
 
+        self.word_attn_projection = nn.Linear(backbone.backbone_hidden_size, 1)
         self.span_width_embed = nn.Embedding(30, 20)
-        self.word_attn_projection = nn.Linear(768, 1)
-        self.span_proj = nn.Linear(2324, hidden_dim) # TODO config
+        self.span_proj = nn.Linear(3*backbone.backbone_hidden_size+20, hidden_dim) # TODO config
 
 
         self.IO_score = nn.Sequential(
-            nn.Linear(2*hidden_dim, 3000),
+            nn.Linear(2*hidden_dim, 300),
             nn.ReLU(),
-            nn.Linear(3000, 1000),
+            nn.Linear(300, 100),
             nn.ReLU(),
-            nn.Linear(1000, 2),
+            nn.Linear(100, 1),
         ) #query and token concatenated, resulting in IO score
 
-        self.query_head = nn.Linear(hidden_dim, 1000)
-        self.token_head = nn.Linear(hidden_dim, 1000)
-        self.query_token_IO_score = nn.Linear(2000, 2)
+        self.query_head = nn.Linear(hidden_dim, 75)
+        self.token_head = nn.Linear(hidden_dim, 75)
+        self.query_token_IO_score = nn.Linear(150, 1)
  
 
     def forward(self, input_ids, mask, gold_mentions):
@@ -89,8 +89,9 @@ class DETR(nn.Module):
         """
         longformer_emb, pos = self.backbone(NestedTensor(input_ids, mask))  # Getting representation for each token in the text
 
-        src, mask = longformer_emb[-1].decompose()
-        # doc_len, seq, longformer_emb_size = longformer_emb.shape
+        bs, seq, longformer_emb_size = longformer_emb.shape
+        # filter out masked tokens
+        longformer_emb = torch.masked_select(longformer_emb, mask.unsqueeze(-1)==1).reshape(-1, longformer_emb_size)
 
         if self.args.random_queries:
             raw_query_embed = torch.normal(torch.zeros_like(self.query_embed.weight), 1) * self.query_sigma + self.query_mu #raw_query_embed = torch.normal(torch.zeros_like(self.query_embed.weight), 0.5)
@@ -98,21 +99,21 @@ class DETR(nn.Module):
             raw_query_embed = self.query_embed.weight
 
         if gold_mentions is None:
-            hs, memory = self.transformer(self.input_proj(src), mask, raw_query_embed, pos) # [dec_layers, 1, num_queries, emb], [1, seg*seq, emb]
+            hs, memory = self.transformer(self.input_proj(longformer_emb), mask, raw_query_embed, pos) # [dec_layers, 1, num_queries, emb], [1, seg*seq, emb]
         else:
             span_starts = torch.tensor([m[0] for m in gold_mentions], dtype=torch.long)
             span_ends = torch.tensor([m[1] for m in gold_mentions], dtype=torch.long)
             span_emb, _ = self.get_span_emb(longformer_emb, span_starts, span_ends)  # [mentions, emb']
             span_emb = self.span_proj(span_emb) # [mentions, emb]
 
-            hs, memory, sum_attn_weights = self.transformer(span_emb.unsqueeze(0),
-                                          torch.ones(1, len(gold_mentions), device=input.device),
+            hs, memory = self.transformer(span_emb.unsqueeze(0),
+                                          torch.ones(1, len(gold_mentions), device=input_ids.device),
                                           raw_query_embed,
-                                          torch.zeros(1, len(gold_mentions), span_emb.shape[-1], device=input.device))  # [dec_layers, 1, num_queries, emb], [1, mentions, emb]
+                                          torch.zeros(1, len(gold_mentions), span_emb.shape[-1], device=input_ids.device))  # [dec_layers, 1, num_queries, emb], [1, mentions, emb]
 
 
         last_hs = hs[-1] # [1, num_queries, emb]
-        cluster_logits, coref_logits = self.calc_cluster_and_coref_logits(last_hs, memory, gold_mentions is not None, sum_attn_weights)
+        cluster_logits, coref_logits = self.calc_cluster_and_coref_logits(last_hs, memory, gold_mentions is not None)
 
         # aux_coref_logits = [self.calc_cluster_and_coref_logits(curr_hs, memory)[1] for curr_hs in hs[:-1]]
 
@@ -128,7 +129,7 @@ class DETR(nn.Module):
                 # "aux_coref_logits": aux_coref_logits}
         return out
 
-    def calc_cluster_and_coref_logits(self, last_hs, memory, is_mention_clustering, sum_attn_weights):
+    def calc_cluster_and_coref_logits(self, last_hs, memory, is_mention_clustering):
         # last_hs [1, num_queries, emb]
         # memory [1, tokens, emb]
         num_tokens = memory.shape[1]
@@ -136,19 +137,19 @@ class DETR(nn.Module):
         cluster_logits = self.is_cluster(last_hs).sigmoid()  # [1, num_queries, 1]
 
         if self.args.fc_coref_head:
-            last_hs_tiled = last_hs.unsqueeze(2).repeat(1, num_tokens, 1, 1) # [1, tokens, num_queries, emb]
-            memory_tiled = memory.unsqueeze(1).repeat(1, 1, self.num_queries, 1) # [1, tokens, num_queries, emb]
+            last_hs_tiled = last_hs.unsqueeze(1).repeat(1, num_tokens, 1, 1) # [1, tokens, num_queries, emb]
+            memory_tiled = memory.unsqueeze(2).repeat(1, 1, self.num_queries, 1) # [1, tokens, num_queries, emb]
             coref_features = torch.cat([last_hs_tiled, memory_tiled], -1) # [1, tokens, num_queries, 2 * emb]
             coref_logits = self.IO_score(coref_features).squeeze(-1)
         else:
-            last_hs_tiled = last_hs.unsqueeze(2).repeat(1, num_tokens, 1, 1) # [1, tokens, num_queries, emb]
+            last_hs_tiled = last_hs.unsqueeze(1).repeat(1, num_tokens, 1, 1) # [1, tokens, num_queries, emb]
             last_hs_tiled = self.query_head(last_hs_tiled) # [1, tokens, num_queries, 1000]
-            memory_tiled = memory.unsqueeze(1).repeat(1, 1, self.num_queries, 1) # [1, tokens, num_queries, emb]
+            memory_tiled = memory.unsqueeze(2).repeat(1, 1, self.num_queries, 1) # [1, tokens, num_queries, emb]
             memory_tiled = self.token_head(memory_tiled) # [1, tokens, num_queries, 1000]
             coref_features = torch.cat([last_hs_tiled, memory_tiled], -1) # [1, tokens, num_queries, 2000]
             coref_logits = self.query_token_IO_score(coref_features).squeeze(-1)
 
-        coref_logits = coref_logits.softmax(-1)
+        coref_logits = coref_logits.sigmoid()
 
         if not is_mention_clustering:  #TODO: do I want this?
             # cluster_logits = torch.zeros(1,self.num_queries,1, device=coref_logits.device)
@@ -555,7 +556,7 @@ def build_DETR(args):
 
     backbone = build_backbone(args, config)
 
-    transformer = build_transformer(args, config)
+    transformer = build_transformer(args)
 
     model = DETR(
         backbone,

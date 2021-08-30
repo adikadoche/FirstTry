@@ -150,10 +150,10 @@ def create_gold_matrix(device, doc_len, num_queries, gold_clusters, gold_mention
     return gold_per_token
 
 def calc_predicted_clusters(cluster_logits, coref_logits, threshold, gold_mentions: List):
-    if gold_mentions is None:
-        cluster_logits = cluster_logits.numpy() >= threshold
-        coref_logits = coref_logits.numpy() >= threshold
+    cluster_logits = cluster_logits.numpy() >= threshold
+    coref_logits = coref_logits.numpy() >= threshold
 
+    if gold_mentions is None:
         bsz, num_of_clusters, _ = coref_logits.shape
         clusters = []
         for i in range(0, num_of_clusters):

@@ -151,6 +151,9 @@ def parse_args():
     parser.add_argument('--num_queries', default=100, type=int,
                         help="Number of query slots")
     parser.add_argument('--pre_norm', action='store_true')
+    parser.add_argument('--hidden_dim', default=256, type=int,
+                        help="Size of the embeddings (dimension of the transformer)")
+
 
     # Loss
     parser.add_argument('--no_aux_loss', dest='aux_loss', action='store_false',

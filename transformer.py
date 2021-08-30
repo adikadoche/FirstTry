@@ -45,14 +45,18 @@ class Transformer(nn.Module):
                 nn.init.xavier_uniform_(p)
 
     def forward(self, src, mask, query_embed, pos_embed):
-        batch_size = src.shape[0]
-        query_embed = query_embed.unsqueeze(1).repeat(1, batch_size, 1)
+        src = src.transpose(0,1)
+        pos_embed = pos_embed.transpose(0,1)
+        binary_mask = mask == 0
+        query_embed = query_embed.unsqueeze(1)
 
-        tgt = torch.zeros_like(query_embed)
-        memory = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)
-        hs = self.decoder(tgt, memory, memory_key_padding_mask=mask,
+        # tgt = torch.zeros_like(query_embed)
+        tgt = query_embed
+        memory = self.encoder(src, src_key_padding_mask=binary_mask, pos=pos_embed)
+        hs = self.decoder(tgt, memory, memory_key_padding_mask=binary_mask,
                           pos=pos_embed, query_pos=query_embed)
-        return hs.transpose(1, 2), memory
+
+        return hs.transpose(1, 2), memory.transpose(0, 1)
 
 
 class TransformerEncoder(nn.Module):
@@ -269,9 +273,9 @@ def _get_clones(module, N):
     return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
 
 
-def build_transformer(args, config):
+def build_transformer(args):
     return Transformer(
-        d_model=config.hidden_size,
+        d_model=args.hidden_dim,
         dropout=args.dropout,
         nhead=args.nheads,
         dim_feedforward=args.dim_feedforward,
