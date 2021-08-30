@@ -41,12 +41,14 @@ class DETR(nn.Module):
         self.num_queries = num_queries
         self.transformer = transformer
         hidden_dim = transformer.d_model
+        self.input_proj = nn.Linear(backbone.backbone_hidden_size, hidden_dim)
         self.is_bkgd = nn.Linear(hidden_dim, 1)
         self.query_embed = nn.Embedding(num_queries, hidden_dim)
+        self.IO_score = nn.Linear(hidden_dim * 2, 2) #query and token concatenated, resulting in IO score
         self.backbone = backbone
-        self.aux_loss = aux_loss
+        self.aux_loss = aux_loss 
 
-    def forward(self, input_ids, attention_mask=None):
+    def forward(self, input_ids, mask, gold_mentions):
         """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
@@ -61,17 +63,63 @@ class DETR(nn.Module):
                - "aux_outputs": Optional, only returned when auxilary losses are activated. It is a list of
                                 dictionnaries containing the two above keys for each decoder layer.
         """
-        features, pos = self.backbone(NestedTensor(input_ids, attention_mask))  # Getting representation for each token in the text
+        longformer_emb, pos = self.backbone(NestedTensor(input_ids, mask))  # Getting representation for each token in the text
 
-        mask = None #TODO: is it right? where do i get the mask from?
-        hs, memory = self.transformer(features, mask, self.query_embed.weight, pos)
+        src, mask = longformer_emb[-1].decompose()
+        # doc_len, seq, longformer_emb_size = longformer_emb.shape
 
-        output_logits, outputs_clusters = self.find_mentions(hs, memory)
-        outputs_is_bkgd = self.is_bkgd(hs)
-        out = {OUT_KEYS[0]: output_logits[-1], OUT_KEYS[1]: outputs_clusters[-1], OUT_KEYS[2]: outputs_is_bkgd[-1]}
-        if self.aux_loss:  #TODO make it work
-            out[OUT_KEYS[3]] = self._set_aux_loss(output_logits, outputs_clusters, outputs_is_bkgd)
-        return out
+        if self.args.random_queries:
+            raw_query_embed = torch.normal(torch.zeros_like(self.query_embed.weight), 1) * self.query_sigma + self.query_mu #raw_query_embed = torch.normal(torch.zeros_like(self.query_embed.weight), 0.5)
+        else:
+            raw_query_embed = self.query_embed.weight
+
+        if gold_mentions is None:
+            hs, memory = self.transformer(self.input_proj(src), mask, raw_query_embed, pos) # [dec_layers, 1, num_queries, emb], [1, seg*seq, emb]
+        else:
+            span_starts = torch.tensor([m[0] for m in gold_mentions], dtype=torch.long)
+            span_ends = torch.tensor([m[1] for m in gold_mentions], dtype=torch.long)
+            span_emb, _ = self.get_span_emb(longformer_emb, span_starts, span_ends)  # [mentions, emb']
+            span_emb = self.span_proj(span_emb) # [mentions, emb]
+
+            hs, memory, sum_attn_weights = self.transformer(span_emb.unsqueeze(0),
+                                          torch.ones(1, len(gold_mentions), device=input.device),
+                                          raw_query_embed,
+                                          torch.zeros(1, len(gold_mentions), span_emb.shape[-1], device=input.device))  # [dec_layers, 1, num_queries, emb], [1, mentions, emb]
+
+        if self.args.pairwise_score:
+            # calculate mention * mention * 2emb
+            mentions_count = len(gold_mentions)
+            mentions1 = memory.transpose(0, 1)  # [mentions, 1, emb]
+            mentions2 = memory  # [1, mentions, emb]
+            mentions2 = torch.cat([self.dummy_antecedent.weight.reshape(1,1,-1), mentions2], 1)  # [1, mentions+1, emb]
+            mentions1 = mentions1.repeat(1, mentions_count+1, 1)
+            mentions2 = mentions2.repeat(mentions_count, 1, 1)
+            pairwise_emb = torch.cat([mentions1, mentions2], -1)  # [mentions, mentions, 2*emb]
+
+            # calculate mention pairwise score
+            pairwise_scores = self.fc_coref_head(pairwise_emb).squeeze(-1)  # [mentions, mentions]
+
+            # TODO maybe make pairwise scores symmetric? add transponse and divide.???
+
+            # TODO implement new loss like in kenton (consider only antecedents?)
+            # implement clustering algo (consider only antecedents?)
+        else:
+            last_hs = hs[-1] # [1, num_queries, emb]
+            cluster_logits, coref_logits = self.calc_cluster_and_coref_logits(last_hs, memory, gold_mentions is not None, sum_attn_weights)
+
+            # aux_coref_logits = [self.calc_cluster_and_coref_logits(curr_hs, memory)[1] for curr_hs in hs[:-1]]
+
+            # coref_logits = self.temp_embed.weight[:, :doc_len].unsqueeze(0).sigmoid()
+            # cluster_logits = self.temp_cluster_embed.weight.unsqueeze(0).sigmoid()
+            # coref_logits = coref_logits * cluster_logits
+
+            # if self.aux_loss:
+            #     out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
+
+            out = {"coref_logits": coref_logits,
+                   "cluster_logits": cluster_logits}
+                   # "aux_coref_logits": aux_coref_logits}
+            return out
 
     def find_mentions(self, hs, memory):
         # cluster memory according to hs. must pass some threshold in order to open cluster and be part of cluster.
@@ -407,6 +455,7 @@ def build_backbone(args, config):
                                                config=config,
                                                cache_dir=args.cache_dir)
     model = Joiner(backbone, position_embedding)
+    model.backbone_hidden_size = config.hidden_size
     return model
 
 

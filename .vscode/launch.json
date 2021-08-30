@@ -31,6 +31,7 @@
                 "--predict_file_cache", "/home/gamir/adiz/Code/runs/s2e-coref/cache_dir/dev.english.4096.pkl",
                 "--gradient_accumulation_steps", "1",
                 "--amp",
+                "--use_gold_mentions",
                 "--normalise_loss",
                 "--max_total_seq_len", "5000",
                 "--experiment_name", "s2e-model",
