@@ -44,13 +44,6 @@ class DETR(nn.Module):
         self.input_proj = nn.Linear(backbone.backbone_hidden_size, hidden_dim)
         self.query_embed = nn.Embedding(num_queries, hidden_dim)
         self.is_cluster = nn.Linear(hidden_dim, 1)
-        self.IO_score = nn.Sequential(
-            nn.Linear(2*hidden_dim, 3000),
-            nn.ReLU(),
-            nn.Linear(3000, 1000),
-            nn.ReLU(),
-            nn.Linear(1000, 2),
-        ) #query and token concatenated, resulting in IO score
         self.backbone = backbone
         self.aux_loss = aux_loss
         self.args = args
@@ -65,6 +58,18 @@ class DETR(nn.Module):
         self.word_attn_projection = nn.Linear(768, 1)
         self.span_proj = nn.Linear(2324, hidden_dim) # TODO config
 
+
+        self.IO_score = nn.Sequential(
+            nn.Linear(2*hidden_dim, 3000),
+            nn.ReLU(),
+            nn.Linear(3000, 1000),
+            nn.ReLU(),
+            nn.Linear(1000, 2),
+        ) #query and token concatenated, resulting in IO score
+
+        self.query_head = nn.Linear(hidden_dim, 1000)
+        self.token_head = nn.Linear(hidden_dim, 1000)
+        self.query_token_IO_score = nn.Linear(2000, 2)
  
 
     def forward(self, input_ids, mask, gold_mentions):
@@ -130,11 +135,24 @@ class DETR(nn.Module):
 
         cluster_logits = self.is_cluster(last_hs).sigmoid()  # [1, num_queries, 1]
 
-        last_hs_tiled = last_hs.unsqueeze(2).repeat(1, num_tokens, 1, 1) # [1, tokens, num_queries, emb]
-        memory_tiled = memory.unsqueeze(1).repeat(1, 1, self.num_queries, 1) # [1, tokens, num_queries, emb]
-        coref_features = torch.cat([last_hs_tiled, memory_tiled], -1) # [1, tokens, num_queries, 2 * emb]
-        coref_logits = self.IO_score(coref_features).squeeze(-1)
+        if self.args.fc_coref_head:
+            last_hs_tiled = last_hs.unsqueeze(2).repeat(1, num_tokens, 1, 1) # [1, tokens, num_queries, emb]
+            memory_tiled = memory.unsqueeze(1).repeat(1, 1, self.num_queries, 1) # [1, tokens, num_queries, emb]
+            coref_features = torch.cat([last_hs_tiled, memory_tiled], -1) # [1, tokens, num_queries, 2 * emb]
+            coref_logits = self.IO_score(coref_features).squeeze(-1)
+        else:
+            last_hs_tiled = last_hs.unsqueeze(2).repeat(1, num_tokens, 1, 1) # [1, tokens, num_queries, emb]
+            last_hs_tiled = self.query_head(last_hs_tiled) # [1, tokens, num_queries, 1000]
+            memory_tiled = memory.unsqueeze(1).repeat(1, 1, self.num_queries, 1) # [1, tokens, num_queries, emb]
+            memory_tiled = self.token_head(memory_tiled) # [1, tokens, num_queries, 1000]
+            coref_features = torch.cat([last_hs_tiled, memory_tiled], -1) # [1, tokens, num_queries, 2000]
+            coref_logits = self.query_token_IO_score(coref_features).squeeze(-1)
+
         coref_logits = coref_logits.softmax(-1)
+
+        if not is_mention_clustering:  #TODO: do I want this?
+            # cluster_logits = torch.zeros(1,self.num_queries,1, device=coref_logits.device)
+            coref_logits = coref_logits * cluster_logits
 
         return cluster_logits, coref_logits
 
