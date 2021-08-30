@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 class DETR(nn.Module):
     """ This is the DETR module that performs object detection """
-    def __init__(self, backbone, transformer, num_queries, aux_loss=False):
+    def __init__(self, backbone, transformer, num_queries, args, aux_loss=False):
         """ Initializes the model.
         Parameters:
             backbone: torch module of the backbone to be used. See backbone.py
@@ -42,11 +42,30 @@ class DETR(nn.Module):
         self.transformer = transformer
         hidden_dim = transformer.d_model
         self.input_proj = nn.Linear(backbone.backbone_hidden_size, hidden_dim)
-        self.is_bkgd = nn.Linear(hidden_dim, 1)
         self.query_embed = nn.Embedding(num_queries, hidden_dim)
-        self.IO_score = nn.Linear(hidden_dim * 2, 2) #query and token concatenated, resulting in IO score
+        self.is_cluster = nn.Linear(hidden_dim, 1)
+        self.IO_score = nn.Sequential(
+            nn.Linear(2*hidden_dim, 3000),
+            nn.ReLU(),
+            nn.Linear(3000, 1000),
+            nn.ReLU(),
+            nn.Linear(1000, 2),
+        ) #query and token concatenated, resulting in IO score
         self.backbone = backbone
-        self.aux_loss = aux_loss 
+        self.aux_loss = aux_loss
+        self.args = args
+        if args.single_distribution_queries:
+            self.query_mu = nn.Parameter(torch.randn(1, hidden_dim))
+            self.query_sigma = nn.Parameter(torch.randn(1, hidden_dim))
+        else:
+            self.query_mu = nn.Parameter(torch.randn(num_queries, hidden_dim))
+            self.query_sigma = nn.Parameter(torch.randn(num_queries, hidden_dim))
+
+        self.span_width_embed = nn.Embedding(30, 20)
+        self.word_attn_projection = nn.Linear(768, 1)
+        self.span_proj = nn.Linear(2324, hidden_dim) # TODO config
+
+ 
 
     def forward(self, input_ids, mask, gold_mentions):
         """ The forward expects a NestedTensor, which consists of:
@@ -86,40 +105,77 @@ class DETR(nn.Module):
                                           raw_query_embed,
                                           torch.zeros(1, len(gold_mentions), span_emb.shape[-1], device=input.device))  # [dec_layers, 1, num_queries, emb], [1, mentions, emb]
 
-        if self.args.pairwise_score:
-            # calculate mention * mention * 2emb
-            mentions_count = len(gold_mentions)
-            mentions1 = memory.transpose(0, 1)  # [mentions, 1, emb]
-            mentions2 = memory  # [1, mentions, emb]
-            mentions2 = torch.cat([self.dummy_antecedent.weight.reshape(1,1,-1), mentions2], 1)  # [1, mentions+1, emb]
-            mentions1 = mentions1.repeat(1, mentions_count+1, 1)
-            mentions2 = mentions2.repeat(mentions_count, 1, 1)
-            pairwise_emb = torch.cat([mentions1, mentions2], -1)  # [mentions, mentions, 2*emb]
 
-            # calculate mention pairwise score
-            pairwise_scores = self.fc_coref_head(pairwise_emb).squeeze(-1)  # [mentions, mentions]
+        last_hs = hs[-1] # [1, num_queries, emb]
+        cluster_logits, coref_logits = self.calc_cluster_and_coref_logits(last_hs, memory, gold_mentions is not None, sum_attn_weights)
 
-            # TODO maybe make pairwise scores symmetric? add transponse and divide.???
+        # aux_coref_logits = [self.calc_cluster_and_coref_logits(curr_hs, memory)[1] for curr_hs in hs[:-1]]
 
-            # TODO implement new loss like in kenton (consider only antecedents?)
-            # implement clustering algo (consider only antecedents?)
-        else:
-            last_hs = hs[-1] # [1, num_queries, emb]
-            cluster_logits, coref_logits = self.calc_cluster_and_coref_logits(last_hs, memory, gold_mentions is not None, sum_attn_weights)
+        # coref_logits = self.temp_embed.weight[:, :doc_len].unsqueeze(0).sigmoid()
+        # cluster_logits = self.temp_cluster_embed.weight.unsqueeze(0).sigmoid()
+        # coref_logits = coref_logits * cluster_logits
 
-            # aux_coref_logits = [self.calc_cluster_and_coref_logits(curr_hs, memory)[1] for curr_hs in hs[:-1]]
+        # if self.aux_loss:
+        #     out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
 
-            # coref_logits = self.temp_embed.weight[:, :doc_len].unsqueeze(0).sigmoid()
-            # cluster_logits = self.temp_cluster_embed.weight.unsqueeze(0).sigmoid()
-            # coref_logits = coref_logits * cluster_logits
+        out = {"coref_logits": coref_logits,
+                "cluster_logits": cluster_logits}
+                # "aux_coref_logits": aux_coref_logits}
+        return out
 
-            # if self.aux_loss:
-            #     out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
+    def calc_cluster_and_coref_logits(self, last_hs, memory, is_mention_clustering, sum_attn_weights):
+        # last_hs [1, num_queries, emb]
+        # memory [1, tokens, emb]
+        num_tokens = memory.shape[1]
 
-            out = {"coref_logits": coref_logits,
-                   "cluster_logits": cluster_logits}
-                   # "aux_coref_logits": aux_coref_logits}
-            return out
+        cluster_logits = self.is_cluster(last_hs).sigmoid()  # [1, num_queries, 1]
+
+        last_hs_tiled = last_hs.unsqueeze(2).repeat(1, num_tokens, 1, 1) # [1, tokens, num_queries, emb]
+        memory_tiled = memory.unsqueeze(1).repeat(1, 1, self.num_queries, 1) # [1, tokens, num_queries, emb]
+        coref_features = torch.cat([last_hs_tiled, memory_tiled], -1) # [1, tokens, num_queries, 2 * emb]
+        coref_logits = self.IO_score(coref_features).squeeze(-1)
+        coref_logits = coref_logits.softmax(-1)
+
+        return cluster_logits, coref_logits
+
+    def get_span_emb(self, context_outputs, span_starts, span_ends):
+        span_emb_list = []
+
+        span_start_emb = context_outputs[span_starts] # [k, emb]
+        span_emb_list.append(span_start_emb)
+
+        span_end_emb = context_outputs[span_ends]  # [k, emb]
+        span_emb_list.append(span_end_emb)
+
+        span_width = (1 + span_ends - span_starts).clamp(max=30)  # [k]
+
+        # if self.config["use_features"]:
+        span_width_index = span_width - 1  # [k]
+        span_width_emb = self.span_width_embed.weight[span_width_index]
+        # TODO add dropout
+        # span_width_emb = tf.nn.dropout(span_width_emb, self.dropout)
+        span_emb_list.append(span_width_emb)
+
+        # if self.config["model_heads"]:
+        mention_word_scores = self.get_masked_mention_word_scores(context_outputs, span_starts, span_ends)  # [K, T]
+        head_attn_reps = torch.matmul(mention_word_scores, context_outputs)  # [K, emb]
+        span_emb_list.append(head_attn_reps)
+
+        span_emb = torch.cat(span_emb_list, 1)  # [k, emb]
+        return span_emb, mention_word_scores  # [k, emb], [K, T]
+
+    def get_masked_mention_word_scores(self, encoded_doc, span_starts, span_ends):
+        num_words = encoded_doc.shape[0]  # T
+        num_c = len(span_starts)  # NC
+
+        doc_range = torch.arange(0, num_words).unsqueeze(0).repeat(num_c, 1)  # [K, T]
+        mention_mask = torch.logical_and(doc_range >= span_starts.unsqueeze(1),
+                                      doc_range <= span_ends.unsqueeze(1))  # [K, T]
+
+        word_attn = self.word_attn_projection(encoded_doc).squeeze(1)
+        mention_word_attn = F.softmax(mention_mask.to(dtype=torch.float32, device=encoded_doc.device).log() + word_attn.unsqueeze(0), -1)
+        return mention_word_attn  # [K, T]
+
 
     def find_mentions(self, hs, memory):
         # cluster memory according to hs. must pass some threshold in order to open cluster and be part of cluster.
@@ -132,12 +188,12 @@ class DETR(nn.Module):
         return output_logits, outputs_clusters
 
     @torch.jit.unused
-    def _set_aux_loss(self, output_logits, outputs_clusters, outputs_is_bkgd):
+    def _set_aux_loss(self, output_logits, outputs_clusters, outputs_is_cluster):
         # this is a workaround to make torchscript happy, as torchscript
         # doesn't support dictionary with non-homogeneous values, such
         # as a dict having both a Tensor and a list.
         return [{OUT_KEYS[0]: a, OUT_KEYS[1]: b, OUT_KEYS[2]: c}
-                for a, b, c in zip(output_logits[:-1], outputs_clusters[:-1], outputs_is_bkgd[:-1])]
+                for a, b, c in zip(output_logits[:-1], outputs_clusters[:-1], outputs_is_cluster[:-1])]
 
 
 class SetCriterion(nn.Module):
@@ -186,11 +242,11 @@ class SetCriterion(nn.Module):
         """ Compute the cardinality error, ie the absolute error in the number of predicted non-empty boxes
         This is not really a loss, it is intended for logging purposes only. It doesn't propagate gradients
         """
-        pred_is_bkgd = outputs[OUT_KEYS[2]]
-        device = pred_is_bkgd.device
-        tgt_lengths = torch.as_tensor([len(v["is_bkgd"]) for v in targets], device=device)
+        pred_is_cluster = outputs[OUT_KEYS[2]]
+        device = pred_is_cluster.device
+        tgt_lengths = torch.as_tensor([len(v["is_cluster"]) for v in targets], device=device)
         # Count the number of predictions that are NOT "no-object" (which is the last class)
-        card_pred = (pred_is_bkgd != 0).sum(1)
+        card_pred = (pred_is_cluster != 0).sum(1)
         card_err = F.l1_loss(card_pred.float(), tgt_lengths.float())
         losses = {'cardinality_error': card_err}
         return losses
@@ -487,7 +543,8 @@ def build_DETR(args):
         backbone,
         transformer,
         num_queries=args.num_queries,
-        aux_loss=args.aux_loss,
+        args=args,
+        aux_loss=args.aux_loss
     )
 
     matcher = build_matcher()
