@@ -4,6 +4,7 @@ from datetime import datetime
 from time import time
 from typing import List
 import git
+import itertools
 import torch
 import numpy as np
 import torch.distributed as dist
@@ -149,18 +150,26 @@ def create_gold_matrix(device, doc_len, num_queries, gold_clusters, gold_mention
 
     return gold_per_token
 
+def make_mentions_from_clustered_tokens(self, coref_logits):
+    pass
+
 def calc_predicted_clusters(cluster_logits, coref_logits, threshold, gold_mentions: List):
-    cluster_logits = cluster_logits.numpy() >= threshold
-    coref_logits = coref_logits.numpy() >= threshold
+    # when we are using gold mentions, we get coref_logits at the size of the gold mentions (because we know they are mentions, what we are predicting is the clustering)
 
     if gold_mentions is None:
-        bsz, num_of_clusters, _ = coref_logits.shape
+        cluster_bools = cluster_logits.numpy() >= threshold
+        coref_bools = coref_logits.numpy() >= threshold
+
+        true_coref_indices = np.asarray(np.where(coref_bools)).T
+        cluster_id_to_tokens = {k: list(v) for k, v in itertools.groupby(sorted(true_coref_indices, key=lambda x: x[-1]), lambda x: x[-1])}
+
+        bsz, num_of_clusters, _ = coref_bools.shape
         clusters = []
         for i in range(0, num_of_clusters):
             current_cluster = []
 
             first_token_index = None
-            for token_index, token_logit in enumerate(coref_logits[0, i]):
+            for token_index, token_logit in enumerate(coref_bools[0, i]):
                 if token_logit:
                     if first_token_index is None:
                         first_token_index = token_index
@@ -174,17 +183,21 @@ def calc_predicted_clusters(cluster_logits, coref_logits, threshold, gold_mentio
             if len(current_cluster) > 0:
                 clusters.append(current_cluster)
     else:
+        max_coref_cluster_ind = coref_logits.argmax(-1)
+        coref_bools = coref_logits.numpy() >= threshold
+        coref_bools = np.any(coref_bools, axis=-1)
+        max_coref_cluster_ind = max_coref_cluster_ind[0][coref_bools[0]]
+
+        true_coref_indices = np.asarray(np.where(coref_bools)).T
+        cluster_id_to_tokens = {k: list(v) for k, v in itertools.groupby(sorted(true_coref_indices, key=lambda x: x[-1]), lambda x: x[-1])}
+
         clusters = []
 
-        if coref_logits.shape[-1] > 0:
-            mention_to_cluster_id = coref_logits.squeeze(0).argmax(0) # [mentions]
-            cluster_ids = mention_to_cluster_id.unique()
-
-            for cluster_id in cluster_ids:
-                current_cluster = []
-                for mention_id in (mention_to_cluster_id == cluster_id).nonzero():
-                    current_cluster.append(gold_mentions[mention_id])
-                clusters.append(current_cluster)
+        for gold_mentions_inds in cluster_id_to_gold_mentions.values():
+            current_cluster = []
+            for mention_id in gold_mentions_inds:
+                current_cluster.append(gold_mentions[mention_id[1]])
+            clusters.append(current_cluster)
 
     return clusters
 
