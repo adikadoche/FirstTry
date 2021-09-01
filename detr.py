@@ -566,7 +566,7 @@ def build_DETR(args):
         aux_loss=args.aux_loss
     )
 
-    matcher = build_matcher()
+    matcher = build_matcher(args)
     # TODO maybe return consideration of aux loss
 
     criterion = MatchingLoss(matcher=matcher, eos_coef=args.eos_coef, cost_is_cluster=args.cost_is_cluster,
