@@ -154,7 +154,8 @@ def make_mentions_from_clustered_tokens(self, coref_logits):
     pass
 
 def calc_predicted_clusters(cluster_logits, coref_logits, threshold, gold_mentions: List):
-    # when we are using gold mentions, we get coref_logits at the size of the gold mentions (because we know they are mentions, what we are predicting is the clustering)
+    # when we are using gold mentions, we get coref_logits at the size of the gold mentions ([1, gold_mentions, clusters]) (because we know they are mentions, what we are predicting is the clustering)
+    coref_logits = coref_logits.squeeze(0) #[gold_mentions, clusters]
 
     if gold_mentions is None:
         cluster_bools = cluster_logits.numpy() >= threshold
@@ -183,20 +184,19 @@ def calc_predicted_clusters(cluster_logits, coref_logits, threshold, gold_mentio
             if len(current_cluster) > 0:
                 clusters.append(current_cluster)
     else:
-        max_coref_cluster_ind = coref_logits.argmax(-1)
-        coref_bools = coref_logits.numpy() >= threshold
-        coref_bools = np.any(coref_bools, axis=-1)
-        max_coref_cluster_ind = max_coref_cluster_ind[0][coref_bools[0]]
+        max_coref_score, max_coref_cluster_ind = coref_logits.max(-1) #[gold_mention] choosing the index of the best cluster per gold mention
+        coref_bools = max_coref_score >= threshold #[gold_mention] is the chosen cluster's score passes the threshold
+        true_coref_indices = np.where(coref_bools)[0] #indices of the gold mention that their clusters pass threshold
+        max_coref_cluster_ind = max_coref_cluster_ind[coref_bools] #index of the best clusters per gold mention, if it passes the threshold
 
-        true_coref_indices = np.asarray(np.where(coref_bools)).T
-        cluster_id_to_tokens = {k: list(v) for k, v in itertools.groupby(sorted(true_coref_indices, key=lambda x: x[-1]), lambda x: x[-1])}
+        cluster_id_to_tokens = {k: list(v) for k, v in itertools.groupby(sorted(list(zip(true_coref_indices, max_coref_cluster_ind.numpy())), key=lambda x: x[-1]), lambda x: x[-1])}
 
         clusters = []
 
-        for gold_mentions_inds in cluster_id_to_gold_mentions.values():
+        for gold_mentions_inds in cluster_id_to_tokens.values():
             current_cluster = []
             for mention_id in gold_mentions_inds:
-                current_cluster.append(gold_mentions[mention_id[1]])
+                current_cluster.append(gold_mentions[mention_id[0]])
             clusters.append(current_cluster)
 
     return clusters
