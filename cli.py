@@ -158,6 +158,7 @@ def parse_args():
     # Loss
     parser.add_argument('--no_aux_loss', dest='aux_loss', action='store_false',
                         help="Disables auxiliary decoding losses (loss at each layer)")
+    parser.add_argument('--multiclass_ce', action='store_true')
     # * Loss coefficients
     # parser.add_argument('--mask_loss_coef', default=1, type=float)
     # parser.add_argument('--dice_loss_coef', default=1, type=float)

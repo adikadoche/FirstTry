@@ -137,17 +137,17 @@ class DETR(nn.Module):
         cluster_logits = self.is_cluster(last_hs).sigmoid()  # [1, num_queries, 1]
 
         if self.args.fc_coref_head:
-            last_hs_tiled = last_hs.unsqueeze(1).repeat(1, num_tokens, 1, 1) # [1, tokens, num_queries, emb]
-            memory_tiled = memory.unsqueeze(2).repeat(1, 1, self.num_queries, 1) # [1, tokens, num_queries, emb]
-            coref_features = torch.cat([last_hs_tiled, memory_tiled], -1) # [1, tokens, num_queries, 2 * emb]
-            coref_logits = self.IO_score(coref_features).squeeze(-1) # [1, tokens, num_queries, 1]
+            last_hs_tiled = last_hs.unsqueeze(2).repeat(1, 1, num_tokens, 1) # [1, num_queries, tokens, emb]
+            memory_tiled = memory.unsqueeze(1).repeat(1, self.num_queries, 1, 1) # [1, num_queries, tokens, emb]
+            coref_features = torch.cat([last_hs_tiled, memory_tiled], -1) # [1, num_queries, tokens, 2 * emb]
+            coref_logits = self.IO_score(coref_features).squeeze(-1) # [1, num_queries, tokens, 1]
         else:
-            last_hs_tiled = last_hs.unsqueeze(1).repeat(1, num_tokens, 1, 1) # [1, tokens, num_queries, emb]
-            last_hs_tiled = self.query_head(last_hs_tiled) # [1, tokens, num_queries, 1000]
-            memory_tiled = memory.unsqueeze(2).repeat(1, 1, self.num_queries, 1) # [1, tokens, num_queries, emb]
-            memory_tiled = self.token_head(memory_tiled) # [1, tokens, num_queries, 1000]
-            coref_features = torch.cat([last_hs_tiled, memory_tiled], -1) # [1, tokens, num_queries, 2000]
-            coref_logits = self.query_token_IO_score(coref_features).squeeze(-1) # [1, tokens, num_queries, 1]
+            last_hs_tiled = last_hs.unsqueeze(2).repeat(1, 1, num_tokens, 1) # [1, num_queries, tokens, emb]
+            last_hs_tiled = self.query_head(last_hs_tiled) # [1, num_queries, tokens, 1000]
+            memory_tiled = memory.unsqueeze(1).repeat(1, self.num_queries, 1, 1) # [1, num_queries, tokens, emb]
+            memory_tiled = self.token_head(memory_tiled) # [1, num_queries, tokens, 1000]
+            coref_features = torch.cat([last_hs_tiled, memory_tiled], -1) # [1, num_queries, tokens, 2000]
+            coref_logits = self.query_token_IO_score(coref_features).squeeze(-1) # [1, num_queries, tokens, 1]
 
         coref_logits = coref_logits.sigmoid()
 

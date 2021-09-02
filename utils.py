@@ -154,8 +154,8 @@ def make_mentions_from_clustered_tokens(self, coref_logits):
     pass
 
 def calc_predicted_clusters(cluster_logits, coref_logits, threshold, gold_mentions: List):
-    # when we are using gold mentions, we get coref_logits at the size of the gold mentions ([1, gold_mentions, clusters]) (because we know they are mentions, what we are predicting is the clustering)
-    coref_logits = coref_logits.squeeze(0) #[gold_mentions, clusters]
+    # when we are using gold mentions, we get coref_logits at the size of the gold mentions ([1, clusters, gold_mentions]) (because we know they are mentions, what we are predicting is the clustering)
+    coref_logits = coref_logits.squeeze(0) #[clusters, gold_mentions]
 
     if gold_mentions is None:
         cluster_bools = cluster_logits.numpy() >= threshold
@@ -184,7 +184,7 @@ def calc_predicted_clusters(cluster_logits, coref_logits, threshold, gold_mentio
             if len(current_cluster) > 0:
                 clusters.append(current_cluster)
     else:
-        max_coref_score, max_coref_cluster_ind = coref_logits.max(-1) #[gold_mention] choosing the index of the best cluster per gold mention
+        max_coref_score, max_coref_cluster_ind = coref_logits.max(0) #[gold_mention] choosing the index of the best cluster per gold mention
         coref_bools = max_coref_score >= threshold #[gold_mention] is the chosen cluster's score passes the threshold
         true_coref_indices = np.where(coref_bools)[0] #indices of the gold mention that their clusters pass threshold
         max_coref_cluster_ind = max_coref_cluster_ind[coref_bools] #index of the best clusters per gold mention, if it passes the threshold
