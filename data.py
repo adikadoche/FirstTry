@@ -3,6 +3,7 @@ import logging
 import os
 import pickle
 from collections import namedtuple
+import numpy as np
 
 import torch
 

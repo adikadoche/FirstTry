@@ -224,3 +224,9 @@ def evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_gold_cluster
         evaluator.update(predicted_clusters, gold_clusters)
     p, r, f1 = evaluator.get_prf()
     return p, r, f1
+
+def try_measure_len(iter):
+    try:
+        return len(iter)
+    except:
+        return -1
