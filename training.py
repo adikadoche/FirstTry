@@ -9,7 +9,7 @@ from coref_bucket_batch_sampler import BucketBatchSampler
 from tqdm import tqdm, trange
 import time, datetime
 from misc import save_on_master, is_main_process
-from utils import create_gold_matrix, calc_predicted_clusters
+from utils import create_gold_matrix, calc_predicted_clusters, calc_best_avg_f1
 from optimization import WarmupLinearSchedule
 from data import get_dataset, get_data_objects
 import itertools
