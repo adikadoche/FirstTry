@@ -8,7 +8,8 @@ import itertools
 import torch
 import numpy as np
 import torch.distributed as dist
-
+from tqdm import tqdm
+from eval import CorefEvaluator
 
 from consts import NULL_ID_FOR_COREF
 
@@ -201,4 +202,25 @@ def calc_predicted_clusters(cluster_logits, coref_logits, threshold, gold_mentio
 
     return clusters
 
+def calc_best_avg_f1(all_cluster_logits, all_coref_logits, all_gold_clusters, all_gold_mentions):
+    best = [-1, -1, -1]
+    best_threshold = None
+    thres_start = 0.05
+    thres_stop = 1
+    thres_step = 0.05
+    for threshold in tqdm(np.arange(thres_start, thres_stop, thres_step), desc='Searching for best threshold'):
+        p, r, f1 = evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_gold_clusters, threshold, all_gold_mentions)
+        if f1 > best[-1]:
+            best = p,r,f1
+            best_threshold = threshold
 
+    return best + (best_threshold,)
+
+def evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_gold_clusters, threshold, all_gold_mentions):
+    evaluator = CorefEvaluator()
+    for i, (cluster_logits, coref_logits, gold_clusters, gold_mentions) in enumerate(
+            zip(all_cluster_logits, all_coref_logits, all_gold_clusters, all_gold_mentions)):
+        predicted_clusters = calc_predicted_clusters(cluster_logits, coref_logits, threshold, gold_mentions)
+        evaluator.update(predicted_clusters, gold_clusters)
+    p, r, f1 = evaluator.get_prf()
+    return p, r, f1
