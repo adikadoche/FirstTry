@@ -7,10 +7,11 @@ from collections import OrderedDict, defaultdict
 import numpy as np
 from scipy.optimize import linear_sum_assignment as linear_assignment
 import torch
+from tqdm import tqdm
 from coref_bucket_batch_sampler import BucketBatchSampler
 from data import get_dataset
 from metrics import CorefEvaluator, MentionEvaluator
-from utils import extract_clusters, extract_mentions_to_predicted_clusters_from_clusters, extract_clusters_for_decode
+from utils import calc_best_avg_f1, create_gold_matrix, try_measure_len
 from conll import evaluate_conll
 
 logger = logging.getLogger(__name__)
