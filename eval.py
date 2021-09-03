@@ -10,14 +10,10 @@ import torch
 from tqdm import tqdm
 from coref_bucket_batch_sampler import BucketBatchSampler
 from data import get_dataset
-from metrics import CorefEvaluator, MentionEvaluator
 from utils import calc_best_avg_f1, create_gold_matrix, try_measure_len
 from conll import evaluate_conll
 
 logger = logging.getLogger(__name__)
-
-def calc_mention_to_cluster(clusters):
-    return {tuple(m):c for c in clusters for m in c}
 
 
 def b_cubed(clusters, mention_to_gold):
@@ -60,67 +56,6 @@ def f1(p_num, p_den, r_num, r_den, beta=1):
     return 0 if p + r == 0 else (1 + beta * beta) * p * r / (beta * beta * p + r)
 
 
-class Evaluator(object):
-    def __init__(self, metric, beta=1):
-        self.p_num = 0
-        self.p_den = 0
-        self.r_num = 0
-        self.r_den = 0
-        self.metric = metric
-        self.beta = beta
-
-    def update(self, predicted, gold, mention_to_predicted, mention_to_gold):
-        if self.metric == ceafe:
-            pn, pd, rn, rd = self.metric(predicted, gold)
-        else:
-            pn, pd = self.metric(predicted, mention_to_gold)
-            rn, rd = self.metric(gold, mention_to_predicted)
-        self.p_num += pn
-        self.p_den += pd
-        self.r_num += rn
-        self.r_den += rd
-
-    def get_f1(self):
-        return f1(self.p_num, self.p_den, self.r_num, self.r_den, beta=self.beta)
-
-    def get_recall(self):
-        return 0 if self.r_num == 0 else self.r_num / float(self.r_den)
-
-    def get_precision(self):
-        return 0 if self.p_num == 0 else self.p_num / float(self.p_den)
-
-    def get_prf(self):
-        return self.get_precision(), self.get_recall(), self.get_f1()
-
-    def get_counts(self):
-        return self.p_num, self.p_den, self.r_num, self.r_den
-
-
-class CorefEvaluator(object):
-    def __init__(self):
-        # self.evaluators = [Evaluator(m) for m in (muc, b_cubed, ceafe)]
-        self.evaluators = [Evaluator(m) for m in [b_cubed]]
-
-
-    def update(self, predicted, gold):
-        gold = [tuple([tuple(m) for m in c]) for c in gold]
-        predicted = [tuple([tuple(m) for m in c]) for c in predicted]
-        mention_to_predicted = calc_mention_to_cluster(predicted)
-        mention_to_gold = calc_mention_to_cluster(gold)
-        for e in self.evaluators:
-            e.update(predicted, gold, mention_to_predicted, mention_to_gold)
-
-    def get_f1(self):
-        return sum(e.get_f1() for e in self.evaluators) / len(self.evaluators)
-
-    def get_recall(self):
-        return sum(e.get_recall() for e in self.evaluators) / len(self.evaluators)
-
-    def get_precision(self):
-        return sum(e.get_precision() for e in self.evaluators) / len(self.evaluators)
-
-    def get_prf(self):
-        return self.get_precision(), self.get_recall(), self.get_f1()
 
 
 def evaluate(args, eval_dataloader, model, criterion, prefix=""):

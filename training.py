@@ -13,7 +13,7 @@ from utils import create_gold_matrix, calc_predicted_clusters, calc_best_avg_f1,
 from optimization import WarmupLinearSchedule
 from data import get_dataset, get_data_objects
 import itertools
-from eval import CorefEvaluator
+from metrics import CorefEvaluator
 
 
 from transformers import AdamW, get_linear_schedule_with_warmup
