@@ -8,6 +8,9 @@ def f1(p_num, p_den, r_num, r_den, beta=1):
     r = 0 if r_den == 0 else r_num / float(r_den)
     return 0 if p + r == 0 else (1 + beta * beta) * p * r / (beta * beta * p + r)
 
+def calc_mention_to_cluster(clusters):
+    return {tuple(m):c for c in clusters for m in c}
+
 
 class MentionEvaluator:
     def __init__(self):
@@ -34,28 +37,6 @@ class MentionEvaluator:
 
     def get_prf(self):
         return self.get_precision(), self.get_recall(), self.get_f1()
-
-
-class CorefEvaluator(object):
-    def __init__(self):
-        self.evaluators = [Evaluator(m) for m in (muc, b_cubed, ceafe)]
-
-    def update(self, predicted, gold, mention_to_predicted, mention_to_gold):
-        for e in self.evaluators:
-            e.update(predicted, gold, mention_to_predicted, mention_to_gold)
-
-    def get_f1(self):
-        return sum(e.get_f1() for e in self.evaluators) / len(self.evaluators)
-
-    def get_recall(self):
-        return sum(e.get_recall() for e in self.evaluators) / len(self.evaluators)
-
-    def get_precision(self):
-        return sum(e.get_precision() for e in self.evaluators) / len(self.evaluators)
-
-    def get_prf(self):
-        return self.get_precision(), self.get_recall(), self.get_f1()
-
 
 class Evaluator(object):
     def __init__(self, metric, beta=1):
@@ -92,6 +73,32 @@ class Evaluator(object):
     def get_counts(self):
         return self.p_num, self.p_den, self.r_num, self.r_den
 
+
+class CorefEvaluator(object):
+    def __init__(self):
+        # self.evaluators = [Evaluator(m) for m in (muc, b_cubed, ceafe)]
+        self.evaluators = [Evaluator(m) for m in [b_cubed]]
+
+
+    def update(self, predicted, gold):
+        gold = [tuple([tuple(m) for m in c]) for c in gold]
+        predicted = [tuple([tuple(m) for m in c]) for c in predicted]
+        mention_to_predicted = calc_mention_to_cluster(predicted)
+        mention_to_gold = calc_mention_to_cluster(gold)
+        for e in self.evaluators:
+            e.update(predicted, gold, mention_to_predicted, mention_to_gold)
+
+    def get_f1(self):
+        return sum(e.get_f1() for e in self.evaluators) / len(self.evaluators)
+
+    def get_recall(self):
+        return sum(e.get_recall() for e in self.evaluators) / len(self.evaluators)
+
+    def get_precision(self):
+        return sum(e.get_precision() for e in self.evaluators) / len(self.evaluators)
+
+    def get_prf(self):
+        return self.get_precision(), self.get_recall(), self.get_f1()
 
 def b_cubed(clusters, mention_to_gold):
     num, dem = 0, 0

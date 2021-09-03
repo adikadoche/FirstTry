@@ -8,7 +8,6 @@ import numpy as np
 import torch
 
 from consts import SPEAKER_START, SPEAKER_END, NULL_ID_FOR_COREF
-from utils import flatten_list_of_lists
 from torch.utils.data import Dataset, RandomSampler, DistributedSampler, SequentialSampler, DataLoader
 from ontonotes import OntonotesDataset
 
@@ -162,3 +161,6 @@ def get_data_objects(args, data_file_name, is_training):
                              worker_init_fn=lambda worker_id: np.random.seed(torch.initial_seed() % 2**32))
 
     return dataset, sampler, loader, batch_size
+
+def flatten_list_of_lists(lst):
+    return [elem for sublst in lst for elem in sublst]

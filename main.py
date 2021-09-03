@@ -7,7 +7,6 @@ from cli import parse_args
 import torch
 #TODO import wandb 
 
-from eval import Evaluator
 # from modeling import Adi
 from detr import build_DETR
 from training import set_seed, train

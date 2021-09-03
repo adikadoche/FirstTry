@@ -10,7 +10,8 @@ from consts import OUT_KEYS
 import math
 
 
-from utils import build_positional_encoding
+import numpy as np
+
 # from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
 #                        accuracy, get_world_size, interpolate,
 #                        is_dist_avail_and_initialized)
@@ -377,6 +378,24 @@ class MLP(nn.Module):
             x = F.relu(layer(x)) if i < self.num_layers - 1 else layer(x)
         return x
 
+
+def get_angles(pos, i, d_model):
+    angle_rates = 1 / np.power(10000, (2 * (i//2)) / d_model) #TODO: make sure returns float
+    return pos * angle_rates
+
+
+def build_positional_encoding(position, d_model):
+    angle_rads = get_angles(np.arange(position)[:, np.newaxis],
+                          np.arange(d_model)[np.newaxis, :],
+                          d_model)
+    # apply sin to even indices in the array; 2i
+    angle_rads[:, 0::2] = np.sin(angle_rads[:, 0::2])
+    # apply cos to odd indices in the array; 2i+1
+    angle_rads[:, 1::2] = np.cos(angle_rads[:, 1::2])
+
+    pos_encoding = angle_rads[np.newaxis, ...]
+
+    return pos_encoding
 
 class PositionalEncoding(nn.Module):
 
