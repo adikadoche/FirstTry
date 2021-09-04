@@ -73,7 +73,7 @@ class DETR(nn.Module):
         self.query_token_IO_score = nn.Linear(150, 1)
  
 
-    def forward(self, input_ids, mask, gold_mentions):
+    def forward(self, input_ids, orig_input_dim, mask, gold_mentions):
         """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
@@ -88,6 +88,8 @@ class DETR(nn.Module):
                - "aux_outputs": Optional, only returned when auxilary losses are activated. It is a list of
                                 dictionnaries containing the two above keys for each decoder layer.
         """
+        input_ids = torch.reshape(input_ids, orig_input_dim)
+        mask = torch.reshape(mask, orig_input_dim)
         longformer_emb, pos = self.backbone(NestedTensor(input_ids, mask))  # Getting representation for each token in the text
 
         bs, seq, longformer_emb_size = longformer_emb.shape
