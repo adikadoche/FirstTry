@@ -3,7 +3,7 @@
 # Press Shift+F10 to execute it or replace it with your code.
 # Press Double Shift to search everywhere for classes, files, tool windows, actions, and settings.
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "1,2,3"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "1,2,3"
 # os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
 import logging

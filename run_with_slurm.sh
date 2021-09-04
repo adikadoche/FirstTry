@@ -38,10 +38,11 @@ sbatch \
   --error=${LOG_PATH}  \
   --partition=${SLURM_PARTITION}  \
   --time=2880  \
-  --signal=1USR1@120  \
+  --signal=USR1@120  \
   --nodes=1  \
   --ntasks=1  \
   --gpus=1  \
+  --constraint="geforce_rtx_3090|quadro_rtx_8000|tesla_v100"  \
   ${SCRIPT_PATH} ${SCRIPT_PARAMS}  |  tee ${TEMPFILE_PATH}
 
 JOB_ID=$(grep -oP '\d+' ${TEMPFILE_PATH})
