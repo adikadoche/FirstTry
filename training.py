@@ -71,7 +71,10 @@ def evaluate(args, eval_dataloader, model, criterion, prefix=""):
         all_gold_mentions.append(gold_mentions)
 
         with torch.no_grad():
-            outputs = model(input_ids, input_mask, gold_mentions)
+            orig_input_dim = input_ids.shape
+            input_ids = torch.reshape(input_ids, (1, -1))
+            input_mask = torch.reshape(input_mask, (1, -1))
+            outputs = model(input_ids, orig_input_dim, input_mask, gold_mentions)
             cluster_logits, coref_logits = outputs['cluster_logits'], outputs['coref_logits']
             gold_matrix = create_gold_matrix(args.device, text_len.sum(), args.num_queries, gold_clusters, gold_mentions)
             loss = criterion(outputs, gold_matrix)

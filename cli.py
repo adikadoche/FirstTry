@@ -97,7 +97,11 @@ def parse_args():
 
     parser.add_argument("--logging_steps", type=int, default=500, help="Log every X updates steps.")
     parser.add_argument("--eval_steps", type=int, default=500, help="Eval every X updates steps.")
+    parser.add_argument('--eval_epochs', type=int, default=1)
+    parser.add_argument('--eval_sleep', type=int, default=10)
+    parser.add_argument('--eval_skip_until', type=int, default=-1)
     parser.add_argument("--save_steps", type=int, default=500, help="Save checkpoint every X updates steps.")
+    parser.add_argument('--save_epochs', type=int, default=1)
     parser.add_argument("--no_cuda", action="store_true", help="Whether not to use CUDA when available")
     parser.add_argument(
         "--overwrite_output_dir", action="store_true", help="Overwrite the content of the output directory"
