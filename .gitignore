@@ -3,3 +3,4 @@ venv
 **/*.pyc
 *.txt
 slurm_logs
+.vscode/launch.json

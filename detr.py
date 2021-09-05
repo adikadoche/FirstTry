@@ -146,12 +146,15 @@ class DETR(nn.Module):
             coref_logits = self.IO_score(coref_features).squeeze(-1) # [1, num_queries, tokens, 1]
         else:
             last_hs_tiled = last_hs.unsqueeze(2).repeat(1, 1, num_tokens, 1) # [1, num_queries, tokens, emb]
-            last_hs_tiled = self.query_head(last_hs_tiled) # [1, num_queries, tokens, 1000]
+            last_hs_tiled = self.query_head(last_hs_tiled) # [1, num_queries, tokens, 75]
             memory_tiled = memory.unsqueeze(1).repeat(1, self.num_queries, 1, 1) # [1, num_queries, tokens, emb]
-            memory_tiled = self.token_head(memory_tiled) # [1, num_queries, tokens, 1000]
-            coref_features = torch.cat([last_hs_tiled, memory_tiled], -1) # [1, num_queries, tokens, 2000]
+            memory_tiled = self.token_head(memory_tiled) # [1, num_queries, tokens, 75]
+            coref_features = torch.cat([last_hs_tiled, memory_tiled], -1) # [1, num_queries, tokens, 150]
             coref_logits = self.query_token_IO_score(coref_features).squeeze(-1) # [1, num_queries, tokens, 1]
 
+        # if is_mention_clustering: 
+        #     coref_logits = F.softmax(coref_logits, dim=0)
+        # else:
         coref_logits = coref_logits.sigmoid()
 
         if not is_mention_clustering:  #TODO: do I want this?

@@ -32,6 +32,7 @@
                 "--gradient_accumulation_steps", "1",
                 "--amp",
                 "--use_gold_mentions",
+                "--no_cuda",
                 "--normalise_loss",
                 "--max_total_seq_len", "5000",
                 "--experiment_name", "s2e-model",

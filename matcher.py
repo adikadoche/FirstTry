@@ -55,14 +55,16 @@ class HungarianMatcher(nn.Module):
         """
         coref_logits = outputs["coref_logits"].squeeze(0) # [num_queries, tokens]
         cluster_logits = outputs["cluster_logits"].squeeze(0) # [num_queries, 1]
-        num_of_gold_clusters = len(targets)
+        real_cluster_target_rows = torch.sum(targets, -1) > 0
+        real_cluster_target = targets[real_cluster_target_rows]
+        num_of_gold_clusters = int(targets[real_cluster_target_rows].shape[0])
         num_queries, doc_len = coref_logits.shape
 
         cost_is_cluster = F.binary_cross_entropy(cluster_logits, torch.ones_like(cluster_logits), reduction='none') # [num_queries, 1]
         cost_is_cluster = cost_is_cluster.repeat(1, num_of_gold_clusters) # [num_queries, gold_clusters]
 
         cost_coref = []
-        for cluster in targets:
+        for cluster in real_cluster_target:
             gold_per_token_repeated = cluster.repeat(num_queries, 1) # [num_queries, tokens]
             if self.args.multiclass_ce:
                 # logits = coref_logits.transpose(0, 1)  # [mentions, num_queries]
