@@ -167,6 +167,52 @@ def match_clusters(gold, pred):
            gold_is_completely_missed, gold_to_most_similar_pred
 
 
+def is_cluster_contains_linked_entities(cluster, entities_per_sentence, sentences, output_linked_entities=False):
+    found_entity_in_cluster = False
+    entities_found = set()
+    for start, end in cluster:
+        sentence_index = 0
+        sentence = sentences[sentence_index]
+        while start >= len(sentence):
+            start -= len(sentence)
+            end -= len(sentence)
+            sentence_index += 1
+            sentence = sentences[sentence_index]
+
+        entities = entities_per_sentence[sentence_index]
+
+        # calc mention in-sentences text location (without ##)
+        char_start = len(' '.join(sentence[0:start]).replace(' ##', '').replace('[CLS] ', '')) + 1
+        char_end = len(' '.join(sentence[0:end + 1]).replace(' ##', '').replace('[CLS] ', ''))
+
+        text = ' '.join(sentence).replace(' ##', '').replace('[CLS] ', '')
+        # print("'" + text[char_start:char_end] + "'")
+
+        found_entity_for_current_mention = False
+        for ent_start, ent_len, ent_text in entities:
+            ent_end = ent_start + ent_len
+            # if ent_start <= char_start < ent_end or ent_start < char_end <= ent_end:
+            # if ent_start == char_start and char_end == ent_end:
+            if ent_start >= char_start and ent_end <= char_end:
+                # if found_entity_for_current_mention:
+                #     print('Found more than 1 linked entity for a mention', )
+                #     print('LINKED ENTITY: ', ent_text)
+                #     print('Mention text: ', text[char_start:char_end])
+                #     print(char_start, char_end, ent_start, ent_end)
+                found_entity_for_current_mention = True
+                entities_found.add(ent_text)
+
+        if found_entity_for_current_mention:
+            found_entity_in_cluster = True
+
+    if output_linked_entities:
+        return entities_found
+    else:
+        return found_entity_in_cluster
+
+
+
+
 
 
 count_clusters = 0
@@ -268,50 +314,6 @@ print("{}% excess pronouns".format(1. * count_excess_pronous / count_excess_ment
 
 entities_per_example = pickle.load(open("dev_entities_per_example.p", "rb"))
 
-def is_cluster_contains_linked_entities(cluster, entities_per_sentence, sentences, output_linked_entities=False):
-    found_entity_in_cluster = False
-    entities_found = set()
-    for start, end in cluster:
-        sentence_index = 0
-        sentence = sentences[sentence_index]
-        while start >= len(sentence):
-            start -= len(sentence)
-            end -= len(sentence)
-            sentence_index += 1
-            sentence = sentences[sentence_index]
-
-        entities = entities_per_sentence[sentence_index]
-
-        # calc mention in-sentences text location (without ##)
-        char_start = len(' '.join(sentence[0:start]).replace(' ##', '').replace('[CLS] ', '')) + 1
-        char_end = len(' '.join(sentence[0:end + 1]).replace(' ##', '').replace('[CLS] ', ''))
-
-        text = ' '.join(sentence).replace(' ##', '').replace('[CLS] ', '')
-        # print("'" + text[char_start:char_end] + "'")
-
-        found_entity_for_current_mention = False
-        for ent_start, ent_len, ent_text in entities:
-            ent_end = ent_start + ent_len
-            # if ent_start <= char_start < ent_end or ent_start < char_end <= ent_end:
-            # if ent_start == char_start and char_end == ent_end:
-            if ent_start >= char_start and ent_end <= char_end:
-                # if found_entity_for_current_mention:
-                #     print('Found more than 1 linked entity for a mention', )
-                #     print('LINKED ENTITY: ', ent_text)
-                #     print('Mention text: ', text[char_start:char_end])
-                #     print(char_start, char_end, ent_start, ent_end)
-                found_entity_for_current_mention = True
-                entities_found.add(ent_text)
-
-        if found_entity_for_current_mention:
-            found_entity_in_cluster = True
-
-    if output_linked_entities:
-        return entities_found
-    else:
-        return found_entity_in_cluster
-
-
 for (key, example), i in zip(data.items(), range(35)):
     entities_per_sentence = entities_per_example[example['example_num']]
 
@@ -342,7 +344,5 @@ for (key, example), i in zip(data.items(), range(35)):
         print("LINKED ENTITIES SET: ", entities_set)
 
         print('===========================================================================================================================================================================================================================')
-
-
 
 

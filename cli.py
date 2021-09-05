@@ -80,7 +80,7 @@ def parse_args():
     parser.add_argument("--max_seq_length", default=-1, type=int)
 
     parser.add_argument("--do_train", action="store_true", help="Whether to run training.")
-    parser.add_argument("--do_eval", action="store_true", help="Whether to run eval on the dev set.")
+    parser.add_argument("--eval", type=str, choices=['no', 'specific', 'all', 'vanilla'], default='no')
     parser.add_argument("--do_lower_case", action="store_true", help="Set this flag if you are using an uncased model.")
 
     parser.add_argument("--nonfreeze_params", default=None, type=str,

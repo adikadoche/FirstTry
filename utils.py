@@ -13,6 +13,47 @@ from metrics import CorefEvaluator
 
 from consts import NULL_ID_FOR_COREF
 
+import logging
+logger = logging.getLogger(__name__)
+
+
+
+def save_checkpoint(args, global_step, model, optimizer, amp=None):
+    # Save model checkpoint
+    output_dir = os.path.join(args.output_dir, 'checkpoint-{}'.format(global_step))
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    model_to_save = model.module if hasattr(model, 'module') else model  # Take care of distributed/parallel training
+    # model_to_save.save_pretrained(output_dir)
+    torch.save(model_to_save.state_dict(), os.path.join(output_dir, 'model.step-{}.pt'.format(global_step)))
+    torch.save(optimizer.state_dict(), os.path.join(output_dir, 'optimizer.pt'))
+    if amp is not None:
+        torch.save(amp.state_dict(), os.path.join(output_dir, 'amp.pt'))
+    torch.save(args, os.path.join(output_dir, 'training_args.bin'))
+    logger.info("Saved model checkpoint to %s", output_dir)
+
+
+def load_from_checkpoint(model, checkpoint_path, device=None, optimizer=None, amp=None):
+    global_step = checkpoint_path.rstrip('/').split('-')[-1]
+    model_to_load = model.module if hasattr(model, 'module') else model  # Take care of distributed/parallel training
+    try:
+        model_to_load.load_state_dict(torch.load(checkpoint_path + '/model.step-' + global_step + '.pt', map_location=device))
+    except Exception as e:
+        logger.error(e)
+        model_to_load.load_state_dict(
+            torch.load(checkpoint_path + '/model.step-' + global_step + '.pt', map_location=device), strict=False)
+    if optimizer is not None:
+        opt_path = os.path.join(checkpoint_path, 'optimizer.pt')
+        if os.path.exists(opt_path):
+            optimizer.load_state_dict(torch.load(opt_path, map_location=device))
+            # TODO make this more robust for different trees of states
+            for state in optimizer.state.values():
+                for k, v in state.items():
+                    if torch.is_tensor(v):
+                        state[k] = v.to(device)
+    if amp is not None:
+        amp.load_state_dict(torch.load(os.path.join(checkpoint_path, 'amp.pt')))
+    return {'global_step':global_step}
 
 
 def extract_clusters(gold_clusters):

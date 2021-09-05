@@ -7,6 +7,8 @@ import torch
 from scipy.optimize import linear_sum_assignment
 from torch import nn
 import torch.nn.functional as F
+import logging
+logger = logging.getLogger(__name__)
 
 # from util.box_ops import box_cxcywh_to_xyxy, generalized_box_iou
 
@@ -53,11 +55,14 @@ class HungarianMatcher(nn.Module):
             For each batch element, it holds:
                 len(index_i) = len(index_j) = min(num_queries, num_target_boxes)
         """
+        if targets.shape[1] == 0:
+            return (False, False)
+
         coref_logits = outputs["coref_logits"].squeeze(0) # [num_queries, tokens]
         cluster_logits = outputs["cluster_logits"].squeeze(0) # [num_queries, 1]
         real_cluster_target_rows = torch.sum(targets, -1) > 0
         real_cluster_target = targets[real_cluster_target_rows]
-        num_of_gold_clusters = int(targets[real_cluster_target_rows].shape[0])
+        num_of_gold_clusters = int(real_cluster_target.shape[0])
         num_queries, doc_len = coref_logits.shape
 
         cost_is_cluster = F.binary_cross_entropy(cluster_logits, torch.ones_like(cluster_logits), reduction='none') # [num_queries, 1]

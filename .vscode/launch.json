@@ -8,7 +8,7 @@
             "name": "Python: Current File",
             "type": "python",
             "request": "launch",
-            "program": "${file}",
+            "program": "${workspaceFolder}/main.py",
             "console": "integratedTerminal",
             "args": [
                 "--output_dir", "/home/gamir/adiz/Code/runs/s2e-coref/output_dir/",
@@ -21,7 +21,7 @@
                 "--train_file", "/home/gamir/datasets/e2e-coref/train.english.jsonlines",
                 "--predict_file", "/home/gamir/datasets/e2e-coref/dev.english.jsonlines",
                 "--do_train",
-                "--do_eval",
+                "--eval", "all",
                 "--num_train_epochs", "129",
                 "--logging_steps", "500",
                 "--save_steps", "3000",

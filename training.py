@@ -5,132 +5,21 @@ import random
 import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 import torch
-from coref_bucket_batch_sampler import BucketBatchSampler
+from eval import evaluate, report_eval
 from tqdm import tqdm, trange
 import time, datetime
 from misc import save_on_master, is_main_process
 from utils import create_gold_matrix, calc_predicted_clusters, calc_best_avg_f1, try_measure_len
 from optimization import WarmupLinearSchedule
-from data import get_dataset, get_data_objects
 import itertools
 from metrics import CorefEvaluator
+from utils import load_from_checkpoint, save_checkpoint
 
 
 from transformers import AdamW, get_linear_schedule_with_warmup
 
 logger = logging.getLogger(__name__)
 
-
-def load_from_checkpoint(model, checkpoint_path, device=None, optimizer=None, amp=None):
-    global_step = checkpoint_path.rstrip('/').split('-')[-1]
-    model_to_load = model.module if hasattr(model, 'module') else model  # Take care of distributed/parallel training
-    try:
-        model_to_load.load_state_dict(torch.load(checkpoint_path + '/model.step-' + global_step + '.pt', map_location=device))
-    except Exception as e:
-        logger.error(e)
-        model_to_load.load_state_dict(
-            torch.load(checkpoint_path + '/model.step-' + global_step + '.pt', map_location=device), strict=False)
-    if optimizer is not None:
-        opt_path = os.path.join(checkpoint_path, 'optimizer.pt')
-        if os.path.exists(opt_path):
-            optimizer.load_state_dict(torch.load(opt_path, map_location=device))
-            # TODO make this more robust for different trees of states
-            for state in optimizer.state.values():
-                for k, v in state.items():
-                    if torch.is_tensor(v):
-                        state[k] = v.to(device)
-    if amp is not None:
-        amp.load_state_dict(torch.load(os.path.join(checkpoint_path, 'amp.pt')))
-    return {'global_step':global_step}
-
-
-def evaluate(args, eval_dataloader, model, criterion, prefix=""):
-    if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]:
-        os.makedirs(args.output_dir)
-
-    # Eval!
-    logger.info("***** Running evaluation {} *****".format(prefix))
-    logger.info("  Num steps = %d", try_measure_len(eval_dataloader))
-    logger.info("  Batch size = %d", args.eval_batch_size)
-    losses = []
-    batch_sizes = []
-    all_cluster_logits = []
-    all_coref_logits = []
-    all_gold_clusters = []
-    all_gold_mentions = []
-    for batch in tqdm(eval_dataloader, desc="Evaluating"):
-        model.eval()
-
-        batch = tuple(t.to(args.device) if torch.is_tensor(t) else t for t in batch)
-        input_ids, input_mask, text_len, speaker_ids, genre, gold_starts, gold_ends, cluster_ids, sentence_map, gold_clusters = batch
-        all_gold_clusters.append(gold_clusters)
-
-        gold_mentions = None
-        if args.use_gold_mentions:
-            gold_mentions = list(set([tuple(m) for c in gold_clusters for m in c]))
-        all_gold_mentions.append(gold_mentions)
-
-        with torch.no_grad():
-            orig_input_dim = input_ids.shape
-            input_ids = torch.reshape(input_ids, (1, -1))
-            input_mask = torch.reshape(input_mask, (1, -1))
-            outputs = model(input_ids, orig_input_dim, input_mask, gold_mentions)
-            cluster_logits, coref_logits = outputs['cluster_logits'], outputs['coref_logits']
-            gold_matrix = create_gold_matrix(args.device, text_len.sum(), args.num_queries, gold_clusters, gold_mentions)
-            loss = criterion(outputs, gold_matrix)
-            losses.append(loss.item())
-            batch_sizes.append(1) # TODO support batches
-
-        all_cluster_logits.append(cluster_logits.detach().cpu())
-        all_coref_logits.append(coref_logits.detach().cpu())
-
-    eval_loss = np.average(losses, weights=batch_sizes)
-
-    p, r, f1, threshold = calc_best_avg_f1(all_cluster_logits, all_coref_logits, all_gold_clusters, all_gold_mentions)
-    results = {'loss': eval_loss,
-               'avg_f1': f1,
-               'threshold': threshold,
-               'precision': p,
-               'recall': r}
-
-    output_eval_file = os.path.join(args.output_dir, "eval_results.txt")
-    with open(output_eval_file, "a") as writer:
-
-        def out(s):
-            logger.info(str(s))
-            writer.write(str(s) + '\n')
-
-        out("***** Eval results {} *****".format(prefix))
-
-        for key in sorted(results.keys()):
-            out("eval %s = %s" % (key, str(results[key])))
-
-    return results
-
-
-
-def report_eval(args, eval_dataloader, global_step, model, criterion, tb_writer):
-    if args.local_rank == -1:  # Only evaluate when single GPU otherwise metrics may not average well
-        results = evaluate(args, eval_dataloader, model, criterion, str(global_step))
-        for key, value in results.items():
-            tb_writer.add_scalar('eval_{}'.format(key), value, global_step)
-
-        return results
-    return None
-
-def save_checkpoint(args, global_step, model, optimizer, amp=None):
-    # Save model checkpoint
-    output_dir = os.path.join(args.output_dir, 'checkpoint-{}'.format(global_step))
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-    model_to_save = model.module if hasattr(model, 'module') else model  # Take care of distributed/parallel training
-    # model_to_save.save_pretrained(output_dir)
-    torch.save(model_to_save.state_dict(), os.path.join(output_dir, 'model.step-{}.pt'.format(global_step)))
-    torch.save(optimizer.state_dict(), os.path.join(output_dir, 'optimizer.pt'))
-    if amp is not None:
-        torch.save(amp.state_dict(), os.path.join(output_dir, 'amp.pt'))
-    torch.save(args, os.path.join(output_dir, 'training_args.bin'))
-    logger.info("Saved model checkpoint to %s", output_dir)
 
 
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
@@ -226,7 +115,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     return global_step
 
 
-def train(args, model, criterion):
+def train(args, model, criterion, train_loader, eval_loader):
     """ Train the model """
     # output_dir = Path(args.output_dir)
 
@@ -288,9 +177,6 @@ def train(args, model, criterion):
                                                           output_device=args.local_rank,
                                                           find_unused_parameters=True)
     
-    train_dataset, train_sampler, train_loader, args.train_batch_size = get_data_objects(args, 'train.english.512.jsonlines', True)
-    eval_dataset, eval_sampler, eval_loader, args.eval_batch_size = get_data_objects(args, 'dev.english.512.jsonlines', False)
-
     if args.max_steps > 0:
         args.t_total = args.max_steps
         args.num_train_epochs = args.max_steps // (len(train_loader) // args.gradient_accumulation_steps) + 1

@@ -492,20 +492,23 @@ class MatchingLoss(nn.Module):
         # num_of_gold_clusters = torch.clamp(num_of_gold_clusters / get_world_size(), min=1).item()
 
         gold_is_cluster = torch.zeros_like(cluster_logits)
-        gold_is_cluster[matched_predicted_cluster_id] = 1
+        if matched_predicted_cluster_id is not False:
+            gold_is_cluster[matched_predicted_cluster_id] = 1
         cost_is_cluster = F.binary_cross_entropy(cluster_logits, gold_is_cluster)
 
-        permuted_coref_logits = coref_logits[matched_predicted_cluster_id]
-        permuted_gold = targets[matched_gold_cluster_id]
+        cost_coref = 0
+        if matched_predicted_cluster_id is not False:
+            permuted_coref_logits = coref_logits[matched_predicted_cluster_id]
+            permuted_gold = targets[matched_gold_cluster_id]
 
-        if self.args.multiclass_ce:
-            logits = permuted_coref_logits.transpose(0, 1)  # [mentions, num_queries]
-            gold = permuted_gold.transpose(0, 1).nonzero()[:, 1]  # [mentions]
-            cost_coref = F.cross_entropy(logits, gold, reduction='sum')
-        else:
-            if self.args.sum_attn:
-                permuted_coref_logits = permuted_coref_logits.clamp(0, 1)
-            cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_gold, reduction='sum')
+            if self.args.multiclass_ce:
+                logits = permuted_coref_logits.transpose(0, 1)  # [mentions, num_queries]
+                gold = permuted_gold.transpose(0, 1).nonzero()[:, 1]  # [mentions]
+                cost_coref = F.cross_entropy(logits, gold, reduction='sum')
+            else:
+                if self.args.sum_attn:
+                    permuted_coref_logits = permuted_coref_logits.clamp(0, 1)
+                cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_gold, reduction='sum')
 
 
         # cost_coref = []

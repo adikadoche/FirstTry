@@ -76,8 +76,8 @@ class Evaluator(object):
 
 class CorefEvaluator(object):
     def __init__(self):
-        self.evaluators = [Evaluator(m) for m in (muc, b_cubed, ceafe)]
-        # self.evaluators = [Evaluator(m) for m in [b_cubed]]
+        # self.evaluators = [Evaluator(m) for m in (muc, b_cubed, ceafe)]
+        self.evaluators = [Evaluator(m) for m in [muc]]
 
 
     def update(self, predicted, gold):
