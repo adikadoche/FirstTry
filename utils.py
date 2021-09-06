@@ -163,6 +163,8 @@ def create_gold_matrix(device, doc_len, num_queries, gold_clusters, gold_mention
                 gold_per_token[cluster_id, start: end + 1] = 1
     else:
         gold_per_token = torch.zeros(num_queries, len(gold_mentions), device=device)
+        if num_queries < len(gold_clusters):
+            logger.info("in utils, exceeds num_queries with length {}".format(len(gold_clusters)))
         for cluster_id, cluster in enumerate(gold_clusters):
             for mention in cluster:
                 mention_index = gold_mentions.index(tuple(mention))

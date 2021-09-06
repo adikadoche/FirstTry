@@ -35,7 +35,8 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         batch = tuple(t.to(args.device) if torch.is_tensor(t) else t for t in batch)
         input_ids, input_mask, text_len, speaker_ids, genre, gold_starts, gold_ends, cluster_ids, sentence_map, gold_clusters = batch
 
-        if len(gold_clusters) == 0:
+        if len(gold_clusters) == 0 or len(gold_clusters) > args.num_queries:
+            logger.info("train exceeds num_queries with length {}".format(len(gold_clusters)))
             continue
 
         gold_mentions = None
@@ -43,6 +44,9 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             gold_mentions = list(set([tuple(m) for c in gold_clusters for m in c]))
 
         gold_matrix = create_gold_matrix(args.device, text_len.sum(), args.num_queries, gold_clusters, gold_mentions)
+
+        if gold_matrix.shape[1] == 0:
+            logger.info("size of gold_cluster {}, size of gold matrix {}".format(gold_clusters.shape, gold_matrix.shape))
 
         orig_input_dim = input_ids.shape
         input_ids = torch.reshape(input_ids, (1, -1))

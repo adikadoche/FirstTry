@@ -461,6 +461,8 @@ class MatchingLoss(nn.Module):
         self.cost_is_cluster = cost_is_cluster
         self.cost_coref = cost_coref
         self.args = args
+        self.eos_coef = eos_coef
+
 
     def forward(self, outputs, targets):
         """ This performs the loss computation.
@@ -484,6 +486,7 @@ class MatchingLoss(nn.Module):
         coref_logits = outputs["coref_logits"].squeeze(0)  # [num_queries, tokens]
         cluster_logits = outputs["cluster_logits"].squeeze(0) # [num_queries]
         num_queries, doc_len = coref_logits.shape
+        #TODO: normalize according to number of clusters? (identical to DETR)
 
         # num_of_gold_clusters = len(targets)
         # num_of_gold_clusters = torch.as_tensor([num_of_gold_clusters], dtype=torch.float, device=coref_logits.device)
@@ -492,9 +495,11 @@ class MatchingLoss(nn.Module):
         # num_of_gold_clusters = torch.clamp(num_of_gold_clusters / get_world_size(), min=1).item()
 
         gold_is_cluster = torch.zeros_like(cluster_logits)
+        weight = self.eos_coef * torch.ones_like(cluster_logits)
         if matched_predicted_cluster_id is not False:
             gold_is_cluster[matched_predicted_cluster_id] = 1
-        cost_is_cluster = F.binary_cross_entropy(cluster_logits, gold_is_cluster)
+            weight[matched_predicted_cluster_id] = 1
+        cost_is_cluster = F.binary_cross_entropy(cluster_logits, gold_is_cluster, weight=weight)
 
         cost_coref = 0
         if matched_predicted_cluster_id is not False:

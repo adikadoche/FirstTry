@@ -152,7 +152,7 @@ def parse_args():
                         help="Dropout applied in the transformer")
     parser.add_argument('--nheads', default=8, type=int,
                         help="Number of attention heads inside the transformer's attentions")
-    parser.add_argument('--num_queries', default=100, type=int,
+    parser.add_argument('--num_queries', default=50, type=int,
                         help="Number of query slots")
     parser.add_argument('--pre_norm', action='store_true')
     parser.add_argument('--hidden_dim', default=256, type=int,
@@ -168,9 +168,9 @@ def parse_args():
     # parser.add_argument('--dice_loss_coef', default=1, type=float)
     # parser.add_argument('--bbox_loss_coef', default=5, type=float)
     # parser.add_argument('--giou_loss_coef', default=2, type=float)
-    parser.add_argument('--cost_is_cluster', default=0, type=float,
+    parser.add_argument('--cost_is_cluster', default=1, type=float,
                         help="Class coefficient in the matching cost")
-    parser.add_argument('--cost_coref', default=0.01, type=float,
+    parser.add_argument('--cost_coref', default=5, type=float,
                         help="L1 box coefficient in the matching cost")
     parser.add_argument('--eos_coef', default=0.1, type=float,
                         help="Relative classification weight of the no-object class")

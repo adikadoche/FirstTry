@@ -91,6 +91,11 @@ def evaluate(args, eval_dataloader, model, criterion, prefix=""):
 
         batch = tuple(t.to(args.device) if torch.is_tensor(t) else t for t in batch)
         input_ids, input_mask, text_len, speaker_ids, genre, gold_starts, gold_ends, cluster_ids, sentence_map, gold_clusters = batch
+        
+        if len(gold_clusters) == 0 or len(gold_clusters) > args.num_queries:
+            logger.info("eval exceeds num_queries with length {}".format(len(gold_clusters)))
+            continue
+
         all_gold_clusters.append(gold_clusters)
 
         gold_mentions = None
