@@ -65,7 +65,7 @@ def main():
     train_dataset, train_sampler, train_loader, args.train_batch_size = get_data_objects(args, 'train.english.512.jsonlines', True)
     eval_dataset, eval_sampler, eval_loader, args.eval_batch_size = get_data_objects(args, 'dev.english.512.jsonlines', False)
 
-    global_step = train(args, model, criterion, train_loader, eval_loader)
+    global_step = train(args, model, criterion, train_loader, eval_loader, eval_dataset)
     make_evaluation(model, criterion, eval_loader, args)
 
 # Press the green button in the gutter to run the script.

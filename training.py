@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     epoch_iterator, optimizer: torch.optim.Optimizer,
                     args, evaluator, skip_steps, recent_grad_norms, recent_cluster_logits,
-        recent_coref_logits, recent_losses, recent_logits_sums, global_step, tb_writer, lr_scheduler, eval_loader, threshold):
+        recent_coref_logits, recent_losses, recent_logits_sums, global_step, tb_writer, lr_scheduler, eval_loader, eval_dataset, threshold):
     for step, batch in enumerate(epoch_iterator):
         if skip_steps > 0:
             skip_steps -= 1
@@ -90,7 +90,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             global_step += 1
 
             if args.local_rank in [-1, 0] and args.eval_steps > 0 and global_step % args.eval_steps == 0:
-                results = report_eval(args, eval_loader, global_step, model, criterion, tb_writer)
+                results = report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, tb_writer)
                 threshold = results['threshold']
 
             if args.local_rank in [-1, 0] and args.save_steps > 0 and global_step % args.save_steps == 0:
@@ -119,7 +119,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     return global_step
 
 
-def train(args, model, criterion, train_loader, eval_loader):
+def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
     """ Train the model """
     # output_dir = Path(args.output_dir)
 
@@ -227,7 +227,7 @@ def train(args, model, criterion, train_loader, eval_loader):
         global_step = train_one_epoch(
             model, criterion, epoch_iterator, optimizer, args, evaluator, skip_steps, recent_grad_norms,
             recent_cluster_logits, recent_coref_logits, recent_losses, recent_logits_sums, global_step,
-            tb_writer, lr_scheduler, eval_loader, threshold)
+            tb_writer, lr_scheduler, eval_loader, eval_dataset, threshold)
 
         p, r, f1 = evaluator.get_prf()
         if args.local_rank in [-1, 0]:

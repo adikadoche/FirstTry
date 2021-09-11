@@ -10,6 +10,7 @@ from scipy.optimize import linear_sum_assignment as linear_assignment
 import torch
 from tqdm import tqdm
 from coref_bucket_batch_sampler import BucketBatchSampler
+from coref_analysis import print_predictions
 from data import get_dataset
 from utils import calc_best_avg_f1, create_gold_matrix, try_measure_len, load_from_checkpoint
 from conll import evaluate_conll
@@ -19,9 +20,9 @@ logger = logging.getLogger(__name__)
 
 
 
-def report_eval(args, eval_dataloader, global_step, model, criterion, tb_writer):
+def report_eval(args, eval_dataloader, eval_dataset, global_step, model, criterion, tb_writer):
     if args.local_rank == -1:  # Only evaluate when single GPU otherwise metrics may not average well
-        results = evaluate(args, eval_dataloader, model, criterion, str(global_step))
+        results = evaluate(args, eval_dataloader, eval_dataset, model, criterion, str(global_step))
         for key, value in results.items():
             tb_writer.add_scalar('eval_{}'.format(key), value, global_step)
         return results
@@ -72,7 +73,9 @@ def make_evaluation(model, criterion, eval_loader, args):
 
 
 
-def evaluate(args, eval_dataloader, model, criterion, prefix=""):
+def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix=""):
+    print_predictions(eval_dataloader, eval_dataset, model, 0.05, args)
+
     if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]:
         os.makedirs(args.output_dir)
 
@@ -138,4 +141,5 @@ def evaluate(args, eval_dataloader, model, criterion, prefix=""):
         for key in sorted(results.keys()):
             out("eval %s = %s" % (key, str(results[key])))
 
+    print_predictions(eval_dataloader, eval_dataset, model, threshold, args)
     return results
