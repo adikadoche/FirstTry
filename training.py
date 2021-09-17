@@ -90,7 +90,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             global_step += 1
 
             if args.local_rank in [-1, 0] and args.eval_steps > 0 and global_step % args.eval_steps == 0:
-                results = report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, tb_writer)
+                results = report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, tb_writer, threshold)
                 threshold = results['threshold']
 
             if args.local_rank in [-1, 0] and args.save_steps > 0 and global_step % args.save_steps == 0:

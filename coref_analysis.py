@@ -13,6 +13,7 @@ from colorama import Back, Style
 from pip._vendor.colorama import Fore
 
 from utils import calc_predicted_clusters
+from consts import PRONOUNS
 
 FORES = [Fore.BLUE,
          Fore.CYAN,
@@ -210,6 +211,104 @@ def is_cluster_contains_linked_entities(cluster, entities_per_sentence, sentence
         return found_entity_in_cluster
 
 
+def print_per_batch(cluster_logits, coref_logits, threshold, gold_clusters, gold_mentions, eval_dataset, input_ids,
+count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, count_missed_mentions,
+count_missed_pronouns, count_excess_pronous, count_excess_mentions):
+    predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(),
+                                                    threshold, gold_mentions)
+
+    gold, gold_correct, pred, pred_correct, pred_to_most_similar_gold, pred_to_most_similar_golds_list, gold_is_completely_missed, gold_to_most_similar_pred = match_clusters(
+        gold_clusters, predicted_clusters)
+
+    pred_is_completely_missed = [similar_pred == -1 for similar_pred in pred_to_most_similar_gold]
+    tokens = eval_dataset.tokenizer.convert_ids_to_tokens(input_ids.reshape(-1))
+
+
+    #### 1
+    count_clusters += len(gold)
+    count_mentions += sum(len(c) for c in gold)
+
+    for gold_cluster in gold:
+        seen_pronoun = False
+        for start,end in gold_cluster:
+            mention = tokens[start:end+1]
+            if " ".join(mention).lower() in PRONOUNS:
+                count_pronouns_mentions += 1
+                seen_pronoun = True
+
+        if seen_pronoun:
+            count_clusters_with_pronoun_mention += 1
+    
+    #### 2
+    seen_preds = set()
+    # calc gold to pred
+    for i, gold_cluster in enumerate(gold):
+        gold_cluster = set(gold_cluster)
+        pred_idx = gold_to_most_similar_pred[i]
+        matched_pred = set() if pred_idx is None or pred_idx==-1 else set(pred[pred_idx])
+        if pred_idx is not None:
+            seen_preds.add(pred_idx)
+        diff = gold_cluster - matched_pred
+        count_missed_mentions += len(diff)
+
+        diff_text = {" ".join(tokens[start:end + 1]).lower() for start, end in diff}
+        count_missed_pronouns += len(diff_text.intersection(PRONOUNS))
+
+        # diff = matched_pred - gold_cluster
+        # count_excess_mentions += len(diff)
+        # diff_text = {" ".join(tokens[start:end + 1]).lower() for start, end in diff}
+        # count_excess_pronous += len(diff_text.intersection(pronouns))
+
+
+    for i, pred_cluster, in enumerate(pred):
+        pred_cluster = set(pred_cluster)
+        gold_idx_list = pred_to_most_similar_golds_list[i]
+
+        if len(gold_idx_list) == 0:
+            count_excess_mentions += len(pred_cluster)
+        else:
+            gold_idx = max(gold_idx_list, key=lambda idx: len(set(gold[idx]).intersection(pred_cluster)))
+
+            matched_gold = set(gold[gold_idx])
+            diff = pred_cluster - matched_gold
+            count_excess_mentions += len(diff)
+
+            diff = {" ".join(tokens[start:end + 1]).lower() for start, end in diff}
+            count_excess_pronous += len(diff.intersection(PRONOUNS))
+
+    #### 3
+    # entities_per_example = pickle.load(open("/home/gamir/adiz/Code/dev_entities_per_example.p", "rb"))
+    # entities_per_sentence = entities_per_example[example['example_num']]
+    
+    # gold_clusters_to_entities = [is_cluster_contains_linked_entities(c, entities_per_sentence, tokens, True) for c in gold]
+    gold_clusters_to_entities = None
+    # predicted_clusters_to_entities = [is_cluster_contains_linked_entities(c, entities_per_sentence, tokens, True) for c in pred]
+    predicted_clusters_to_entities = None
+
+    if not (all(gold_correct) and all(pred_correct)):
+        tokens_f = flatten(tokens)
+        print("EXAMPLE #{}".format(i))
+        print("GOLD CLUSTERS:")
+        gold_cluster_to_color = coref_pprint(tokens, gold, gold_correct, complete_miss_flags=gold_is_completely_missed, cluster_to_linked_entities=gold_clusters_to_entities)
+
+        pred_cluster_to_color = {}
+        for pred_i, similar_gold_i in enumerate(pred_to_most_similar_gold):
+            if similar_gold_i >= 0 and not gold_correct[similar_gold_i]:
+                similar_color = gold_cluster_to_color[gold[similar_gold_i]]
+                pred_cluster_to_color[pred[pred_i]] = similar_color
+
+        print("PREDICTED CLUSTERS:")
+        complete_miss_flags = [similar_pred == -1 for similar_pred in pred_to_most_similar_gold]
+        coref_pprint(tokens, pred, pred_correct, pred_cluster_to_color, complete_miss_flags, cluster_to_linked_entities=predicted_clusters_to_entities)
+
+        # entities_set = set((e for sent_ent in entities_per_sentence for (_,_,e) in sent_ent))
+        # print("LINKED ENTITIES SET: ", entities_set)
+
+        print('===========================================================================================================================================================================================================================')
+    return count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, \
+        count_missed_mentions, count_missed_pronouns, count_excess_pronous, count_excess_mentions
+
+
 
 
 def print_predictions(eval_dataloader, eval_dataset, model, threshold, args):
@@ -217,15 +316,6 @@ def print_predictions(eval_dataloader, eval_dataset, model, threshold, args):
     count_clusters = 0
     count_mentions = 0
     
-    pronouns = {'i', 'me', 'my', 'mine', 'myself',
-                'we', 'us', 'our', 'ours', 'ourselves',
-                'you', 'your', 'yours', 'yourself', 'yourselves',
-                'he', 'him', 'his', 'himself',
-                'she', 'her', 'hers', 'herself',
-                'it', 'its', 'itself',
-                'they', 'them', 'their', 'theirs', 'themself', 'themselves',
-                'this', 'these', 'that', 'those'}
-
     count_pronouns_mentions = 0
     count_clusters_with_pronoun_mention = 0
     
@@ -244,97 +334,11 @@ def print_predictions(eval_dataloader, eval_dataset, model, threshold, args):
         outputs = model(input_ids, orig_input_dim, input_mask, gold_mentions)
         cluster_logits, coref_logits = outputs['cluster_logits'], outputs['coref_logits']
 
-        predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(),
-                                                     threshold, gold_mentions)
-
-        gold, gold_correct, pred, pred_correct, pred_to_most_similar_gold, pred_to_most_similar_golds_list, gold_is_completely_missed, gold_to_most_similar_pred = match_clusters(
-            gold_clusters, predicted_clusters)
-
-        pred_is_completely_missed = [similar_pred == -1 for similar_pred in pred_to_most_similar_gold]
-        tokens = eval_dataset.tokenizer.convert_ids_to_tokens(input_ids.reshape(-1))
-
-
-        #### 1
-        count_clusters += len(gold)
-        count_mentions += sum(len(c) for c in gold)
-
-        for gold_cluster in gold:
-            seen_pronoun = False
-            for start,end in gold_cluster:
-                mention = tokens[start:end+1]
-                if " ".join(mention).lower() in pronouns:
-                    count_pronouns_mentions += 1
-                    seen_pronoun = True
-
-            if seen_pronoun:
-                count_clusters_with_pronoun_mention += 1
-        
-        #### 2
-        seen_preds = set()
-        # calc gold to pred
-        for i, gold_cluster in enumerate(gold):
-            gold_cluster = set(gold_cluster)
-            pred_idx = gold_to_most_similar_pred[i]
-            matched_pred = set() if pred_idx is None or pred_idx==-1 else set(pred[pred_idx])
-            if pred_idx is not None:
-                seen_preds.add(pred_idx)
-            diff = gold_cluster - matched_pred
-            count_missed_mentions += len(diff)
-
-            diff_text = {" ".join(tokens[start:end + 1]).lower() for start, end in diff}
-            count_missed_pronouns += len(diff_text.intersection(pronouns))
-
-            # diff = matched_pred - gold_cluster
-            # count_excess_mentions += len(diff)
-            # diff_text = {" ".join(tokens[start:end + 1]).lower() for start, end in diff}
-            # count_excess_pronous += len(diff_text.intersection(pronouns))
-
-
-        for i, pred_cluster, in enumerate(pred):
-            pred_cluster = set(pred_cluster)
-            gold_idx_list = pred_to_most_similar_golds_list[i]
-
-            if len(gold_idx_list) == 0:
-                count_excess_mentions += len(pred_cluster)
-            else:
-                gold_idx = max(gold_idx_list, key=lambda idx: len(set(gold[idx]).intersection(pred_cluster)))
-
-                matched_gold = set(gold[gold_idx])
-                diff = pred_cluster - matched_gold
-                count_excess_mentions += len(diff)
-
-                diff = {" ".join(tokens[start:end + 1]).lower() for start, end in diff}
-                count_excess_pronous += len(diff.intersection(pronouns))
-
-        #### 3
-        entities_per_sentence = entities_per_example[example['example_num']]
-
-        # if key != "bc/cctv/00/cctv_0005_4":
-        #     continue
-     
-        gold_clusters_to_entities = [is_cluster_contains_linked_entities(c, entities_per_sentence, tokens, True) for c in gold]
-        predicted_clusters_to_entities = [is_cluster_contains_linked_entities(c, entities_per_sentence, tokens, True) for c in pred]
-
-        if not (all(gold_correct) and all(pred_correct)):
-            tokens = flatten(tokens)
-            print("EXAMPLE #{}".format(i))
-            print("GOLD CLUSTERS:")
-            gold_cluster_to_color = coref_pprint(tokens, gold, gold_correct, complete_miss_flags=gold_is_completely_missed, cluster_to_linked_entities=gold_clusters_to_entities)
-
-            pred_cluster_to_color = {}
-            for pred_i, similar_gold_i in enumerate(pred_to_most_similar_gold):
-                if similar_gold_i >= 0 and not gold_correct[similar_gold_i]:
-                    similar_color = gold_cluster_to_color[gold[similar_gold_i]]
-                    pred_cluster_to_color[pred[pred_i]] = similar_color
-
-            print("PREDICTED CLUSTERS:")
-            complete_miss_flags = [similar_pred == -1 for similar_pred in pred_to_most_similar_gold]
-            coref_pprint(tokens, pred, pred_correct, pred_cluster_to_color, complete_miss_flags, cluster_to_linked_entities=predicted_clusters_to_entities)
-
-            entities_set = set((e for sent_ent in entities_per_sentence for (_,_,e) in sent_ent))
-            print("LINKED ENTITIES SET: ", entities_set)
-
-            print('===========================================================================================================================================================================================================================')
+        count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, \
+            count_missed_mentions, count_missed_pronouns, count_excess_pronous, count_excess_mentions = print_per_batch(
+            cluster_logits, coref_logits, threshold, gold_clusters, gold_mentions, eval_dataset, input_ids,
+            count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, count_missed_mentions,
+            count_missed_pronouns, count_excess_pronous, count_excess_mentions)
 
 
     print("{} gold clusters".format(count_clusters))

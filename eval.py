@@ -10,7 +10,7 @@ from scipy.optimize import linear_sum_assignment as linear_assignment
 import torch
 from tqdm import tqdm
 from coref_bucket_batch_sampler import BucketBatchSampler
-from coref_analysis import print_predictions
+from coref_analysis import print_predictions, print_per_batch
 from data import get_dataset
 from utils import calc_best_avg_f1, create_gold_matrix, try_measure_len, load_from_checkpoint
 from conll import evaluate_conll
@@ -20,9 +20,9 @@ logger = logging.getLogger(__name__)
 
 
 
-def report_eval(args, eval_dataloader, eval_dataset, global_step, model, criterion, tb_writer):
+def report_eval(args, eval_dataloader, eval_dataset, global_step, model, criterion, tb_writer, threshold):
     if args.local_rank == -1:  # Only evaluate when single GPU otherwise metrics may not average well
-        results = evaluate(args, eval_dataloader, eval_dataset, model, criterion, str(global_step))
+        results = evaluate(args, eval_dataloader, eval_dataset, model, criterion, str(global_step), threshold)
         for key, value in results.items():
             tb_writer.add_scalar('eval_{}'.format(key), value, global_step)
         return results
@@ -73,9 +73,7 @@ def make_evaluation(model, criterion, eval_loader, args):
 
 
 
-def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix=""):
-    print_predictions(eval_dataloader, eval_dataset, model, 0.05, args)
-
+def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", threshold=0.5):
     if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]:
         os.makedirs(args.output_dir)
 
@@ -89,6 +87,18 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix=""):
     all_coref_logits = []
     all_gold_clusters = []
     all_gold_mentions = []
+
+    count_clusters = 0
+    count_mentions = 0
+    
+    count_pronouns_mentions = 0
+    count_clusters_with_pronoun_mention = 0
+    
+    count_missed_mentions = 0
+    count_missed_pronouns = 0
+    count_excess_mentions = 0
+    count_excess_pronous = 0
+
     for batch in tqdm(eval_dataloader, desc="Evaluating"):
         model.eval()
 
@@ -112,6 +122,14 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix=""):
             input_mask = torch.reshape(input_mask, (1, -1))
             outputs = model(input_ids, orig_input_dim, input_mask, gold_mentions)
             cluster_logits, coref_logits = outputs['cluster_logits'], outputs['coref_logits']
+
+            count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, \
+                count_missed_mentions, count_missed_pronouns, count_excess_pronous, count_excess_mentions = print_per_batch(
+                cluster_logits, coref_logits, threshold, gold_clusters, gold_mentions, eval_dataset, input_ids,
+                count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, count_missed_mentions,
+                count_missed_pronouns, count_excess_pronous, count_excess_mentions)
+
+
             gold_matrix = create_gold_matrix(args.device, text_len.sum(), args.num_queries, gold_clusters, gold_mentions)
             loss = criterion(outputs, gold_matrix)
             losses.append(loss.item())
