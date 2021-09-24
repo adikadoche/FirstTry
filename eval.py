@@ -83,8 +83,10 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
     logger.info("  Batch size = %d", args.eval_batch_size)
     losses = []
     batch_sizes = []
-    all_cluster_logits = []
-    all_coref_logits = []
+    all_cluster_logits_cpu = []
+    all_coref_logits_cpu = []
+    all_cluster_logits_cuda = []
+    all_coref_logits_cuda = []
     all_gold_clusters = []
     all_gold_mentions = []
 
@@ -123,11 +125,11 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
             outputs = model(input_ids, orig_input_dim, input_mask, gold_mentions)
             cluster_logits, coref_logits = outputs['cluster_logits'], outputs['coref_logits']
 
-            count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, \
-                count_missed_mentions, count_missed_pronouns, count_excess_pronous, count_excess_mentions = print_per_batch(
-                cluster_logits, coref_logits, threshold, gold_clusters, gold_mentions, eval_dataset, input_ids,
-                count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, count_missed_mentions,
-                count_missed_pronouns, count_excess_pronous, count_excess_mentions)
+            # count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, \
+            #     count_missed_mentions, count_missed_pronouns, count_excess_pronous, count_excess_mentions = print_per_batch(
+            #     cluster_logits, coref_logits, threshold, gold_clusters, gold_mentions, eval_dataset, input_ids,
+            #     count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, count_missed_mentions,
+            #     count_missed_pronouns, count_excess_pronous, count_excess_mentions)
 
 
             gold_matrix = create_gold_matrix(args.device, text_len.sum(), args.num_queries, gold_clusters, gold_mentions)
@@ -135,17 +137,23 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
             losses.append(loss.item())
             batch_sizes.append(1) # TODO support batches
 
-        all_cluster_logits.append(cluster_logits.detach().cpu())
-        all_coref_logits.append(coref_logits.detach().cpu())
+        all_cluster_logits_cuda.append(cluster_logits.detach().clone())
+        all_coref_logits_cuda.append(coref_logits.detach().clone())
+        all_cluster_logits_cpu.append(cluster_logits.detach().cpu())
+        all_coref_logits_cpu.append(coref_logits.detach().cpu())
 
     eval_loss = np.average(losses, weights=batch_sizes)
 
-    p, r, f1, threshold = calc_best_avg_f1(all_cluster_logits, all_coref_logits, all_gold_clusters, all_gold_mentions)
+    p, r, f1, threshold = calc_best_avg_f1(all_cluster_logits_cpu, all_coref_logits_cpu, all_gold_clusters, all_gold_mentions)
     results = {'loss': eval_loss,
                'avg_f1': f1,
                'threshold': threshold,
                'precision': p,
                'recall': r}
+
+
+    print_predictions(all_cluster_logits_cuda, all_coref_logits_cuda, eval_dataloader, eval_dataset, model, threshold, args) #TODO: save all the results in the loop above and send it to the function so it wont have to call model itself
+
 
     output_eval_file = os.path.join(args.output_dir, "eval_results.txt")
     with open(output_eval_file, "a") as writer:
@@ -159,5 +167,4 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
         for key in sorted(results.keys()):
             out("eval %s = %s" % (key, str(results[key])))
 
-    print_predictions(eval_dataloader, eval_dataset, model, threshold, args)
     return results

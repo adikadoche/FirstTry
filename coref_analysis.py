@@ -298,8 +298,7 @@ count_missed_pronouns, count_excess_pronous, count_excess_mentions):
                 pred_cluster_to_color[pred[pred_i]] = similar_color
 
         print("PREDICTED CLUSTERS:")
-        complete_miss_flags = [similar_pred == -1 for similar_pred in pred_to_most_similar_gold]
-        coref_pprint(tokens, pred, pred_correct, pred_cluster_to_color, complete_miss_flags, cluster_to_linked_entities=predicted_clusters_to_entities)
+        coref_pprint(tokens, pred, pred_correct, pred_cluster_to_color, pred_is_completely_missed, cluster_to_linked_entities=predicted_clusters_to_entities)
 
         # entities_set = set((e for sent_ent in entities_per_sentence for (_,_,e) in sent_ent))
         # print("LINKED ENTITIES SET: ", entities_set)
@@ -311,7 +310,7 @@ count_missed_pronouns, count_excess_pronous, count_excess_mentions):
 
 
 
-def print_predictions(eval_dataloader, eval_dataset, model, threshold, args):
+def print_predictions(all_cluster_logits, all_coref_logits, eval_dataloader, eval_dataset, model, threshold, args):
 
     count_clusters = 0
     count_mentions = 0
@@ -324,15 +323,11 @@ def print_predictions(eval_dataloader, eval_dataset, model, threshold, args):
     count_excess_mentions = 0
     count_excess_pronous = 0
 
-    for batch in eval_dataloader:
+    for i, batch in enumerate(eval_dataloader):
         input_ids, input_mask, text_len, speaker_ids, genre, gold_starts, gold_ends, cluster_ids, sentence_map, gold_clusters = batch
-        if args.use_gold_mentions:
-            gold_mentions = list(set([tuple(m) for c in gold_clusters for m in c]))
-        orig_input_dim = input_ids.shape
-        input_ids = torch.reshape(input_ids, (1, -1))
-        input_mask = torch.reshape(input_mask, (1, -1))
-        outputs = model(input_ids, orig_input_dim, input_mask, gold_mentions)
-        cluster_logits, coref_logits = outputs['cluster_logits'], outputs['coref_logits']
+        gold_mentions = list(set([tuple(m) for c in gold_clusters for m in c]))
+        cluster_logits, coref_logits = all_cluster_logits[i], all_coref_logits[i]
+
 
         count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, \
             count_missed_mentions, count_missed_pronouns, count_excess_pronous, count_excess_mentions = print_per_batch(
@@ -349,9 +344,9 @@ def print_predictions(eval_dataloader, eval_dataset, model, threshold, args):
 
     print("{} missed mentions".format(count_missed_mentions))
     print("{} missed pronouns".format(count_missed_pronouns))
-    print("{}% missed pronouns".format(1. * count_missed_pronouns / count_missed_mentions * 100))
-    print("{} excess mentions".format(count_excess_mentions))
-    print("{} excess pronouns".format(count_excess_pronous))
-    print("{}% excess pronouns".format(1. * count_excess_pronous / count_excess_mentions * 100))
+    print("{}% missed pronouns".format(0 if count_missed_mentions == 0 else 1. * count_missed_pronouns / count_missed_mentions * 100))
+    print("{} excess mentions".format(count_excess_mentions)) #TODO: wierd numbers
+    print("{} excess pronouns".format(count_excess_pronous)) #TODO: wierd numbers
+    print("{}% excess pronouns".format(0 if count_excess_mentions == 0 else 1. * count_excess_pronous / count_excess_mentions * 100))
 
  
