@@ -28,7 +28,7 @@ def report_eval(args, eval_dataloader, eval_dataset, global_step, model, criteri
         return results
     return None
 
-def make_evaluation(model, criterion, eval_loader, args):  
+def make_evaluation(model, criterion, eval_loader, eval_dataset, args):  
     # Evaluation 'no', 'specific', 'all', 'vanilla'
     if args.eval == 'specific':
         checkpoint = args.output_dir
@@ -60,7 +60,8 @@ def make_evaluation(model, criterion, eval_loader, args):
                     for checkpoint in checkpoints:
                         loaded_args = load_from_checkpoint(model, checkpoint)
                         global_step = loaded_args['global_step']
-                        report_eval(args, eval_loader, global_step, model, criterion, tb_writer)
+                        threshold = loaded_args['threshold']
+                        report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, tb_writer, threshold)
 
                     evaluated.update(checkpoints)
                 except Exception as e:

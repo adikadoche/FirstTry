@@ -37,6 +37,7 @@ def main():
         torch.distributed.init_process_group(backend='nccl')
         args.n_gpu = 1
     args.device = device
+    # args.n_gpu = 1   #TODO:REMOVEEEEEEEe
 
     # Setup logging
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
@@ -66,7 +67,7 @@ def main():
     eval_dataset, eval_sampler, eval_loader, args.eval_batch_size = get_data_objects(args, 'dev.english.512.jsonlines', False)
 
     global_step = train(args, model, criterion, train_loader, eval_loader, eval_dataset)
-    make_evaluation(model, criterion, eval_loader, args)
+    make_evaluation(model, criterion, eval_loader, eval_dataset, args) #TODO: report_eval won't work in here because of missing parameters
 
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':

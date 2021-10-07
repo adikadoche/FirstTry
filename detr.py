@@ -100,6 +100,8 @@ class DETR(nn.Module):
             raw_query_embed = torch.normal(torch.zeros_like(self.query_embed.weight), 1) * self.query_sigma + self.query_mu #raw_query_embed = torch.normal(torch.zeros_like(self.query_embed.weight), 0.5)
         else:
             raw_query_embed = self.query_embed.weight
+            # print("raw_query_embed")
+            # print(raw_query_embed)
 
         if gold_mentions is None:
             hs, memory = self.transformer(self.input_proj(longformer_emb), mask, raw_query_embed, pos) # [dec_layers, 1, num_queries, emb], [1, seg*seq, emb]
@@ -132,32 +134,38 @@ class DETR(nn.Module):
                 # "aux_coref_logits": aux_coref_logits}
         return out
 
-    def calc_cluster_and_coref_logits(self, last_hs, memory, is_mention_clustering):
+    def calc_cluster_and_coref_logits(self, last_hs, memory, is_gold_mention):
         # last_hs [1, num_queries, emb]
         # memory [1, tokens, emb]
-        num_tokens = memory.shape[1]
+        num_tokens_or_mentions = memory.shape[1]
 
         cluster_logits = self.is_cluster(last_hs).sigmoid()  # [1, num_queries, 1]
 
+        #TODO: check cross attention? (without values)
         if self.args.fc_coref_head:
-            last_hs_tiled = last_hs.unsqueeze(2).repeat(1, 1, num_tokens, 1) # [1, num_queries, tokens, emb]
-            memory_tiled = memory.unsqueeze(1).repeat(1, self.num_queries, 1, 1) # [1, num_queries, tokens, emb]
-            coref_features = torch.cat([last_hs_tiled, memory_tiled], -1) # [1, num_queries, tokens, 2 * emb]
-            coref_logits = self.IO_score(coref_features).squeeze(-1) # [1, num_queries, tokens, 1]
+            last_hs_tiled = last_hs.unsqueeze(2).repeat(1, 1, num_tokens_or_mentions, 1) # [1, num_queries, tokens/mentions, emb]
+            last_hs_tiled = self.query_head(last_hs_tiled) # [1, num_queries, tokens/mentions, 75]
+            memory_tiled = memory.unsqueeze(1).repeat(1, self.num_queries, 1, 1) # [1, num_queries, tokens/mentions, emb]
+            memory_tiled = self.token_head(memory_tiled) # [1, num_queries, tokens/mentions, 75]
+            coref_features = torch.cat([last_hs_tiled, memory_tiled], -1) # [1, num_queries, tokens/mentions, 150]
+            coref_logits_unnorm = self.query_token_IO_score(coref_features).squeeze(-1) # [1, num_queries, tokens/mentions, 1]
         else:
-            last_hs_tiled = last_hs.unsqueeze(2).repeat(1, 1, num_tokens, 1) # [1, num_queries, tokens, emb]
-            last_hs_tiled = self.query_head(last_hs_tiled) # [1, num_queries, tokens, 75]
-            memory_tiled = memory.unsqueeze(1).repeat(1, self.num_queries, 1, 1) # [1, num_queries, tokens, emb]
-            memory_tiled = self.token_head(memory_tiled) # [1, num_queries, tokens, 75]
-            coref_features = torch.cat([last_hs_tiled, memory_tiled], -1) # [1, num_queries, tokens, 150]
-            coref_logits = self.query_token_IO_score(coref_features).squeeze(-1) # [1, num_queries, tokens, 1]
+            last_hs_tiled = last_hs.unsqueeze(2).repeat(1, 1, num_tokens_or_mentions, 1) # [1, num_queries, tokens/mentions, emb]
+            memory_tiled = memory.unsqueeze(1).repeat(1, self.num_queries, 1, 1) # [1, num_queries, tokens/mentions, emb]
+            coref_features = torch.cat([last_hs_tiled, memory_tiled], -1) # [1, num_queries, tokens/mentions, 2 * emb]
+            coref_logits_unnorm = self.IO_score(coref_features).squeeze(-1) # [1, num_queries, tokens/mentions, 1]
+        # print("coref_logits_unnorm")
+        # print(coref_logits_unnorm)
 
-        # if is_mention_clustering: 
-        #     coref_logits = F.softmax(coref_logits, dim=0)
-        # else:
-        coref_logits = coref_logits.sigmoid()
+        if is_gold_mention: 
+            coref_logits = coref_logits_unnorm.softmax(dim=1)
+            # print("coref_logits softmax")
+        else:
+            coref_logits = coref_logits_unnorm.sigmoid()
+            # print("coref_logits sigmoid")
+        # print(coref_logits) 
 
-        if not is_mention_clustering:  #TODO: do I want this?
+        if not is_gold_mention:  #TODO: do I want this?
             # cluster_logits = torch.zeros(1,self.num_queries,1, device=coref_logits.device)
             coref_logits = coref_logits * cluster_logits
 
@@ -473,8 +481,6 @@ class MatchingLoss(nn.Module):
         """
         # outputs_without_aux = {k: v for k, v in outputs.items() if k != 'aux_outputs'}
 
-
-
         # Retrieve the matching between the outputs of the last layer and the targets
         matched_predicted_cluster_id, matched_gold_cluster_id = self.matcher(outputs, targets)
 
@@ -530,7 +536,7 @@ class MatchingLoss(nn.Module):
         #     cost_coref.append(loss_for_predicted_gold_match)
         #
         # cost_coref = torch.stack(cost_coref).sum() if len(cost_coref) > 0 else 0
-        total_cost = self.cost_is_cluster * cost_is_cluster + self.cost_coref * cost_coref
+        total_cost = self.cost_coref * cost_coref
         return total_cost
 
         # # Compute all the requested losses

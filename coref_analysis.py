@@ -285,25 +285,25 @@ count_missed_pronouns, count_excess_pronous, count_excess_mentions):
     # predicted_clusters_to_entities = [is_cluster_contains_linked_entities(c, entities_per_sentence, tokens, True) for c in pred]
     predicted_clusters_to_entities = None
 
-    if not (all(gold_correct) and all(pred_correct)):
-        tokens_f = flatten(tokens)
-        print("EXAMPLE #{}".format(i))
-        print("GOLD CLUSTERS:")
-        gold_cluster_to_color = coref_pprint(tokens, gold, gold_correct, complete_miss_flags=gold_is_completely_missed, cluster_to_linked_entities=gold_clusters_to_entities)
+    # if not (all(gold_correct) and all(pred_correct)):
+    tokens_f = flatten(tokens)
+    print("EXAMPLE #{}".format(i))
+    print("GOLD CLUSTERS:")
+    gold_cluster_to_color = coref_pprint(tokens, gold, gold_correct, complete_miss_flags=gold_is_completely_missed, cluster_to_linked_entities=gold_clusters_to_entities)
 
-        pred_cluster_to_color = {}
-        for pred_i, similar_gold_i in enumerate(pred_to_most_similar_gold):
-            if similar_gold_i >= 0 and not gold_correct[similar_gold_i]:
-                similar_color = gold_cluster_to_color[gold[similar_gold_i]]
-                pred_cluster_to_color[pred[pred_i]] = similar_color
+    pred_cluster_to_color = {}
+    for pred_i, similar_gold_i in enumerate(pred_to_most_similar_gold):
+        if similar_gold_i >= 0 and not gold_correct[similar_gold_i]:
+            similar_color = gold_cluster_to_color[gold[similar_gold_i]]
+            pred_cluster_to_color[pred[pred_i]] = similar_color
 
-        print("PREDICTED CLUSTERS:")
-        coref_pprint(tokens, pred, pred_correct, pred_cluster_to_color, pred_is_completely_missed, cluster_to_linked_entities=predicted_clusters_to_entities)
+    print("PREDICTED CLUSTERS:")
+    coref_pprint(tokens, pred, pred_correct, pred_cluster_to_color, pred_is_completely_missed, cluster_to_linked_entities=predicted_clusters_to_entities)
 
-        # entities_set = set((e for sent_ent in entities_per_sentence for (_,_,e) in sent_ent))
-        # print("LINKED ENTITIES SET: ", entities_set)
+    # entities_set = set((e for sent_ent in entities_per_sentence for (_,_,e) in sent_ent))
+    # print("LINKED ENTITIES SET: ", entities_set)
 
-        print('===========================================================================================================================================================================================================================')
+    print('===========================================================================================================================================================================================================================')
     return count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, \
         count_missed_mentions, count_missed_pronouns, count_excess_pronous, count_excess_mentions
 

@@ -75,6 +75,8 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         #         scaled_loss.backward()
         #     total_norm = torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.max_grad_norm)
         # else:
+        # print("before")
+        # print(model.IO_score[0].weight)
         loss.backward()
         total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
 
@@ -94,7 +96,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                 threshold = results['threshold']
 
             if args.local_rank in [-1, 0] and args.save_steps > 0 and global_step % args.save_steps == 0:
-                save_checkpoint(args, global_step, model, optimizer)
+                save_checkpoint(args, global_step, threshold, model, optimizer)
 
             if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
                 logits = np.concatenate(recent_cluster_logits)
@@ -113,10 +115,12 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                                         global_step)
                 recent_logits_sums.clear()
 
+        # print("after")
+        # print(model.IO_score[0].weight)
         if args.max_steps > 0 and global_step > args.max_steps:
             epoch_iterator.close()
             break
-    return global_step
+    return global_step, threshold
 
 
 def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
@@ -224,7 +228,7 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
     for epoch in train_iterator:
         evaluator = CorefEvaluator()
         epoch_iterator = tqdm(train_loader, desc="Iteration in Epoch {}".format(epoch), disable=args.local_rank not in [-1, 0], leave=False)
-        global_step = train_one_epoch(
+        global_step, threshold = train_one_epoch(   #TODO: do I need to let the threshold return to 0.5 every time? or is it correct to update it?
             model, criterion, epoch_iterator, optimizer, args, evaluator, skip_steps, recent_grad_norms,
             recent_cluster_logits, recent_coref_logits, recent_losses, recent_logits_sums, global_step,
             tb_writer, lr_scheduler, eval_loader, eval_dataset, threshold)
@@ -241,11 +245,11 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
 
         if args.local_rank in [-1, 0]:
             if args.save_epochs > 0 and (epoch + 1) % args.save_epochs == 0 or epoch + 1 == args.num_train_epochs:
-                save_checkpoint(args, global_step, model, optimizer)
+                save_checkpoint(args, global_step, threshold, model, optimizer)
 
             if args.eval_epochs > 0 and (epoch + 1) % args.eval_epochs == 0 or \
                     epoch + 1 == args.num_train_epochs and (args.eval_epochs > 0 or args.eval_steps > 0):
-                report_eval(args, eval_loader, global_step, model, criterion, tb_writer)
+                report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, tb_writer, threshold)
 
         if 0 < args.max_steps < global_step:
             train_iterator.close()

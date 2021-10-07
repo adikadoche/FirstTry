@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 
-def save_checkpoint(args, global_step, model, optimizer, amp=None):
+def save_checkpoint(args, global_step, threshold, model, optimizer, amp=None):
     # Save model checkpoint
     output_dir = os.path.join(args.output_dir, 'checkpoint-{}'.format(global_step))
     if not os.path.exists(output_dir):
@@ -30,11 +30,13 @@ def save_checkpoint(args, global_step, model, optimizer, amp=None):
     if amp is not None:
         torch.save(amp.state_dict(), os.path.join(output_dir, 'amp.pt'))
     torch.save(args, os.path.join(output_dir, 'training_args.bin'))
+    torch.save(threshold, os.path.join(output_dir, 'threshold.pt'))
     logger.info("Saved model checkpoint to %s", output_dir)
 
 
 def load_from_checkpoint(model, checkpoint_path, device=None, optimizer=None, amp=None):
     global_step = checkpoint_path.rstrip('/').split('-')[-1]
+    threshold = torch.load(os.path.join(checkpoint_path, 'threshold.pt'), map_location=device)
     model_to_load = model.module if hasattr(model, 'module') else model  # Take care of distributed/parallel training
     try:
         model_to_load.load_state_dict(torch.load(checkpoint_path + '/model.step-' + global_step + '.pt', map_location=device))
@@ -53,7 +55,7 @@ def load_from_checkpoint(model, checkpoint_path, device=None, optimizer=None, am
                         state[k] = v.to(device)
     if amp is not None:
         amp.load_state_dict(torch.load(os.path.join(checkpoint_path, 'amp.pt')))
-    return {'global_step':global_step}
+    return {'global_step':global_step, 'threshold':threshold}
 
 
 def extract_clusters(gold_clusters):
