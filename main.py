@@ -12,6 +12,7 @@ import torch
 #TODO import wandb 
 
 # from modeling import Adi
+from datetime import datetime
 from detr import build_DETR
 from training import set_seed, train
 from eval import make_evaluation
@@ -24,6 +25,7 @@ logger = logging.getLogger(__name__)
 def main():
     print("FML")
     args = parse_args()
+    args.output_dir = os.path.join(args.output_dir, datetime.now().strftime(f"%m_%d_%Y_%H_%M_%S"))
     transformers_logger = logging.getLogger("transformers")
     transformers_logger.setLevel(logging.ERROR)
 
