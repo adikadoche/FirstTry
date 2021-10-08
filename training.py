@@ -144,6 +144,8 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
         logger.info("Loading from checkpoint {}".format(args.resume_from))
         loaded_args = load_from_checkpoint(model, args.resume_from, args.device, optimizer)
         args.resume_global_step = int(loaded_args['global_step'])
+        if not args.do_train:
+            return args.resume_global_step
                                  
 
     # tb_path = os.path.join(args.tensorboard_dir, os.path.basename(args.output_dir))

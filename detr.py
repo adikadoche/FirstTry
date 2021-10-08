@@ -515,11 +515,11 @@ class MatchingLoss(nn.Module):
             if self.args.multiclass_ce:
                 logits = permuted_coref_logits.transpose(0, 1)  # [mentions, num_queries]
                 gold = permuted_gold.transpose(0, 1).nonzero()[:, 1]  # [mentions]
-                cost_coref = F.cross_entropy(logits, gold, reduction='sum')
+                cost_coref = F.cross_entropy(logits, gold, reduction='mean')
             else:
                 if self.args.sum_attn:
                     permuted_coref_logits = permuted_coref_logits.clamp(0, 1)
-                cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_gold, reduction='sum')
+                cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_gold, reduction='mean')
 
 
         # cost_coref = []

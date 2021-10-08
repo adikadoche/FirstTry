@@ -47,8 +47,12 @@ def make_evaluation(model, criterion, eval_loader, eval_dataset, args):
 
         evaluated = set()
         while True:
-            checkpoints = list(
-                os.path.dirname(c) for c in glob.glob(original_output_dir + '/**/model*.pt', recursive=True))
+            if args.resume_from and not args.do_train:
+                checkpoints = list(
+                    os.path.dirname(c) for c in glob.glob(original_output_dir + '/model*.pt', recursive=True))
+            else:
+                checkpoints = list(
+                    os.path.dirname(c) for c in glob.glob(original_output_dir + '/**/model*.pt', recursive=True))
             checkpoints = [c for c in checkpoints if c not in evaluated]
             if args.eval_skip_until > 0:
                 checkpoints = [c for c in checkpoints if int(c.split('-')[-1]) >= args.eval_skip_until]

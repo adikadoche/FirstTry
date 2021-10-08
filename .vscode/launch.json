@@ -21,6 +21,7 @@
                 "--train_file", "/home/gamir/datasets/e2e-coref/train.english.jsonlines",
                 "--predict_file", "/home/gamir/datasets/e2e-coref/dev.english.jsonlines",
                 "--do_train",
+                // "--resume_from", "/home/gamir/adiz/Code/runs/s2e-coref/output_dir/10_09_2021_00_19_55/threshold-0.05_checkpoint-2200",
                 "--eval", "all",
                 "--num_train_epochs", "2",
                 "--logging_steps", "500",

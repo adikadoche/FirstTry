@@ -25,7 +25,10 @@ logger = logging.getLogger(__name__)
 def main():
     print("FML")
     args = parse_args()
-    args.output_dir = os.path.join(args.output_dir, datetime.now().strftime(f"%m_%d_%Y_%H_%M_%S"))
+    if args.resume_from:
+        args.output_dir = args.resume_from
+    else:
+        args.output_dir = os.path.join(args.output_dir, datetime.now().strftime(f"%m_%d_%Y_%H_%M_%S"))
     transformers_logger = logging.getLogger("transformers")
     transformers_logger.setLevel(logging.ERROR)
 
