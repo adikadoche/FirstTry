@@ -101,8 +101,8 @@ class HungarianMatcher(nn.Module):
                 cost_coref.append(losses_for_current_gold_cluster) # [num_queries]
             cost_coref = torch.stack(cost_coref, 1) # [num_queries, gold_clusters]
 
-            # total_cost = self.cost_is_cluster * cost_is_cluster + self.cost_coref * cost_coref
-            total_cost = self.cost_coref * cost_coref
+            total_cost = self.cost_is_cluster * cost_is_cluster + self.cost_coref * cost_coref
+            # total_cost = self.cost_coref * cost_coref
         
         total_cost = total_cost.cpu()
         indices = linear_sum_assignment(total_cost)
