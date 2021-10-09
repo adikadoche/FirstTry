@@ -118,7 +118,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
         all_gold_clusters.append(gold_clusters)
 
         gold_mentions = []
-        if args.use_gold_mentions and len(gold_clusters) > 0:
+        if len(gold_clusters) > 0:
             gold_mentions = list(set([tuple(m) for c in gold_clusters for m in c]))
         all_gold_mentions.append(gold_mentions)
 
