@@ -114,12 +114,11 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
         
         if len(gold_clusters) == 0 or len(gold_clusters) > args.num_queries:
             logger.info("eval exceeds num_queries with length {}".format(len(gold_clusters)))
-            continue
 
         all_gold_clusters.append(gold_clusters)
 
-        gold_mentions = None
-        if args.use_gold_mentions:
+        gold_mentions = []
+        if args.use_gold_mentions and len(gold_clusters) > 0:
             gold_mentions = list(set([tuple(m) for c in gold_clusters for m in c]))
         all_gold_mentions.append(gold_mentions)
 
@@ -131,7 +130,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
             cluster_logits, coref_logits = outputs['cluster_logits'], outputs['coref_logits']
 
             # count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, \
-            #     count_missed_mentions, count_missed_pronouns, count_excess_pronous, count_excess_mentions = print_per_batch(
+            #     count_missed_mentions, count_missed_pronouns, count_excess_pronous, count_excess_mentions = print_per_batch(0, True,
             #     cluster_logits, coref_logits, threshold, gold_clusters, gold_mentions, eval_dataset, input_ids,
             #     count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, count_missed_mentions,
             #     count_missed_pronouns, count_excess_pronous, count_excess_mentions)

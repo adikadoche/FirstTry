@@ -9,6 +9,7 @@ Original file is located at
 
 import pickle
 import torch
+import numpy as np
 from colorama import Back, Style
 from pip._vendor.colorama import Fore
 
@@ -211,7 +212,7 @@ def is_cluster_contains_linked_entities(cluster, entities_per_sentence, sentence
         return found_entity_in_cluster
 
 
-def print_per_batch(cluster_logits, coref_logits, threshold, gold_clusters, gold_mentions, eval_dataset, input_ids,
+def print_per_batch(example_ind, is_print, cluster_logits, coref_logits, threshold, gold_clusters, gold_mentions, eval_dataset, input_ids,
 count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, count_missed_mentions,
 count_missed_pronouns, count_excess_pronous, count_excess_mentions):
     predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(),
@@ -286,24 +287,25 @@ count_missed_pronouns, count_excess_pronous, count_excess_mentions):
     predicted_clusters_to_entities = None
 
     # if not (all(gold_correct) and all(pred_correct)):
-    tokens_f = flatten(tokens)
-    print("EXAMPLE #{}".format(i))
-    print("GOLD CLUSTERS:")
-    gold_cluster_to_color = coref_pprint(tokens, gold, gold_correct, complete_miss_flags=gold_is_completely_missed, cluster_to_linked_entities=gold_clusters_to_entities)
+    # tokens_f = flatten(tokens)
+    if is_print:
+        print("EXAMPLE #{}".format(example_ind))
+        print("GOLD CLUSTERS:")
+        gold_cluster_to_color = coref_pprint(tokens, gold, gold_correct, complete_miss_flags=gold_is_completely_missed, cluster_to_linked_entities=gold_clusters_to_entities)
 
-    pred_cluster_to_color = {}
-    for pred_i, similar_gold_i in enumerate(pred_to_most_similar_gold):
-        if similar_gold_i >= 0 and not gold_correct[similar_gold_i]:
-            similar_color = gold_cluster_to_color[gold[similar_gold_i]]
-            pred_cluster_to_color[pred[pred_i]] = similar_color
+        pred_cluster_to_color = {}
+        for pred_i, similar_gold_i in enumerate(pred_to_most_similar_gold):
+            if similar_gold_i >= 0 and not gold_correct[similar_gold_i]:
+                similar_color = gold_cluster_to_color[gold[similar_gold_i]]
+                pred_cluster_to_color[pred[pred_i]] = similar_color
 
-    print("PREDICTED CLUSTERS:")
-    coref_pprint(tokens, pred, pred_correct, pred_cluster_to_color, pred_is_completely_missed, cluster_to_linked_entities=predicted_clusters_to_entities)
+        print("PREDICTED CLUSTERS:")
+        coref_pprint(tokens, pred, pred_correct, pred_cluster_to_color, pred_is_completely_missed, cluster_to_linked_entities=predicted_clusters_to_entities)
 
-    # entities_set = set((e for sent_ent in entities_per_sentence for (_,_,e) in sent_ent))
-    # print("LINKED ENTITIES SET: ", entities_set)
+        # entities_set = set((e for sent_ent in entities_per_sentence for (_,_,e) in sent_ent))
+        # print("LINKED ENTITIES SET: ", entities_set)
 
-    print('===========================================================================================================================================================================================================================')
+        print('===========================================================================================================================================================================================================================')
     return count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, \
         count_missed_mentions, count_missed_pronouns, count_excess_pronous, count_excess_mentions
 
@@ -323,6 +325,13 @@ def print_predictions(all_cluster_logits, all_coref_logits, eval_dataloader, eva
     count_excess_mentions = 0
     count_excess_pronous = 0
 
+    indices_to_print = []
+
+    if len(eval_dataloader) > args.max_eval_print:
+        indices_to_print = np.random.randint(len(eval_dataloader), size=args.max_eval_print)
+    else:
+        indices_to_print = range(len(eval_dataloader))
+
     for i, batch in enumerate(eval_dataloader):
         input_ids, input_mask, text_len, speaker_ids, genre, gold_starts, gold_ends, cluster_ids, sentence_map, gold_clusters = batch
         gold_mentions = list(set([tuple(m) for c in gold_clusters for m in c]))
@@ -330,7 +339,7 @@ def print_predictions(all_cluster_logits, all_coref_logits, eval_dataloader, eva
 
 
         count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, \
-            count_missed_mentions, count_missed_pronouns, count_excess_pronous, count_excess_mentions = print_per_batch(
+            count_missed_mentions, count_missed_pronouns, count_excess_pronous, count_excess_mentions = print_per_batch(i, i in indices_to_print,
             cluster_logits, coref_logits, threshold, gold_clusters, gold_mentions, eval_dataset, input_ids,
             count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, count_missed_mentions,
             count_missed_pronouns, count_excess_pronous, count_excess_mentions)
