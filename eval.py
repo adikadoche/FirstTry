@@ -156,8 +156,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
                'recall': r}
 
 
-    print_predictions(all_cluster_logits_cuda, all_coref_logits_cuda, eval_dataloader, eval_dataset, model, threshold, args) #TODO: save all the results in the loop above and send it to the function so it wont have to call model itself
-
+    print_predictions(all_cluster_logits_cuda, all_coref_logits_cuda, eval_dataloader, eval_dataset, model, threshold, args)
 
     output_eval_file = os.path.join(args.output_dir, "eval_results.txt")
     with open(output_eval_file, "a") as writer:

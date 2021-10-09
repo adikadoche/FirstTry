@@ -65,12 +65,12 @@ class DETR(nn.Module):
             nn.ReLU(),
             nn.Linear(300, 100),
             nn.ReLU(),
-            nn.Linear(100, 1),
+            nn.Linear(100, 1),   #TODO: change to 3 so it would be BIO instead of IO
         ) #query and token concatenated, resulting in IO score
 
         self.query_head = nn.Linear(hidden_dim, 75)
         self.token_head = nn.Linear(hidden_dim, 75)
-        self.query_token_IO_score = nn.Linear(150, 1)
+        self.query_token_IO_score = nn.Linear(150, 1)  #TODO: change to 3 so it would be BIO instead of IO
  
 
     def forward(self, input_ids, orig_input_dim, mask, gold_mentions):
