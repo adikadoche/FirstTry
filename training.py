@@ -38,9 +38,11 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         if len(gold_clusters) == 0 or len(gold_clusters) > args.num_queries:
             logger.info("train exceeds num_queries with length {}".format(len(gold_clusters)))
 
-        gold_mentions = []
-        if args.use_gold_mentions and len(gold_clusters) > 0:
-            gold_mentions = list(set([tuple(m) for c in gold_clusters for m in c]))
+        gold_mentions = None
+        if args.use_gold_mentions:
+            gold_mentions = []
+            if len(gold_clusters) > 0:
+                gold_mentions = list(set([tuple(m) for c in gold_clusters for m in c]))
 
         gold_matrix = create_gold_matrix(args.device, text_len.sum(), args.num_queries, gold_clusters, gold_mentions)
 

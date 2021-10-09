@@ -167,6 +167,8 @@ def create_gold_matrix(device, doc_len, num_queries, gold_clusters, gold_mention
         if num_queries < len(gold_clusters):
             logger.info("in utils, exceeds num_queries with length {}".format(len(gold_clusters)))
         for cluster_id, cluster in enumerate(gold_clusters):
+            if cluster_id >= num_queries:
+                continue
             for mention in cluster:
                 mention_index = gold_mentions.index(tuple(mention))
                 assert mention_index >= 0
