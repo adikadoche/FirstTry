@@ -99,6 +99,7 @@ def parse_args():
     parser.add_argument("--eval_steps", type=int, default=500, help="Eval every X updates steps.")
     parser.add_argument('--eval_epochs', type=int, default=1)
     parser.add_argument('--eval_sleep', type=int, default=10)
+    parser.add_argument('--max_eval_print', type=int, default=10)
     parser.add_argument('--eval_skip_until', type=int, default=-1)
     parser.add_argument("--save_steps", type=int, default=500, help="Save checkpoint every X updates steps.")
     parser.add_argument('--save_epochs', type=int, default=1)

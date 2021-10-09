@@ -131,7 +131,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
             cluster_logits, coref_logits = outputs['cluster_logits'], outputs['coref_logits']
 
             # count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, \
-            #     count_missed_mentions, count_missed_pronouns, count_excess_pronous, count_excess_mentions = print_per_batch(
+            #     count_missed_mentions, count_missed_pronouns, count_excess_pronous, count_excess_mentions = print_per_batch(0, True,
             #     cluster_logits, coref_logits, threshold, gold_clusters, gold_mentions, eval_dataset, input_ids,
             #     count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, count_missed_mentions,
             #     count_missed_pronouns, count_excess_pronous, count_excess_mentions)

@@ -225,7 +225,10 @@ def calc_predicted_clusters(cluster_logits, coref_logits, threshold, gold_mentio
         for gold_mentions_inds in cluster_id_to_tokens.values():
             current_cluster = []
             for mention_id in gold_mentions_inds:
-                current_cluster.append(gold_mentions[mention_id[0]])
+                try:
+                    current_cluster.append(gold_mentions[mention_id[0]])
+                except:
+                    print('here')
             clusters.append(current_cluster)
 
     return clusters
