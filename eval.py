@@ -114,12 +114,11 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
         
         if len(gold_clusters) == 0 or len(gold_clusters) > args.num_queries:
             logger.info("eval exceeds num_queries with length {}".format(len(gold_clusters)))
-            continue
 
         all_gold_clusters.append(gold_clusters)
 
-        gold_mentions = None
-        if args.use_gold_mentions:
+        gold_mentions = []
+        if args.use_gold_mentions and len(gold_clusters) > 0:
             gold_mentions = list(set([tuple(m) for c in gold_clusters for m in c]))
         all_gold_mentions.append(gold_mentions)
 
