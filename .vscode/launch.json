@@ -32,7 +32,7 @@
                 "--predict_file_cache", "/home/gamir/adiz/Code/runs/s2e-coref/cache_dir/dev.english.4096.pkl",
                 "--gradient_accumulation_steps", "1",
                 "--amp",
-                "--use_gold_mentions",
+                // "--use_gold_mentions",
                 "--no_cuda",
                 // "--per_gpu_train_batch_size", "8",
                 "--normalise_loss",
