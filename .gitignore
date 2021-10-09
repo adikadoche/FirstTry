@@ -4,3 +4,5 @@ venv
 *.txt
 slurm_logs
 .vscode/launch.json
+*.jsonlines
+*.ipynb
