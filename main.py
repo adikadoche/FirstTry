@@ -49,8 +49,10 @@ def main():
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
                         datefmt='%m/%d/%Y %H:%M:%S',
                         level=logging.INFO if args.local_rank in [-1, 0] else logging.WARN)
+    wb_config = wandb.config
     for key, val in vars(args).items():
         logger.info(f"{key} - {val}")
+        wb_config[key] = val
 
     set_seed(args)
 
@@ -63,6 +65,7 @@ def main():
     # config_class = LongformerConfig
     # base_model_prefix = "longformer"
     model, criterion = build_DETR(args)
+    wandb.watch(model, criterion, log="all")
 
     if args.local_rank == 0:
         torch.distributed.barrier()  # Make sure only the first process in distributed training will download model & vocab

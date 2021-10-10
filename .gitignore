@@ -4,3 +4,4 @@ venv
 *.txt
 slurm_logs
 .vscode/launch.json
+wandb/*

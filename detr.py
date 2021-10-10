@@ -563,11 +563,11 @@ class MatchingLoss(nn.Module):
         # return losses
 
 def build_backbone(args, config):
-    # position_embedding = PositionalEncoding(config.hidden_size)
-    model = LongformerModel.from_pretrained(args.model_name_or_path,
+    position_embedding = PositionalEncoding(config.hidden_size)
+    backbone = LongformerModel.from_pretrained(args.model_name_or_path,
                                                config=config,
                                                cache_dir=args.cache_dir)
-    # model = Joiner(backbone, position_embedding)
+    model = Joiner(backbone, position_embedding)
     model.backbone_hidden_size = config.hidden_size
     return model
 

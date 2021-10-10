@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     epoch_iterator, optimizer: torch.optim.Optimizer,
                     args, evaluator, skip_steps, recent_grad_norms, recent_cluster_logits,
-        recent_coref_logits, recent_losses, recent_logits_sums, global_step, tb_writer, lr_scheduler, eval_loader, eval_dataset, threshold):
+        recent_coref_logits, recent_losses, recent_logits_sums, global_step, lr_scheduler, eval_loader, eval_dataset, threshold):
     for step, batch in enumerate(epoch_iterator):
         if skip_steps > 0:
             skip_steps -= 1
@@ -93,7 +93,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             global_step += 1
 
             if args.local_rank in [-1, 0] and args.eval_steps > 0 and global_step % args.eval_steps == 0:
-                results = report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, tb_writer, threshold)
+                results = report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, threshold)
                 threshold = results['threshold']
 
             if args.local_rank in [-1, 0] and args.save_steps > 0 and global_step % args.save_steps == 0:
@@ -101,19 +101,20 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
             if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
                 logits = np.concatenate(recent_cluster_logits)
-                tb_writer.add_histogram('cluster_logits', logits, global_step)
+                wandb.log({'all_cluster_logits': logits}, step=global_step)
+                wandb.log({'current_cluster_logits': cluster_logits.detach().cpu().numpy()}, step=global_step)
                 recent_cluster_logits.clear()
                 logits = np.concatenate(recent_coref_logits)
-                tb_writer.add_histogram('recent_coref_logits', logits, global_step)
+                wandb.log({'all_recent_coref_logits': logits}, step=global_step)
+                wandb.log({'current_recent_coref_logits': coref_logits.detach().cpu().numpy()}, step=global_step)
                 recent_coref_logits.clear()
-                tb_writer.add_scalar('grad_total_norm', np.mean(recent_grad_norms), global_step)
+                wandb.log({'grad_total_norm': np.mean(recent_grad_norms)}, step=global_step)
                 recent_grad_norms.clear()
-                tb_writer.add_scalar('lr', optimizer.param_groups[0]['lr'], global_step)
-                tb_writer.add_scalar('lr_bert', optimizer.param_groups[1]['lr'], global_step)
-                tb_writer.add_scalar('loss', np.mean(recent_losses), global_step)
+                wandb.log({'lr': optimizer.param_groups[0]['lr']}, step=global_step)
+                wandb.log({'lr_bert': optimizer.param_groups[1]['lr']}, step=global_step)
+                wandb.log({'loss': np.mean(recent_losses)}, step=global_step)
                 recent_losses.clear()
-                tb_writer.add_histogram('coref_logits_sum_over_clusters', np.concatenate(recent_logits_sums),
-                                        global_step)
+                wandb.log({'coref_logits_sum_over_clusters': np.concatenate(recent_logits_sums)}, step=global_step)
                 recent_logits_sums.clear()
 
         # print("after")
@@ -201,7 +202,6 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
     global_step = 0 if not args.resume_from else args.resume_global_step
     if args.local_rank in [-1, 0]:
         purge_step = None if not args.resume_from else args.resume_global_step
-        tb_writer = SummaryWriter(log_dir=args.output_dir, flush_secs=15, purge_step=purge_step)
 
     # Train!
     logger.info("***** Running training *****")
@@ -234,13 +234,13 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
         global_step, threshold = train_one_epoch(   #TODO: do I need to let the threshold return to 0.5 every time? or is it correct to update it?
             model, criterion, epoch_iterator, optimizer, args, evaluator, skip_steps, recent_grad_norms,
             recent_cluster_logits, recent_coref_logits, recent_losses, recent_logits_sums, global_step,
-            tb_writer, lr_scheduler, eval_loader, eval_dataset, threshold)
+            lr_scheduler, eval_loader, eval_dataset, threshold)
 
         p, r, f1 = evaluator.get_prf()
         if args.local_rank in [-1, 0]:
-            tb_writer.add_scalar('Train Precision', p, global_step)
-            tb_writer.add_scalar('Train Recall', r, global_step)
-            tb_writer.add_scalar('Train F1', f1, global_step)
+            wandb.log({'Train Precision':p}, step=global_step)
+            wandb.log({'Train Recall': r}, step=global_step)
+            wandb.log({'Train F1': f1}, step=global_step)
             logger.info('Train precision, recall, f1: {}'.format((p, r, f1)))
 
         if args.lr_drop_interval == 'epoch':
@@ -252,7 +252,7 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
 
             if args.eval_epochs > 0 and (epoch + 1) % args.eval_epochs == 0 or \
                     epoch + 1 == args.num_train_epochs and (args.eval_epochs > 0 or args.eval_steps > 0):
-                report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, tb_writer, threshold)
+                report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, threshold)
 
         if 0 < args.max_steps < global_step:
             train_iterator.close()
@@ -262,8 +262,8 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
 
-    if args.local_rank in [-1, 0]:
-        tb_writer.close()
+    # if args.local_rank in [-1, 0]:
+    #     tb_writer.close()
 
     return global_step
 

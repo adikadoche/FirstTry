@@ -14,17 +14,16 @@ from coref_analysis import print_predictions, print_per_batch
 from data import get_dataset
 from utils import calc_best_avg_f1, create_gold_matrix, try_measure_len, load_from_checkpoint
 from conll import evaluate_conll
-from torch.utils.tensorboard import SummaryWriter
-
+import wandb
 logger = logging.getLogger(__name__)
 
 
 
-def report_eval(args, eval_dataloader, eval_dataset, global_step, model, criterion, tb_writer, threshold):
+def report_eval(args, eval_dataloader, eval_dataset, global_step, model, criterion, threshold):
     if args.local_rank == -1:  # Only evaluate when single GPU otherwise metrics may not average well
         results = evaluate(args, eval_dataloader, eval_dataset, model, criterion, str(global_step), threshold)
         for key, value in results.items():
-            tb_writer.add_scalar('eval_{}'.format(key), value, global_step)
+            wandb.log({'eval_{}'.format(key): value}, step=global_step)
         return results
     return None
 
@@ -43,7 +42,6 @@ def make_evaluation(model, criterion, eval_loader, eval_dataset, args):
         original_output_dir = args.output_dir.rstrip('/')
         args.output_dir = args.output_dir.rstrip('/') + '_eval'
         logger.info("Evaluation output is: %s", args.output_dir)
-        tb_writer = SummaryWriter(log_dir=args.output_dir, flush_secs=15)
 
         evaluated = set()
         while True:
@@ -65,7 +63,7 @@ def make_evaluation(model, criterion, eval_loader, eval_dataset, args):
                         loaded_args = load_from_checkpoint(model, checkpoint)
                         global_step = loaded_args['global_step']
                         threshold = loaded_args['threshold']
-                        report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, tb_writer, threshold)
+                        report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, threshold)
 
                     evaluated.update(checkpoints)
                 except Exception as e:
