@@ -3,7 +3,7 @@ import os
 import logging
 import random
 import numpy as np
-from torch.utils.tensorboard import SummaryWriter
+import wandb
 import torch
 from eval import evaluate, report_eval
 from tqdm import tqdm, trange

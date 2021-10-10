@@ -9,7 +9,7 @@ import os
 import logging
 from cli import parse_args
 import torch
-#TODO import wandb 
+import wandb 
 
 # from modeling import Adi
 from datetime import datetime
@@ -20,6 +20,7 @@ from data import get_dataset, get_data_objects
 
 
 logger = logging.getLogger(__name__)
+wandb.init(project='coref-detr', entity='adizicher')
 
 
 def main():
