@@ -16,7 +16,8 @@ from datetime import datetime
 from detr import build_DETR
 from training import set_seed, train
 from eval import make_evaluation
-from data import get_dataset, get_data_objects
+from data import get_dataset
+from transformers import AutoTokenizer
 
 
 logger = logging.getLogger(__name__)
@@ -70,13 +71,25 @@ def main():
     if args.local_rank == 0:
         torch.distributed.barrier()  # Make sure only the first process in distributed training will download model & vocab
 
+    if args.tokenizer_name:
+        tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name, cache_dir=args.cache_dir)
+    elif args.model_name_or_path:
+        tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir)
+    else:
+        raise ValueError(
+            "You are instantiating a new tokenizer from scratch. This is not supported, but you can do it from another script, save it,"
+            "and load it from here, using --tokenizer_name"
+        )
+
     model.to(args.device)
 
-    train_dataset, train_sampler, train_loader, args.train_batch_size = get_data_objects(args, 'train.english.512.jsonlines', True)
-    eval_dataset, eval_sampler, eval_loader, args.eval_batch_size = get_data_objects(args, 'dev.english.512.jsonlines', False)
+    eval_dataset = get_dataset(args, tokenizer, evaluate=True)
 
-    global_step = train(args, model, criterion, train_loader, eval_loader, eval_dataset)
-    make_evaluation(model, criterion, eval_loader, eval_dataset, args) #TODO: report_eval won't work in here because of missing parameters
+    if args.do_train:
+        train_dataset = get_dataset(args, tokenizer, evaluate=False)
+        global_step = train(args, model, criterion, train_dataset, eval_dataset)
+
+    make_evaluation(model, criterion, eval_dataset, args) #TODO: report_eval won't work in here because of missing parameters
 
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':

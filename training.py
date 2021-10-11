@@ -14,6 +14,7 @@ from optimization import WarmupLinearSchedule
 import itertools
 from metrics import CorefEvaluator
 from utils import load_from_checkpoint, save_checkpoint
+from coref_bucket_batch_sampler import BucketBatchSampler
 
 
 from transformers import AdamW, get_linear_schedule_with_warmup
@@ -125,11 +126,12 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     return global_step, threshold
 
 
-def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
+def train(args, model, criterion, train_dataset, eval_dataset):
     """ Train the model """
     # output_dir = Path(args.output_dir)
 
     logger.info("Training/evaluation parameters %s", args)
+    train_loader = BucketBatchSampler(train_dataset, max_total_seq_len=args.max_total_seq_len, batch_size_1=args.batch_size_1)
 
     param_dicts = [
         {"params": [p for n, p in model.named_parameters() if "backbone" not in n and p.requires_grad]},

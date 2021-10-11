@@ -7,12 +7,12 @@ import numpy as np
 
 import torch
 
-from consts import SPEAKER_START, SPEAKER_END, NULL_ID_FOR_COREF
+from consts import SPEAKER_START, SPEAKER_END, NULL_ID_FOR_COREF, SPEAKER_END_WORD, SPEAKER_START_WORD
 from torch.utils.data import Dataset, RandomSampler, DistributedSampler, SequentialSampler, DataLoader
 from ontonotes import OntonotesDataset
 
 
-CorefExample = namedtuple("CorefExample", ["token_ids", "clusters"])
+CorefExample = namedtuple("CorefExample", ["token_ids", "clusters", "tokens"])
 
 logger = logging.getLogger(__name__)
 
@@ -55,22 +55,27 @@ class CorefDataset(Dataset):
             end_token_idx_to_word_idx = [0]  # for <s>
 
             token_ids = []
+            tokens = ''
             last_speaker = None
             for idx, (word, speaker) in enumerate(zip(words, speakers)):
                 if last_speaker != speaker:
-                    speaker_prefix = [SPEAKER_START] + self.tokenizer.encode(" " + speaker,
+                    speaker_prefix_token = [SPEAKER_START] + self.tokenizer.encode(" " + speaker,
                                                                              add_special_tokens=False) + [SPEAKER_END]
+                    speaker_prefix = SPEAKER_START_WORD + ' ' + speaker + SPEAKER_END_WORD
                     last_speaker = speaker
                 else:
-                    speaker_prefix = []
-                for _ in range(len(speaker_prefix)):
+                    speaker_prefix_token = []
+                    speaker_prefix = ''
+                for _ in range(len(speaker_prefix_token)):
                     end_token_idx_to_word_idx.append(idx)
-                token_ids.extend(speaker_prefix)
+                token_ids.extend(speaker_prefix_token)
+                tokens += speaker_prefix
                 word_idx_to_start_token_idx[idx] = len(token_ids) + 1  # +1 for <s>
                 tokenized = self.tokenizer.encode(" " + word, add_special_tokens=False)
                 for _ in range(len(tokenized)):
                     end_token_idx_to_word_idx.append(idx)
                 token_ids.extend(tokenized)
+                tokens += ' ' + word
                 word_idx_to_end_token_idx[idx] = len(token_ids)  # old_seq_len + 1 (for <s>) + len(tokenized_word) - 1 (we start counting from zero) = len(token_ids)
 
             if 0 < self.max_seq_length < len(token_ids):
@@ -82,7 +87,7 @@ class CorefDataset(Dataset):
                 cluster in clusters]
             lengths.append(len(token_ids))
 
-            coref_examples.append(((doc_key, end_token_idx_to_word_idx), CorefExample(token_ids=token_ids, clusters=new_clusters)))
+            coref_examples.append(((doc_key, end_token_idx_to_word_idx), CorefExample(token_ids=token_ids, clusters=new_clusters, tokens=tokens)))
         return coref_examples, lengths, num_examples_filtered
 
     def __len__(self):
@@ -107,7 +112,7 @@ class CorefDataset(Dataset):
         max_length += 2  # we have additional two special tokens <s>, </s>
         padded_batch = []
         for example in batch:
-            encoded_dict = self.tokenizer.encode_plus(example[0],
+            encoded_dict = self.tokenizer.encode_plus(example[2],
                                                       add_special_tokens=True,
                                                       pad_to_max_length=True,
                                                       max_length=max_length,
@@ -141,26 +146,6 @@ def get_dataset(args, tokenizer, evaluate=False):
         pickle.dump(coref_dataset, f)
 
     return coref_dataset
-
-
-def get_data_objects(args, data_file_name, is_training):
-    dataset = OntonotesDataset(os.path.join(args.data_dir, data_file_name), is_training, args)
-    # Note that DistributedSampler samples randomly
-    if is_training:
-        sampler = RandomSampler(dataset) if args.local_rank == -1 else DistributedSampler(dataset)
-        per_gpu_batch_size = args.per_gpu_eval_batch_size
-        logger.info("Loaded train data")
-    else:
-        sampler = SequentialSampler(dataset) if args.local_rank == -1 else DistributedSampler(dataset)
-        per_gpu_batch_size = args.per_gpu_train_batch_size
-        logger.info("Loaded eval data")
-
-    batch_size = per_gpu_batch_size * max(1, args.n_gpu)
-    loader = DataLoader(dataset, sampler=sampler, batch_size=batch_size,
-                             pin_memory=not args.no_cuda, collate_fn=lambda batch: batch[0], num_workers=args.num_workers,
-                             worker_init_fn=lambda worker_id: np.random.seed(torch.initial_seed() % 2**32))
-
-    return dataset, sampler, loader, batch_size
 
 def flatten_list_of_lists(lst):
     return [elem for sublst in lst for elem in sublst]
