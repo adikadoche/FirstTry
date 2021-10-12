@@ -119,7 +119,7 @@ class CorefDataset(Dataset):
                                                       return_attention_mask=True,
                                                       return_tensors='pt')
             clusters = self.pad_clusters(example.clusters)
-            example = (encoded_dict["input_ids"][0,1:-1], encoded_dict["attention_mask"][0,1:-1]) + (torch.tensor(clusters),)
+            example = (encoded_dict["input_ids"], encoded_dict["attention_mask"]) + (torch.tensor(clusters),)
             padded_batch.append(example)
         tensored_batch = tuple(torch.stack([example[i].squeeze() for example in padded_batch], dim=0) for i in range(len(example)))
         return tensored_batch
