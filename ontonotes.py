@@ -50,7 +50,79 @@ class OntonotesDataset(Dataset):
         return tensorized_example
 
     def tensorize_example(self, example, is_training):
-        clusters = example["clusters"]
+        
+                # d = json.loads(line.strip())
+                # doc_key = d["doc_key"]
+                # input_words = flatten_list_of_lists(d["sentences"])
+                # clusters = d["clusters"]
+                # max_mention_num = max(max_mention_num, len(flatten_list_of_lists(clusters)))
+                # max_cluster_size = max(max_cluster_size, max(len(cluster) for cluster in clusters) if clusters else 0)
+                # max_num_clusters = max(max_num_clusters, len(clusters) if clusters else 0)
+                # speakers = flatten_list_of_lists(d["speakers"])
+        old_clusters = example["clusters"]
+        sentences = example["sentences"]
+        num_words = sum(len(s) for s in sentences)
+        speakers = example["speakers"]
+        # assert num_words == len(speakers), (num_words, len(speakers))
+        speaker_dict = self.get_speaker_dict(self.flatten(speakers))
+        sentence_map = [] #example['sentence_map']
+
+
+        # pronoun_ids = []
+        # pronoun_indices = example.get('pronoun_indices', [])
+        max_sentence_length = self.args.max_segment_len
+
+        input_ids, input_mask, speaker_ids, text_len = [], [], [], []
+        word_idx = 0
+        total_tokens = 0
+        word_idx_to_end_token_idx = dict()
+        word_idx_to_start_token_idx = dict()
+        sent_idx = 0
+        while sent_idx < len(sentences):
+            concat_sentence = []
+            concat_speaker = []
+            sentence = sentences[sent_idx]
+            speaker = speakers[sent_idx]
+            while len(self.tokenizer.encode(' '.join(concat_sentence + sentence))) < max_sentence_length and sent_idx < len(sentences):
+                concat_sentence += sentence
+                concat_speaker += speaker
+                sent_idx += 1
+                if sent_idx >= len(sentences):
+                    break
+                sentence = sentences[sent_idx]
+                speaker = speakers[sent_idx]
+            sent_input_ids = self.tokenizer.encode(' '.join(concat_sentence))
+            cur_text_len = len(sent_input_ids)
+            text_len.append(cur_text_len)
+
+            speaker_per_token = ['[SPL]']
+            for i in range(len(concat_sentence)):
+                word = concat_sentence[i]
+                if i > 0:
+                    word = ' ' + word
+                speaker = concat_speaker[i]
+                token_ids = self.tokenizer.tokenize(word)
+                word_idx_to_start_token_idx[word_idx] = total_tokens + 1  # +1 for <s>
+                total_tokens += len(token_ids)
+                word_idx_to_end_token_idx[word_idx] = total_tokens  # old_seq_len + 1 (for <s>) + len(tokenized_word) - 1 (we start counting from zero) = len(token_ids)
+                speaker_per_token += [speaker] * len(token_ids)
+                word_idx += 1
+            speaker_per_token += ['[SPL]']
+
+            total_tokens += 2
+            
+            sent_input_mask = [1] * cur_text_len
+            sent_speaker_ids = [speaker_dict.get(s, 3) for s in speaker_per_token]
+            sent_input_mask += [0] * (max_sentence_length - cur_text_len)
+            sent_speaker_ids += [0] * (max_sentence_length - cur_text_len)
+            sent_input_ids += [1] * (max_sentence_length - cur_text_len)
+            input_ids.append(sent_input_ids)
+            speaker_ids.append(sent_speaker_ids)
+            input_mask.append(sent_input_mask)
+        clusters = [
+            [(word_idx_to_start_token_idx[start], word_idx_to_end_token_idx[end]) for start, end in cluster] for
+            cluster in old_clusters]
+
 
         gold_mentions = sorted(tuple(m) for m in self.flatten(clusters))
         gold_mention_map = {m: i for i, m in enumerate(gold_mentions)}
@@ -59,45 +131,21 @@ class OntonotesDataset(Dataset):
             for mention in cluster:
                 cluster_ids[gold_mention_map[tuple(mention)]] = cluster_id + 1
 
-        sentences = example["sentences"]
-        num_words = sum(len(s) for s in sentences)
-        speakers = example["speakers"]
-        # assert num_words == len(speakers), (num_words, len(speakers))
-        speaker_dict = self.get_speaker_dict(self.flatten(speakers))
-        sentence_map = example['sentence_map']
 
-
-        pronoun_ids = []
-        pronoun_indices = example.get('pronoun_indices', [])
-        max_sentence_length = self.args.max_segment_len
-        text_len = np.array([len(s) for s in sentences])
-
-        input_ids, input_mask, speaker_ids = [], [], []
-        for i, (sentence, speaker) in enumerate(zip(sentences, speakers)):
-            sent_input_ids = self.tokenizer.convert_tokens_to_ids(sentence)
-            sent_input_mask = [1] * len(sent_input_ids)
-            sent_speaker_ids = [speaker_dict.get(s, 3) for s in speaker]
-            while len(sent_input_ids) < max_sentence_length:
-                sent_input_ids.append(0)
-                sent_input_mask.append(0)
-                sent_speaker_ids.append(0)
-            input_ids.append(sent_input_ids)
-            speaker_ids.append(sent_speaker_ids)
-            input_mask.append(sent_input_mask)
         input_ids = np.array(input_ids)
         input_mask = np.array(input_mask)
         speaker_ids = np.array(speaker_ids)
-        assert num_words == np.sum(input_mask), (num_words, np.sum(input_mask))
+        assert total_tokens == np.sum(input_mask), (total_tokens, np.sum(input_mask))
 
         doc_key = example["doc_key"]
-        self.subtoken_maps[doc_key] = example.get("subtoken_map", None)
+        # self.subtoken_maps[doc_key] = example.get("subtoken_map", None)
         genre = self.genres.get(doc_key[:2], 0)
 
         gold_starts, gold_ends = self.tensorize_mentions(gold_mentions)
         example_tensors = (
             input_ids, input_mask, text_len, speaker_ids, genre, gold_starts, gold_ends, cluster_ids, sentence_map)
 
-        if is_training and len(sentences) > self.args.max_training_sentences:
+        if is_training and len(input_ids) > self.args.max_training_sentences:
             # if self.args['single_example']:
             example_tensors = self.truncate_example(*example_tensors)
             # else:

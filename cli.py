@@ -28,13 +28,6 @@ def parse_args():
         required=True,
         help="The output directory where the model checkpoints and predictions will be written.",
     )
-    parser.add_argument(
-        "--data_dir",
-        default=None,
-        type=str,
-        required=True,
-        help="The input data dir. Should contain the .tsv files (or other data files) for the task.",
-    )
     parser.add_argument("--resume_from", default='', type=str)
     parser.add_argument(
         "--train_file_cache",

@@ -143,8 +143,8 @@ def get_dataset(args, tokenizer, evaluate=False):
     return coref_dataset
 
 
-def get_data_objects(args, data_file_name, is_training):
-    dataset = OntonotesDataset(os.path.join(args.data_dir, data_file_name), is_training, args)
+def get_data_objects(args, data_file_path, is_training):
+    dataset = OntonotesDataset(data_file_path, is_training, args)
     # Note that DistributedSampler samples randomly
     if is_training:
         sampler = RandomSampler(dataset) if args.local_rank == -1 else DistributedSampler(dataset)
