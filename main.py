@@ -72,8 +72,8 @@ def main():
 
     model.to(args.device)
 
-    train_dataset, train_sampler, train_loader, args.train_batch_size = get_data_objects(args, 'train.english.512.jsonlines', True)
-    eval_dataset, eval_sampler, eval_loader, args.eval_batch_size = get_data_objects(args, 'dev.english.512.jsonlines', False)
+    train_dataset, train_sampler, train_loader, args.train_batch_size = get_data_objects(args, args.train_file, True)
+    eval_dataset, eval_sampler, eval_loader, args.eval_batch_size = get_data_objects(args, args.predict_file, False)
 
     global_step = train(args, model, criterion, train_loader, eval_loader, eval_dataset)
     make_evaluation(model, criterion, eval_loader, eval_dataset, args) #TODO: report_eval won't work in here because of missing parameters
