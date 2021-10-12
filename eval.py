@@ -19,23 +19,23 @@ logger = logging.getLogger(__name__)
 
 
 
-def report_eval(args, eval_dataloader, eval_dataset, global_step, model, criterion, threshold):
+def report_eval(args, eval_dataset, global_step, model, criterion, threshold):
     if args.local_rank == -1:  # Only evaluate when single GPU otherwise metrics may not average well
-        results = evaluate(args, eval_dataloader, eval_dataset, model, criterion, str(global_step), threshold)
+        results = evaluate(args, eval_dataset, model, criterion, str(global_step), threshold)
         for key, value in results.items():
             wandb.log({'eval_{}'.format(key): value}, step=global_step)
         return results
     return None
 
-def make_evaluation(model, criterion, eval_loader, eval_dataset, args):  
+def make_evaluation(model, criterion, eval_dataset, args):  
     # Evaluation 'no', 'specific', 'all', 'vanilla'
     if args.eval == 'specific':
         checkpoint = args.output_dir
         loaded_args = load_from_checkpoint(model, checkpoint)
         global_step = loaded_args['global_step']
-        evaluate(args, eval_loader, model, criterion, global_step)
+        evaluate(args, model, criterion, global_step)
     elif args.eval == 'vanilla':
-        evaluate(args, eval_loader, model, criterion, '0')
+        evaluate(args, model, criterion, '0')
     elif args.eval == 'all':
         import time
 
@@ -63,7 +63,7 @@ def make_evaluation(model, criterion, eval_loader, eval_dataset, args):
                         loaded_args = load_from_checkpoint(model, checkpoint)
                         global_step = loaded_args['global_step']
                         threshold = loaded_args['threshold']
-                        report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, threshold)
+                        report_eval(args, eval_dataset, global_step, model, criterion, threshold)
 
                     evaluated.update(checkpoints)
                 except Exception as e:
@@ -76,9 +76,11 @@ def make_evaluation(model, criterion, eval_loader, eval_dataset, args):
 
 
 
-def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", threshold=0.5):
+def evaluate(args, eval_dataset, model, criterion, prefix="", threshold=0.5):
     if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]:
         os.makedirs(args.output_dir)
+
+    eval_dataloader = BucketBatchSampler(eval_dataset, max_total_seq_len=args.max_total_seq_len, batch_size_1=True)
 
     # Eval!
     logger.info("***** Running evaluation {} *****".format(prefix))
@@ -108,8 +110,8 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
         model.eval()
 
         batch = tuple(t.to(args.device) if torch.is_tensor(t) else t for t in batch)
-        input_ids, input_mask, text_len, speaker_ids, genre, gold_starts, gold_ends, cluster_ids, sentence_map, gold_clusters = batch
-        
+        input_ids, input_mask, gold_clusters = batch    
+
         if len(gold_clusters) == 0 or len(gold_clusters) > args.num_queries:
             logger.info("eval exceeds num_queries with length {}".format(len(gold_clusters)))
 
@@ -134,7 +136,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
             #     count_missed_pronouns, count_excess_pronous, count_excess_mentions)
 
 
-            gold_matrix = create_gold_matrix(args.device, text_len.sum(), args.num_queries, gold_clusters, gold_mentions)
+            gold_matrix = create_gold_matrix(args.device, len(input_ids), args.num_queries, gold_clusters, gold_mentions)
             loss = criterion(outputs, gold_matrix)
             losses.append(loss.item())
             batch_sizes.append(1) # TODO support batches

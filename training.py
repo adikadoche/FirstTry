@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     epoch_iterator, optimizer: torch.optim.Optimizer,
                     args, evaluator, skip_steps, recent_grad_norms, recent_cluster_logits,
-        recent_coref_logits, recent_losses, recent_logits_sums, global_step, lr_scheduler, eval_loader, eval_dataset, threshold):
+        recent_coref_logits, recent_losses, recent_logits_sums, global_step, lr_scheduler, eval_dataset, threshold):
     for step, batch in enumerate(epoch_iterator):
         if skip_steps > 0:
             skip_steps -= 1
@@ -34,7 +34,9 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
         model.train()
         batch = tuple(t.to(args.device) if torch.is_tensor(t) else t for t in batch)
-        input_ids, input_mask, text_len, speaker_ids, genre, gold_starts, gold_ends, cluster_ids, sentence_map, gold_clusters = batch
+        input_ids, input_mask, gold_clusters = batch
+
+        # input_ids, input_mask, text_len, speaker_ids, genre, gold_starts, gold_ends, cluster_ids, sentence_map, gold_clusters = batch
 
         if len(gold_clusters) == 0 or len(gold_clusters) > args.num_queries:
             logger.info("train exceeds num_queries with length {}".format(len(gold_clusters)))
@@ -45,7 +47,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             if len(gold_clusters) > 0:
                 gold_mentions = list(set([tuple(m) for c in gold_clusters for m in c]))
 
-        gold_matrix = create_gold_matrix(args.device, text_len.sum(), args.num_queries, gold_clusters, gold_mentions)
+        gold_matrix = create_gold_matrix(args.device, len(input_ids), args.num_queries, gold_clusters, gold_mentions)
 
         if gold_matrix.shape[1] == 0:
             logger.info("size of gold_cluster {}, size of gold matrix {}".format(len(gold_clusters), gold_matrix.shape))
@@ -94,7 +96,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             global_step += 1
 
             if args.local_rank in [-1, 0] and args.eval_steps > 0 and global_step % args.eval_steps == 0:
-                results = report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, threshold)
+                results = report_eval(args, eval_dataset, global_step, model, criterion, threshold)
                 threshold = results['threshold']
 
             if args.local_rank in [-1, 0] and args.save_steps > 0 and global_step % args.save_steps == 0:
@@ -207,14 +209,18 @@ def train(args, model, criterion, train_dataset, eval_dataset):
 
     # Train!
     logger.info("***** Running training *****")
-    logger.info("  Num steps per epoch = %d", try_measure_len(train_loader))
-    logger.info("  Num Epochs = %d", args.num_train_epochs if args.num_train_epochs is not None else -1)
-    logger.info("  Instantaneous batch size per GPU = %d", args.per_gpu_train_batch_size)
-    logger.info("  Total train batch size (w. parallel, distributed & accumulation) = %d",
-                args.train_batch_size * args.gradient_accumulation_steps * (
-                    torch.distributed.get_world_size() if args.local_rank != -1 else 1))
+    logger.info("  Num examples = %d", len(train_dataset))
+    logger.info("  Num Epochs = %d", args.num_train_epochs)
     logger.info("  Gradient Accumulation steps = %d", args.gradient_accumulation_steps)
     logger.info("  Total optimization steps = %d", args.t_total)
+    # logger.info("  Num steps per epoch = %d", try_measure_len(train_loader))
+    # logger.info("  Num Epochs = %d", args.num_train_epochs if args.num_train_epochs is not None else -1)
+    # logger.info("  Instantaneous batch size per GPU = %d", args.per_gpu_train_batch_size)
+    # logger.info("  Total train batch size (w. parallel, distributed & accumulation) = %d",
+    #             args.train_batch_size * args.gradient_accumulation_steps * (
+    #                 torch.distributed.get_world_size() if args.local_rank != -1 else 1))
+    # logger.info("  Gradient Accumulation steps = %d", args.gradient_accumulation_steps)
+    # logger.info("  Total optimization steps = %d", args.t_total)
 
 
     model.zero_grad()
@@ -236,7 +242,7 @@ def train(args, model, criterion, train_dataset, eval_dataset):
         global_step, threshold = train_one_epoch(   #TODO: do I need to let the threshold return to 0.5 every time? or is it correct to update it?
             model, criterion, epoch_iterator, optimizer, args, evaluator, skip_steps, recent_grad_norms,
             recent_cluster_logits, recent_coref_logits, recent_losses, recent_logits_sums, global_step,
-            lr_scheduler, eval_loader, eval_dataset, threshold)
+            lr_scheduler, eval_dataset, threshold)
 
         p, r, f1 = evaluator.get_prf()
         if args.local_rank in [-1, 0]:
