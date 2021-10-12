@@ -183,14 +183,14 @@ class OntonotesDataset(Dataset):
 
         sentence_offset = random.randint(0,
                                          num_sentences - max_training_sentences) if sentence_offset is None else sentence_offset
-        word_offset = text_len[:sentence_offset].sum()
-        num_words = text_len[sentence_offset:sentence_offset + max_training_sentences].sum()
+        word_offset = sum(text_len[:sentence_offset])
+        num_words = sum(text_len[sentence_offset:sentence_offset + max_training_sentences])
         input_ids = input_ids[sentence_offset:sentence_offset + max_training_sentences, :]
         input_mask = input_mask[sentence_offset:sentence_offset + max_training_sentences, :]
         speaker_ids = speaker_ids[sentence_offset:sentence_offset + max_training_sentences, :]
         text_len = text_len[sentence_offset:sentence_offset + max_training_sentences]
 
-        sentence_map = sentence_map[word_offset: word_offset + num_words]
+        # sentence_map = sentence_map[word_offset: word_offset + num_words]
         gold_spans = np.logical_and(gold_ends >= word_offset, gold_starts < word_offset + num_words)
         gold_starts = gold_starts[gold_spans] - word_offset
         gold_ends = gold_ends[gold_spans] - word_offset
