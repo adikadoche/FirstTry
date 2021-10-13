@@ -61,7 +61,7 @@ def make_evaluation(model, criterion, eval_loader, eval_dataset, args):
                 try:
                     for checkpoint in checkpoints:
                         loaded_args = load_from_checkpoint(model, checkpoint)
-                        global_step = loaded_args['global_step']
+                        global_step = int(loaded_args['global_step'])
                         threshold = loaded_args['threshold']
                         report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, threshold)
 
