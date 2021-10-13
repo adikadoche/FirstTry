@@ -150,14 +150,6 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
             return args.resume_global_step
                                  
 
-    # tb_path = os.path.join(args.tensorboard_dir, os.path.basename(args.output_dir))
-    # tb_writer = SummaryWriter(tb_path, flush_secs=30)
-    # logger.info('Tensorboard summary path: %s' % tb_path)
-
-    # train_dataset = get_dataset(args, tokenizer, evaluate=False)
-    # data_loader_train = BucketBatchSampler(train_dataset, max_total_seq_len=args.max_total_seq_len, batch_size_1=args.batch_size_1)
-    # t_total = len(data_loader_train) // args.gradient_accumulation_steps * args.num_train_epochs
-
     # lr_scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=args.warmup_steps,
     #                                             num_training_steps=t_total)
     # lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop)

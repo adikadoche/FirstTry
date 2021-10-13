@@ -42,7 +42,7 @@ class DETR(nn.Module):
         self.num_queries = num_queries
         self.transformer = transformer
         hidden_dim = transformer.d_model
-        self.input_proj = nn.Linear(backbone.backbone_hidden_size, hidden_dim)
+        self.input_proj = nn.Linear(backbone.config.hidden_size, hidden_dim)
         self.query_embed = nn.Embedding(num_queries, hidden_dim)
         self.is_cluster = nn.Linear(hidden_dim, 1)
         self.backbone = backbone
@@ -55,9 +55,9 @@ class DETR(nn.Module):
             self.query_mu = nn.Parameter(torch.randn(num_queries, hidden_dim))
             self.query_sigma = nn.Parameter(torch.randn(num_queries, hidden_dim))
 
-        self.word_attn_projection = nn.Linear(backbone.backbone_hidden_size, 1)
+        self.word_attn_projection = nn.Linear(backbone.config.hidden_size, 1)
         self.span_width_embed = nn.Embedding(30, 20)
-        self.span_proj = nn.Linear(3*backbone.backbone_hidden_size+20, hidden_dim) # TODO config
+        self.span_proj = nn.Linear(3*backbone.config.hidden_size+20, hidden_dim) # TODO config
 
 
         self.IO_score = nn.Sequential(
@@ -90,7 +90,7 @@ class DETR(nn.Module):
         """
         input_ids = torch.reshape(input_ids, orig_input_dim)
         mask = torch.reshape(mask, orig_input_dim)
-        longformer_emb, pos = self.backbone(NestedTensor(input_ids, mask))  # Getting representation for each token in the text
+        longformer_emb = self.backbone(input_ids, attention_mask=mask)[0]  # Getting representation for each token in the text
 
         bs, seq, longformer_emb_size = longformer_emb.shape
         # filter out masked tokens
@@ -104,7 +104,7 @@ class DETR(nn.Module):
             # print(raw_query_embed)
 
         if gold_mentions is None:
-            hs, memory = self.transformer(self.input_proj(longformer_emb), mask, raw_query_embed, pos) # [dec_layers, 1, num_queries, emb], [1, seg*seq, emb]
+            hs, memory = self.transformer(self.input_proj(longformer_emb), mask, raw_query_embed) # [dec_layers, 1, num_queries, emb], [1, seg*seq, emb]
         else:
             span_starts = torch.tensor([m[0] for m in gold_mentions], dtype=torch.long)
             span_ends = torch.tensor([m[1] for m in gold_mentions], dtype=torch.long)
@@ -113,8 +113,7 @@ class DETR(nn.Module):
 
             hs, memory = self.transformer(span_emb.unsqueeze(0),
                                           torch.ones(1, len(gold_mentions), device=input_ids.device),
-                                          raw_query_embed,
-                                          torch.zeros(1, len(gold_mentions), span_emb.shape[-1], device=input_ids.device))  # [dec_layers, 1, num_queries, emb], [1, mentions, emb]
+                                          raw_query_embed)  # [dec_layers, 1, num_queries, emb], [1, mentions, emb]
 
 
         last_hs = hs[-1] # [1, num_queries, emb]
@@ -563,12 +562,12 @@ class MatchingLoss(nn.Module):
         # return losses
 
 def build_backbone(args, config):
-    position_embedding = PositionalEncoding(config.hidden_size)
-    backbone = LongformerModel.from_pretrained(args.model_name_or_path,
+    # position_embedding = PositionalEncoding(config.hidden_size)
+    model = LongformerModel.from_pretrained(args.model_name_or_path,
                                                config=config,
                                                cache_dir=args.cache_dir)
-    model = Joiner(backbone, position_embedding)
-    model.backbone_hidden_size = config.hidden_size
+    # model = Joiner(backbone, position_embedding)
+    # model.backbone_hidden_size = config.hidden_size
     return model
 
 
