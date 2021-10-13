@@ -39,7 +39,7 @@
                 "--normalise_loss",
                 "--max_total_seq_len", "5000",
                 "--experiment_name", "s2e-model",
-                "--warmup_steps", "5600",
+                "--warmup_steps", "2300",
                 "--adam_epsilon", "1e-6",
                 "--head_learning_rate", "3e-4",
                 "--learning_rate", "1e-5",

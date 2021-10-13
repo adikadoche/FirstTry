@@ -77,7 +77,6 @@ def main():
     if args.do_train:
         train_dataset, train_sampler, train_loader, args.train_batch_size = get_data_objects(args, args.train_file, True)
         global_step = train(args, model, criterion, train_loader, eval_loader, eval_dataset)
-
     make_evaluation(model, criterion, eval_loader, eval_dataset, args) #TODO: report_eval won't work in here because of missing parameters
 
 # Press the green button in the gutter to run the script.
