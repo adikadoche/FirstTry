@@ -44,10 +44,15 @@ def make_evaluation(model, criterion, eval_loader, eval_dataset, args):
         logger.info("Evaluation output is: %s", args.output_dir)
 
         evaluated = set()
+        best_checkpoint = ''
+        best_f1 = 0
         while True:
             if args.resume_from and not args.do_train:
-                checkpoints = list(
+                checkpoints_file = list(
                     os.path.dirname(c) for c in glob.glob(original_output_dir + '/model*.pt', recursive=True))
+                checkpoints_dir = list(
+                    os.path.dirname(c) for c in glob.glob(original_output_dir + '/**/model*.pt', recursive=True))
+                checkpoints = checkpoints_dir+checkpoints_file
             else:
                 checkpoints = list(
                     os.path.dirname(c) for c in glob.glob(original_output_dir + '/**/model*.pt', recursive=True))
@@ -63,7 +68,10 @@ def make_evaluation(model, criterion, eval_loader, eval_dataset, args):
                         loaded_args = load_from_checkpoint(model, checkpoint)
                         global_step = int(loaded_args['global_step'])
                         threshold = loaded_args['threshold']
-                        report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, threshold)
+                        results = report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, threshold)
+                        if results['avg_f1'] > best_f1:
+                            best_checkpoint = checkpoint
+                            best_f1 = results['avg_f1']
 
                     evaluated.update(checkpoints)
                 except Exception as e:
@@ -71,7 +79,7 @@ def make_evaluation(model, criterion, eval_loader, eval_dataset, args):
                         "Got an exception. Will sleep for {} and try again. {}".format(args.eval_sleep, repr(e)))
                     time.sleep(args.eval_sleep)
             else:
-                logger.info("No new checkpoints. Sleep for {} seconds.".format(args.eval_sleep))
+                logger.info("No new checkpoints. Best F1 is {} in checkpoint {}. Sleep for {} seconds.".format(str(best_f1), best_checkpoint, args.eval_sleep))
                 time.sleep(args.eval_sleep)
 
 
