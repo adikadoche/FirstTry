@@ -44,9 +44,10 @@ class Transformer(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def forward(self, src, mask, query_embed, pos_embed):
+    def forward(self, src, mask, query_embed, pos_embed=None):
         src = src.transpose(0,1)
-        pos_embed = pos_embed.transpose(0,1)
+        if pos_embed is not None:
+            pos_embed = pos_embed.transpose(0,1)
         binary_mask = mask == 0
         query_embed = query_embed.unsqueeze(1)
 
