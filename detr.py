@@ -522,6 +522,8 @@ class MatchingLoss(nn.Module):
                 if self.args.sum_attn:
                     permuted_coref_logits = permuted_coref_logits.clamp(0, 1)
                 cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_gold, reduction='mean')
+        elif coref_logits.shape[1] > 0:
+            cost_coref = F.binary_cross_entropy(coref_logits, torch.zeros_like(coref_logits), reduction='mean')
 
 
         # cost_coref = []

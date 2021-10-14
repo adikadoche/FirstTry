@@ -55,7 +55,7 @@ class HungarianMatcher(nn.Module):
             For each batch element, it holds:
                 len(index_i) = len(index_j) = min(num_queries, num_target_boxes)
         """
-        if targets.shape[1] == 0:
+        if targets.shape[1] == 0 or sum(sum(targets)) == 0:
             return (False, False)
 
         coref_logits = outputs["coref_logits"].squeeze(0) # [num_queries, tokens]
