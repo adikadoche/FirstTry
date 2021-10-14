@@ -12,7 +12,7 @@ from tqdm import tqdm
 from coref_bucket_batch_sampler import BucketBatchSampler
 from coref_analysis import print_predictions, print_per_batch
 from data import get_dataset
-from utils import calc_best_avg_f1, create_gold_matrix, try_measure_len, load_from_checkpoint
+from utils import calc_best_avg_f1, create_gold_matrix, try_measure_len, load_from_checkpoint, create_fake_gold_mentions
 from conll import evaluate_conll
 import wandb
 logger = logging.getLogger(__name__)
@@ -132,7 +132,10 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
         gold_mentions = []
         if len(gold_clusters) > 0:
             gold_mentions = list(set([tuple(m) for c in gold_clusters for m in c]))
+            gold_mentions = create_fake_gold_mentions(gold_mentions, text_len.sum())
         all_gold_mentions.append(gold_mentions)
+            
+        gold_matrix = create_gold_matrix(args.device, text_len.sum(), args.num_queries, gold_clusters, gold_mentions)
 
         with torch.no_grad():
             orig_input_dim = input_ids.shape
@@ -148,7 +151,6 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
             #     count_missed_pronouns, count_excess_pronous, count_excess_mentions)
 
 
-            gold_matrix = create_gold_matrix(args.device, text_len.sum(), args.num_queries, gold_clusters, gold_mentions)
             loss = criterion(outputs, gold_matrix)
             losses.append(loss.item())
             batch_sizes.append(1) # TODO support batches

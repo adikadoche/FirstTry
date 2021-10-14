@@ -1,4 +1,4 @@
-import json
+import random
 import os
 from datetime import datetime
 from time import time
@@ -263,3 +263,19 @@ def try_measure_len(iter):
         return len(iter)
     except:
         return -1
+
+
+
+def create_fake_gold_mentions(gold_mentions, text_len):
+    num_mentions = len(gold_mentions)
+    num_fake_mentions = random.randint(0, min(num_mentions*2, int(text_len/5)))
+
+    fake_start_indices = np.random.permutation(range(text_len))[:num_fake_mentions]
+    fake_end_indices = [min(start + random.randint(0, 5), text_len-1) for start in fake_start_indices]
+    only_fake_mentions = [tuple((fake_start_indices[i], fake_end_indices[i])) for i in range(len(fake_start_indices))]
+    only_fake_mentions = [f for f in only_fake_mentions if f not in gold_mentions]
+
+    all_mentions = gold_mentions + only_fake_mentions
+    random.shuffle(all_mentions)
+
+    return all_mentions

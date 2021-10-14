@@ -103,7 +103,7 @@ class DETR(nn.Module):
             # print("raw_query_embed")
             # print(raw_query_embed)
 
-        if gold_mentions is None:
+        if not self.args.use_gold_mentions:
             hs, memory = self.transformer(self.input_proj(longformer_emb), mask, raw_query_embed) # [dec_layers, 1, num_queries, emb], [1, seg*seq, emb]
         else:
             span_starts = torch.tensor([m[0] for m in gold_mentions], dtype=torch.long)
@@ -157,7 +157,10 @@ class DETR(nn.Module):
         # print(coref_logits_unnorm)
 
         if is_gold_mention: 
-            coref_logits = coref_logits_unnorm.softmax(dim=1)
+            if self.args.is_softmax:
+                coref_logits = coref_logits_unnorm.softmax(dim=1)
+            else:
+                coref_logits = coref_logits_unnorm.sigmoid()
             # print("coref_logits softmax")
         else:
             coref_logits = coref_logits_unnorm.sigmoid()

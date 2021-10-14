@@ -9,18 +9,15 @@ from eval import evaluate, report_eval
 from tqdm import tqdm, trange
 import time, datetime
 from misc import save_on_master, is_main_process
-from utils import create_gold_matrix, calc_predicted_clusters, calc_best_avg_f1, try_measure_len
+from utils import create_gold_matrix, calc_predicted_clusters, create_fake_gold_mentions, try_measure_len
 from optimization import WarmupLinearSchedule
 import itertools
 from metrics import CorefEvaluator
 from utils import load_from_checkpoint, save_checkpoint
 
-
 from transformers import AdamW, get_linear_schedule_with_warmup
 
 logger = logging.getLogger(__name__)
-
-
 
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     epoch_iterator, optimizer: torch.optim.Optimizer,
@@ -43,6 +40,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             gold_mentions = []
             if len(gold_clusters) > 0:
                 gold_mentions = list(set([tuple(m) for c in gold_clusters for m in c]))
+                gold_mentions = create_fake_gold_mentions(gold_mentions, text_len.sum())
 
         gold_matrix = create_gold_matrix(args.device, text_len.sum(), args.num_queries, gold_clusters, gold_mentions)
 
@@ -60,9 +58,9 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         evaluator.update(predicted_clusters, gold_clusters)
         loss = criterion(outputs, gold_matrix)
 
-        recent_cluster_logits.append(cluster_logits.detach().cpu().numpy())
-        recent_coref_logits.append(coref_logits.detach().cpu().numpy().flatten())
-        recent_logits_sums.append(coref_logits.detach().sum(1).flatten().cpu().numpy())
+        # recent_cluster_logits.append(cluster_logits.detach().cpu().numpy())
+        # recent_coref_logits.append(coref_logits.detach().cpu().numpy().flatten())
+        # recent_logits_sums.append(coref_logits.detach().sum(1).flatten().cpu().numpy())
 
         # TODO handle NaNs and +-infs
 
@@ -100,22 +98,22 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                 save_checkpoint(args, global_step, threshold, model, optimizer)
 
             if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
-                logits = np.concatenate(recent_cluster_logits)
+                # logits = np.concatenate(recent_cluster_logits)
                 # wandb.log({'all_cluster_logits': logits}, step=global_step)
                 # wandb.log({'current_cluster_logits': cluster_logits.detach().cpu().numpy()}, step=global_step)
-                recent_cluster_logits.clear()
-                logits = np.concatenate(recent_coref_logits)
+                # recent_cluster_logits.clear()
+                # logits = np.concatenate(recent_coref_logits)
                 # wandb.log({'all_recent_coref_logits': logits}, step=global_step)
                 # wandb.log({'current_recent_coref_logits': coref_logits.detach().cpu().numpy()}, step=global_step)
-                recent_coref_logits.clear()
+                # recent_coref_logits.clear()
                 # wandb.log({'grad_total_norm': np.mean(recent_grad_norms)}, step=global_step)
-                recent_grad_norms.clear()
+                # recent_grad_norms.clear()
                 wandb.log({'lr': optimizer.param_groups[0]['lr']}, step=global_step)
                 wandb.log({'lr_bert': optimizer.param_groups[1]['lr']}, step=global_step)
                 wandb.log({'loss': np.mean(recent_losses)}, step=global_step)
                 recent_losses.clear()
                 # wandb.log({'coref_logits_sum_over_clusters': np.concatenate(recent_logits_sums)}, step=global_step)
-                recent_logits_sums.clear()
+                # recent_logits_sums.clear()
 
         # print("after")
         # print(model.IO_score[0].weight)
