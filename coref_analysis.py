@@ -212,9 +212,9 @@ def is_cluster_contains_linked_entities(cluster, entities_per_sentence, sentence
         return found_entity_in_cluster
 
 
-def print_per_batch(example_ind, is_print, cluster_logits, coref_logits, threshold, gold_clusters, gold_mentions, eval_dataset, input_ids,
+def print_per_batch(example_ind, is_print, cluster_logits, coref_logits, threshold, gold_clusters, gold_mentions, input_ids,
 count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, count_missed_mentions,
-count_missed_pronouns, count_excess_pronous, count_excess_mentions):
+count_missed_pronouns, count_excess_pronous, count_excess_mentions, tokenizer):
     predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(),
                                                     threshold, gold_mentions)
 
@@ -222,7 +222,7 @@ count_missed_pronouns, count_excess_pronous, count_excess_mentions):
         gold_clusters, predicted_clusters)
 
     pred_is_completely_missed = [similar_pred == -1 for similar_pred in pred_to_most_similar_gold]
-    tokens = eval_dataset.tokenizer.convert_ids_to_tokens(input_ids.reshape(-1))
+    tokens = tokenizer.convert_ids_to_tokens(input_ids.reshape(-1))
     tokens = [t.replace('Ġ', '') for t in tokens]
     tokens = [t.replace('<pad>', '') for t in tokens]
 
@@ -314,7 +314,7 @@ count_missed_pronouns, count_excess_pronous, count_excess_mentions):
 
 
 
-def print_predictions(all_cluster_logits, all_coref_logits, eval_dataloader, eval_dataset, model, threshold, args):
+def print_predictions(all_cluster_logits, all_coref_logits, all_gold_clusters, all_gold_mentions, all_input_ids, threshold, args, tokenizer):
 
     count_clusters = 0
     count_mentions = 0
@@ -329,22 +329,22 @@ def print_predictions(all_cluster_logits, all_coref_logits, eval_dataloader, eva
 
     indices_to_print = []
 
-    if len(eval_dataloader) > args.max_eval_print:
-        indices_to_print = np.random.randint(len(eval_dataloader), size=args.max_eval_print)
+    if len(all_input_ids) > args.max_eval_print:
+        indices_to_print = np.random.randint(len(all_input_ids), size=args.max_eval_print)
     else:
-        indices_to_print = range(len(eval_dataloader))
+        indices_to_print = range(len(all_input_ids))
 
-    for i, batch in enumerate(eval_dataloader):
-        input_ids, input_mask, text_len, speaker_ids, genre, gold_starts, gold_ends, cluster_ids, sentence_map, gold_clusters = batch
-        gold_mentions = list(set([tuple(m) for c in gold_clusters for m in c]))
+    for i, input_ids in enumerate(all_input_ids):
+        gold_clusters = all_gold_clusters[i]
+        gold_mentions = all_gold_mentions[i]
         cluster_logits, coref_logits = all_cluster_logits[i], all_coref_logits[i]
 
 
         count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, \
             count_missed_mentions, count_missed_pronouns, count_excess_pronous, count_excess_mentions = print_per_batch(i, i in indices_to_print,
-            cluster_logits, coref_logits, threshold, gold_clusters, gold_mentions, eval_dataset, input_ids,
+            cluster_logits, coref_logits, threshold, gold_clusters, gold_mentions, input_ids,
             count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, count_missed_mentions,
-            count_missed_pronouns, count_excess_pronous, count_excess_mentions)
+            count_missed_pronouns, count_excess_pronous, count_excess_mentions, tokenizer)
 
 
     print("{} gold clusters".format(count_clusters))

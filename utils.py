@@ -268,7 +268,10 @@ def try_measure_len(iter):
 
 def create_fake_gold_mentions(gold_mentions, text_len):
     num_mentions = len(gold_mentions)
-    num_fake_mentions = random.randint(0, min(num_mentions*2, int(text_len/5)))
+    if num_mentions == 0:
+        num_fake_mentions = random.randint(0, int(text_len/5))
+    else:
+        num_fake_mentions = random.randint(0, min(num_mentions*2, int(text_len/5)))
 
     fake_start_indices = np.random.permutation(range(text_len))[:num_fake_mentions]
     fake_end_indices = [min(start + random.randint(0, 5), text_len-1) for start in fake_start_indices]

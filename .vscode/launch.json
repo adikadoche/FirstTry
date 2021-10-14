@@ -27,7 +27,7 @@
                 "--num_train_epochs", "10",
                 "--logging_steps", "10",
                 "--save_steps", "3000",
-                "--eval_steps", "3",
+                "--eval_steps", "2000",
                 "--max_seq_length", "4096",
                 "--train_file_cache", "/home/gamir/adiz/Code/runs/s2e-coref/cache_dir/train.english.4096.pkl",
                 "--predict_file_cache", "/home/gamir/adiz/Code/runs/s2e-coref/cache_dir/dev.english.4096.pkl",

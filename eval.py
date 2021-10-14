@@ -86,6 +86,10 @@ def make_evaluation(model, criterion, eval_loader, eval_dataset, args):
             else:
                 logger.info("No new checkpoints. Best F1 is {} in checkpoint {}. Second best F1 is {} in checkpoint {}. Sleep for {} seconds.".format(
                     str(best_f1), best_checkpoint, str(second_best_f1), second_best_checkpoint, args.eval_sleep))
+                wandb.log({'eval_best_f1': best_f1})
+                wandb.log({'eval_best_f1_checkpoint': best_checkpoint})
+                wandb.log({'eval_second_best_f1': second_best_f1})
+                wandb.log({'eval_second_best_f1_checkpoint': second_best_checkpoint})
                 time.sleep(args.eval_sleep)
 
 
@@ -103,6 +107,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
     all_cluster_logits_cpu = []
     all_coref_logits_cpu = []
     all_cluster_logits_cuda = []
+    all_input_ids = []
     all_coref_logits_cuda = []
     all_gold_clusters = []
     all_gold_mentions = []
@@ -123,6 +128,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
 
         batch = tuple(t.to(args.device) if torch.is_tensor(t) else t for t in batch)
         input_ids, input_mask, text_len, speaker_ids, genre, gold_starts, gold_ends, cluster_ids, sentence_map, gold_clusters = batch
+        all_input_ids.append(input_ids)
         
         if len(gold_clusters) == 0 or len(gold_clusters) > args.num_queries:
             logger.info("eval exceeds num_queries with length {}".format(len(gold_clusters)))
@@ -144,13 +150,6 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
             outputs = model(input_ids, orig_input_dim, input_mask, gold_mentions)
             cluster_logits, coref_logits = outputs['cluster_logits'], outputs['coref_logits']
 
-            # count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, \
-            #     count_missed_mentions, count_missed_pronouns, count_excess_pronous, count_excess_mentions = print_per_batch(0, True,
-            #     cluster_logits, coref_logits, threshold, gold_clusters, gold_mentions, eval_dataset, input_ids,
-            #     count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, count_missed_mentions,
-            #     count_missed_pronouns, count_excess_pronous, count_excess_mentions)
-
-
             loss = criterion(outputs, gold_matrix)
             losses.append(loss.item())
             batch_sizes.append(1) # TODO support batches
@@ -170,7 +169,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
                'recall': r}
 
 
-    print_predictions(all_cluster_logits_cuda, all_coref_logits_cuda, eval_dataloader, eval_dataset, model, threshold, args)
+    print_predictions(all_cluster_logits_cuda, all_coref_logits_cuda, all_gold_clusters, all_gold_mentions, all_input_ids, threshold, args, eval_dataset.tokenizer)
 
     output_eval_file = os.path.join(args.output_dir, "eval_results.txt")
     with open(output_eval_file, "a") as writer:
