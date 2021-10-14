@@ -46,6 +46,8 @@ def make_evaluation(model, criterion, eval_loader, eval_dataset, args):
         evaluated = set()
         best_checkpoint = ''
         best_f1 = 0
+        second_best_f1 = 0
+        second_best_checkpoint = ''
         while True:
             if args.resume_from and not args.do_train:
                 checkpoints_file = list(
@@ -72,6 +74,9 @@ def make_evaluation(model, criterion, eval_loader, eval_dataset, args):
                         if results['avg_f1'] > best_f1:
                             best_checkpoint = checkpoint
                             best_f1 = results['avg_f1']
+                        elif second_best_f1 < results['avg_f1'] < best_f1:
+                            second_best_f1 = results['avg_f1']
+                            second_best_checkpoint = checkpoint
 
                     evaluated.update(checkpoints)
                 except Exception as e:
@@ -79,7 +84,8 @@ def make_evaluation(model, criterion, eval_loader, eval_dataset, args):
                         "Got an exception. Will sleep for {} and try again. {}".format(args.eval_sleep, repr(e)))
                     time.sleep(args.eval_sleep)
             else:
-                logger.info("No new checkpoints. Best F1 is {} in checkpoint {}. Sleep for {} seconds.".format(str(best_f1), best_checkpoint, args.eval_sleep))
+                logger.info("No new checkpoints. Best F1 is {} in checkpoint {}. Second best F1 is {} in checkpoint {}. Sleep for {} seconds.".format(
+                    str(best_f1), best_checkpoint, str(second_best_f1), second_best_checkpoint, args.eval_sleep))
                 time.sleep(args.eval_sleep)
 
 
