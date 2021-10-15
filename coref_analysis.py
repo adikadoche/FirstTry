@@ -222,7 +222,8 @@ count_missed_pronouns, count_excess_pronous, count_excess_mentions, tokenizer):
         gold_clusters, predicted_clusters)
 
     pred_is_completely_missed = [similar_pred == -1 for similar_pred in pred_to_most_similar_gold]
-    tokens = tokenizer.convert_ids_to_tokens(input_ids.reshape(-1))
+    real_input_ids = [t for t in input_ids.reshape(-1) if t != 1]
+    tokens = tokenizer.convert_ids_to_tokens(real_input_ids)
     tokens = [t.replace('Ġ', '') for t in tokens]
     tokens = [t.replace('<pad>', '') for t in tokens]
 
