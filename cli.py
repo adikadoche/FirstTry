@@ -6,11 +6,6 @@ MODEL_TYPES = ['longformer']
 def parse_args():
     parser = argparse.ArgumentParser()
 
-    # Temporal
-    parser.add_argument(
-        "--is_softmax",
-        action="store_true",
-    )
     # Required parameters
     parser.add_argument(
         "--model_type",

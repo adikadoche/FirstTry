@@ -156,14 +156,14 @@ class DETR(nn.Module):
         # print("coref_logits_unnorm")
         # print(coref_logits_unnorm)
 
-        if is_gold_mention: 
-            if self.args.is_softmax:
-                coref_logits = coref_logits_unnorm.softmax(dim=1)
-            else:
-                coref_logits = coref_logits_unnorm.sigmoid()
-            # print("coref_logits softmax")
-        else:
-            coref_logits = coref_logits_unnorm.sigmoid()
+        # if is_gold_mention: 
+        #     if self.args.is_softmax:
+        #         coref_logits = coref_logits_unnorm.softmax(dim=1)
+        #     else:
+        #         coref_logits = coref_logits_unnorm.sigmoid()
+        #     # print("coref_logits softmax")
+        # else:
+        coref_logits = coref_logits_unnorm.sigmoid()
             # print("coref_logits sigmoid")
         # print(coref_logits) 
 
