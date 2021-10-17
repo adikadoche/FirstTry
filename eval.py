@@ -54,7 +54,7 @@ def make_evaluation(model, criterion, eval_loader, eval_dataset, args):
                     os.path.dirname(c) for c in glob.glob(original_output_dir + '/model*.pt', recursive=True))
                 checkpoints_dir = list(
                     os.path.dirname(c) for c in glob.glob(original_output_dir + '/**/model*.pt', recursive=True))
-                checkpoints = checkpoints_dir+checkpoints_file
+                checkpoints = set(checkpoints_dir+checkpoints_file)
             else:
                 checkpoints = list(
                     os.path.dirname(c) for c in glob.glob(original_output_dir + '/**/model*.pt', recursive=True))
@@ -94,7 +94,7 @@ def make_evaluation(model, criterion, eval_loader, eval_dataset, args):
 
 
 
-def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", threshold=0.5):
+def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", threshold=0.5):  #TODO: use threshold when resuming from checkpoint rather than searching it
     if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]:
         os.makedirs(args.output_dir)
 
@@ -161,12 +161,17 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
 
     eval_loss = np.average(losses, weights=batch_sizes)
 
-    p, r, f1, threshold = calc_best_avg_f1(all_cluster_logits_cpu, all_coref_logits_cpu, all_gold_clusters, all_gold_mentions)
+    p, r, f1, threshold, metrics = calc_best_avg_f1(all_cluster_logits_cpu, all_coref_logits_cpu, all_gold_clusters, all_gold_mentions)
     results = {'loss': eval_loss,
                'avg_f1': f1,
                'threshold': threshold,
                'precision': p,
-               'recall': r}
+               'recall': r,  
+               'prec_correct_mentions': metrics[0],
+               'prec_gold': metrics[1],
+               'prec_fake': metrics[2],
+               'prec_correct_gold_clusters': metrics[3],
+               'prec_correct_predict_clusters': metrics[4]}
 
 
     print_predictions(all_cluster_logits_cuda, all_coref_logits_cuda, all_gold_clusters, all_gold_mentions, all_input_ids, threshold, args, eval_dataset.tokenizer)

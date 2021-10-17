@@ -237,26 +237,80 @@ def calc_predicted_clusters(cluster_logits, coref_logits, threshold, gold_mentio
 
 def calc_best_avg_f1(all_cluster_logits, all_coref_logits, all_gold_clusters, all_gold_mentions):
     best = [-1, -1, -1]
+    best_metrics = []
     best_threshold = None
     thres_start = 0.05
     thres_stop = 1
     thres_step = 0.05
     for threshold in tqdm(np.arange(thres_start, thres_stop, thres_step), desc='Searching for best threshold'):
-        p, r, f1 = evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_gold_clusters, threshold, all_gold_mentions)
+        p, r, f1, metrics = evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_gold_clusters, threshold, all_gold_mentions)
         if f1 > best[-1]:
             best = p,r,f1
+            best_metrics = metrics
             best_threshold = threshold
 
-    return best + (best_threshold,)
+    return best + (best_threshold,) + (best_metrics,)
 
 def evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_gold_clusters, threshold, all_gold_mentions):
     evaluator = CorefEvaluator()
+    metrics = [0] * 5
     for i, (cluster_logits, coref_logits, gold_clusters, gold_mentions) in enumerate(
             zip(all_cluster_logits, all_coref_logits, all_gold_clusters, all_gold_mentions)):
         predicted_clusters = calc_predicted_clusters(cluster_logits, coref_logits, threshold, gold_mentions)
+        prec_correct_mentions, prec_gold, prec_fake, prec_correct_gold_clusters, prec_correct_predict_clusters = \
+            get_more_metrics(predicted_clusters, gold_clusters, gold_mentions)
+        metrics[0] += prec_correct_mentions / len(all_cluster_logits)
+        metrics[1] += prec_gold / len(all_cluster_logits)
+        metrics[2] += prec_fake / len(all_cluster_logits)
+        metrics[3] += prec_correct_gold_clusters / len(all_cluster_logits)
+        metrics[4] += prec_correct_predict_clusters / len(all_cluster_logits)
         evaluator.update(predicted_clusters, gold_clusters)
     p, r, f1 = evaluator.get_prf()
-    return p, r, f1
+    return p, r, f1, metrics
+
+def get_more_metrics(predicted_clusters, gold_clusters, gold_mentions):
+    prec_correct_mentions, prec_gold, prec_fake, prec_correct_gold_clusters, prec_correct_predict_clusters = 0,0,0,0,0
+    real_gold_mentions = [m for c in gold_clusters for m in c]
+    fake_gold_mentions = [m for m in gold_mentions if m not in real_gold_mentions]
+    predicted_mentions = [m for c in predicted_clusters for m in c]
+
+    if len(predicted_mentions)==0:
+        if len(real_gold_mentions)>0:
+            prec_correct_mentions = 0
+            prec_gold = 0
+        else:
+            prec_correct_mentions = 1
+            prec_gold = 1
+        if len(fake_gold_mentions)>0:
+            prec_fake = 0
+        else:
+            prec_fake = 1
+    else:
+        prec_correct_mentions = len([m for m in predicted_mentions if m in real_gold_mentions]) / len(predicted_mentions)
+        if len(real_gold_mentions) == 0:
+            prec_gold = 1
+        else:
+            prec_gold = len([m for m in real_gold_mentions if m in predicted_mentions]) / len(real_gold_mentions)
+        if len(fake_gold_mentions) == 0:
+            prec_fake = 1
+        else:
+            prec_fake = len([m for m in fake_gold_mentions if m in predicted_mentions]) / len(fake_gold_mentions)
+
+    if len(predicted_clusters) == 0:
+        if len(gold_clusters) > 0:
+            prec_correct_gold_clusters = 0
+            prec_correct_predict_clusters = 0
+        else:
+            prec_correct_gold_clusters = 1
+            prec_correct_predict_clusters = 1
+    else:
+        prec_correct_predict_clusters = len([c for c in predicted_clusters if c in gold_clusters]) / len(predicted_clusters)
+        if len(gold_clusters) > 0:
+            prec_correct_gold_clusters = len([c for c in gold_clusters if c in predicted_clusters]) / len(gold_clusters)
+        else:
+            prec_correct_gold_clusters = 1
+
+    return prec_correct_mentions, prec_gold, prec_fake, prec_correct_gold_clusters, prec_correct_predict_clusters
 
 def try_measure_len(iter):
     try:

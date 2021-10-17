@@ -21,6 +21,13 @@ def parse_args():
         # required=True,
         help="Path to pretrained model or model identifier from huggingface.co/models",
     )
+    parser.add_argument("--tokenizer_name",
+                        default="allenai/longformer-base-4096",
+                        type=str,
+                        help="Pretrained tokenizer name or path if not the same as model_name")
+    parser.add_argument(
+        "--config_name", default="allenai/longformer-base-4096", type=str, help="Pretrained config name or path if not the same as model_name"
+    )
     parser.add_argument(
         "--output_dir",
         default=None,
@@ -29,20 +36,6 @@ def parse_args():
         help="The output directory where the model checkpoints and predictions will be written.",
     )
     parser.add_argument("--resume_from", default='', type=str)
-    parser.add_argument(
-        "--train_file_cache",
-        default=None,
-        type=str,
-        required=True,
-        help="The output directory where the datasets will be written and read from.",
-    )
-    parser.add_argument(
-        "--predict_file_cache",
-        default=None,
-        type=str,
-        required=True,
-        help="The output directory where the datasets will be written and read from.",
-    )
 
     # Other parameters
     parser.add_argument(
@@ -59,13 +52,6 @@ def parse_args():
         help="The input evaluation file. If a data dir is specified, will look for the file there"
              + "If no data dir or train/predict files are specified, will run with tensorflow_datasets.",
     )
-    parser.add_argument(
-        "--config_name", default="allenai/longformer-base-4096", type=str, help="Pretrained config name or path if not the same as model_name"
-    )
-    parser.add_argument("--tokenizer_name",
-                        default="allenai/longformer-base-4096",
-                        type=str,
-                        help="Pretrained tokenizer name or path if not the same as model_name")
     parser.add_argument("--cache_dir",
                         default=None,
                         type=str,
@@ -74,19 +60,9 @@ def parse_args():
 
     parser.add_argument("--do_train", action="store_true", help="Whether to run training.")
     parser.add_argument("--eval", type=str, choices=['no', 'specific', 'all', 'vanilla'], default='no')
-    parser.add_argument("--do_lower_case", action="store_true", help="Set this flag if you are using an uncased model.")
 
-    parser.add_argument("--nonfreeze_params", default=None, type=str,
-                        help="named parameters to update while training (separated by ,). The rest will kept frozen. If None or empty - train all")
-    parser.add_argument("--learning_rate", default=1e-5, type=float, help="The initial learning rate for Adam.")
-    parser.add_argument("--head_learning_rate", default=3e-4, type=float, help="The initial learning rate for Adam.")
     parser.add_argument("--dropout_prob", default=0.3, type=float)
     parser.add_argument("--weight_decay", default=0.01, type=float, help="Weight deay if we apply some.")
-    parser.add_argument("--adam_beta1", default=0.9, type=float,
-                        help="Epsilon for Adam optimizer.")
-    parser.add_argument("--adam_beta2", default=0.98, type=float,
-                        help="Epsilon for Adam optimizer.")
-    parser.add_argument("--adam_epsilon", default=1e-8, type=float, help="Epsilon for Adam optimizer.")
 
     parser.add_argument("--logging_steps", type=int, default=500, help="Log every X updates steps.")
     parser.add_argument("--eval_steps", type=int, default=500, help="Eval every X updates steps.")
@@ -97,12 +73,7 @@ def parse_args():
     parser.add_argument("--save_steps", type=int, default=500, help="Save checkpoint every X updates steps.")
     parser.add_argument('--save_epochs', type=int, default=1)
     parser.add_argument("--no_cuda", action="store_true", help="Whether not to use CUDA when available")
-    parser.add_argument(
-        "--overwrite_output_dir", action="store_true", help="Overwrite the content of the output directory"
-    )
-
     parser.add_argument("--seed", type=int, default=42, help="random seed for initialization")
-
     parser.add_argument("--local_rank", type=int, default=-1, help="local_rank for distributed training on gpus")
     parser.add_argument(   #TODO: make amp work
         "--amp",
@@ -117,22 +88,8 @@ def parse_args():
              "See details at https://nvidia.github.io/apex/amp.html",
     )
 
-    parser.add_argument("--max_span_length", type=int, required=False, default=30)
-    parser.add_argument("--top_lambda", type=float, default=0.4)
-
     parser.add_argument("--max_total_seq_len", type=int, default=3500)
-    parser.add_argument("--experiment_name", type=str, default=None)
-
-
-    parser.add_argument("--normalise_loss", action="store_true")
-
-    parser.add_argument("--ffnn_size", type=int, default=3072)
-
-    parser.add_argument("--save_if_best", action="store_true")
     parser.add_argument("--batch_size_1", action="store_true")
-    parser.add_argument("--tensorboard_dir", type=str, required=True)
-
-    parser.add_argument("--conll_path_for_eval", type=str, default=None)
 
 
     # * Transformer
@@ -157,11 +114,6 @@ def parse_args():
     parser.add_argument('--no_aux_loss', dest='aux_loss', action='store_false',
                         help="Disables auxiliary decoding losses (loss at each layer)")
     parser.add_argument('--multiclass_ce', action='store_true')
-    # * Loss coefficients
-    # parser.add_argument('--mask_loss_coef', default=1, type=float)
-    # parser.add_argument('--dice_loss_coef', default=1, type=float)
-    # parser.add_argument('--bbox_loss_coef', default=5, type=float)
-    # parser.add_argument('--giou_loss_coef', default=2, type=float)
     parser.add_argument('--cost_is_cluster', default=1, type=float,
                         help="Class coefficient in the matching cost")
     parser.add_argument('--cost_coref', default=5, type=float,
@@ -173,7 +125,6 @@ def parse_args():
     parser.add_argument('--max_num_speakers', default=20, type=int)
     parser.add_argument('--max_segment_len', default=512, type=int)
     parser.add_argument('--limit_trainset', default=-1, type=int)
-    parser.add_argument('--eval_as_train', action='store_true')
     parser.add_argument('--use_gold_mentions', action='store_true')
     parser.add_argument('--softmax_coref', action='store_true')
     parser.add_argument('--random_queries', action='store_true')
@@ -204,7 +155,6 @@ def parse_args():
 
     parser.add_argument('--lr_backbone', default=1e-5, type=float) #TODO: remove
     parser.add_argument('--lr', default=1e-4, type=float) #TODO:?
-    parser.add_argument('--lr_drop', default=200, type=int) #TODO:?
     parser.add_argument("--max_grad_norm", default=0.1, type=float,
                     help="Max gradient norm.")
     parser.add_argument('--lr_drop_interval', default="step", type=str, choices=['epoch, step'])
@@ -212,3 +162,29 @@ def parse_args():
 
     args = parser.parse_args()
     return args
+
+    # parser.add_argument(
+    #     "--train_file_cache",
+    #     default=None,
+    #     type=str,
+    #     required=True,
+    #     help="The output directory where the datasets will be written and read from.",
+    # )
+    # parser.add_argument(
+    #     "--predict_file_cache",
+    #     default=None,
+    #     type=str,
+    #     required=True,
+    #     help="The output directory where the datasets will be written and read from.",
+    # )
+    # parser.add_argument("--nonfreeze_params", default=None, type=str,
+    #                     help="named parameters to update while training (separated by ,). The rest will kept frozen. If None or empty - train all")
+    # parser.add_argument('--lr_drop', default=200, type=int) #TODO:?
+    # parser.add_argument("--adam_beta1", default=0.9, type=float,
+    #                     help="Epsilon for Adam optimizer.")
+    # parser.add_argument("--adam_beta2", default=0.98, type=float,
+    #                     help="Epsilon for Adam optimizer.")
+    # parser.add_argument("--adam_epsilon", default=1e-8, type=float, help="Epsilon for Adam optimizer.")
+    # parser.add_argument("--normalise_loss", action="store_true")
+    # parser.add_argument("--ffnn_size", type=int, default=3072)
+    # parser.add_argument("--conll_path_for_eval", type=str, default=None)
