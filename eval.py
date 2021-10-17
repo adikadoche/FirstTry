@@ -147,7 +147,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
             orig_input_dim = input_ids.shape
             input_ids = torch.reshape(input_ids, (1, -1))
             input_mask = torch.reshape(input_mask, (1, -1))
-            outputs = model(input_ids, orig_input_dim, input_mask, gold_mentions)
+            outputs = model(input_ids, orig_input_dim, input_mask, gold_mentions, True)
             cluster_logits, coref_logits = outputs['cluster_logits'], outputs['coref_logits']
 
             loss = criterion(outputs, gold_matrix)

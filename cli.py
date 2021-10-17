@@ -18,8 +18,13 @@ def parse_args():
         "--model_name_or_path",
         default="allenai/longformer-base-4096",
         type=str,
-        # required=True,
         help="Path to pretrained model or model identifier from huggingface.co/models",
+    )
+    parser.add_argument(
+        "--run_name",
+        default="",
+        type=str,
+        help="run name for w&b",
     )
     parser.add_argument("--tokenizer_name",
                         default="allenai/longformer-base-4096",

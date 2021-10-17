@@ -73,7 +73,7 @@ class DETR(nn.Module):
         self.query_token_IO_score = nn.Linear(150, 1)  #TODO: change to 3 so it would be BIO instead of IO
  
 
-    def forward(self, input_ids, orig_input_dim, mask, gold_mentions):
+    def forward(self, input_ids, orig_input_dim, mask, gold_mentions, is_fake):
         """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
@@ -117,7 +117,7 @@ class DETR(nn.Module):
 
 
         last_hs = hs[-1] # [1, num_queries, emb]
-        cluster_logits, coref_logits = self.calc_cluster_and_coref_logits(last_hs, memory, gold_mentions is not None)
+        cluster_logits, coref_logits = self.calc_cluster_and_coref_logits(last_hs, memory, gold_mentions is not None, is_fake)
 
         # aux_coref_logits = [self.calc_cluster_and_coref_logits(curr_hs, memory)[1] for curr_hs in hs[:-1]]
 
@@ -133,7 +133,7 @@ class DETR(nn.Module):
                 # "aux_coref_logits": aux_coref_logits}
         return out
 
-    def calc_cluster_and_coref_logits(self, last_hs, memory, is_gold_mention):
+    def calc_cluster_and_coref_logits(self, last_hs, memory, is_gold_mention, is_fake):
         # last_hs [1, num_queries, emb]
         # memory [1, tokens, emb]
         num_tokens_or_mentions = memory.shape[1]
@@ -156,14 +156,14 @@ class DETR(nn.Module):
         # print("coref_logits_unnorm")
         # print(coref_logits_unnorm)
 
-        # if is_gold_mention: 
+        if not is_fake: 
         #     if self.args.is_softmax:
-        #         coref_logits = coref_logits_unnorm.softmax(dim=1)
+            coref_logits = coref_logits_unnorm.softmax(dim=1)
         #     else:
         #         coref_logits = coref_logits_unnorm.sigmoid()
         #     # print("coref_logits softmax")
-        # else:
-        coref_logits = coref_logits_unnorm.sigmoid()
+        else:
+            coref_logits = coref_logits_unnorm.sigmoid()
             # print("coref_logits sigmoid")
         # print(coref_logits) 
 

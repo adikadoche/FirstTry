@@ -32,6 +32,8 @@ def main():
         args.output_dir = os.path.join(args.output_dir, datetime.now().strftime(f"%m_%d_%Y_%H_%M_%S"))
     transformers_logger = logging.getLogger("transformers")
     transformers_logger.setLevel(logging.ERROR)
+    if args.run_name != '':
+        wandb.run.name = args.run_name
 
     # Setup CUDA, GPU & distributed training
     if args.local_rank == -1 or args.no_cuda:
