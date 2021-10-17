@@ -57,6 +57,7 @@ class CorefEvaluator(object):
         return sum(e.get_f1() for e in self.evaluators) / len(self.evaluators)
 
     def get_recall(self):
+        print(sum(e.get_recall() for e in self.evaluators) / len(self.evaluators))
         return sum(e.get_recall() for e in self.evaluators) / len(self.evaluators)
 
     def get_precision(self):
