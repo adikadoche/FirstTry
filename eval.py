@@ -153,7 +153,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
 
             loss = criterion(outputs, gold_matrix)
             losses.append(loss.item())
-            batch_sizes.append(1) # TODO support batches
+            batch_sizes.append(args.per_gpu_eval_batch_size) # TODO support batches
 
         all_cluster_logits_cuda.append(cluster_logits.detach().clone())
         all_coref_logits_cuda.append(coref_logits.detach().clone())

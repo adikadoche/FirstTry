@@ -144,18 +144,21 @@ def get_dataset(args, tokenizer, evaluate=False):
 
 
 def get_data_objects(args, data_file_path, is_training):
-    dataset = OntonotesDataset(data_file_path, is_training, args)
+    if is_training:
+        per_gpu_batch_size = args.per_gpu_eval_batch_size
+    else:
+        per_gpu_batch_size = args.per_gpu_train_batch_size
+
+    batch_size = per_gpu_batch_size * max(1, args.n_gpu)
+    dataset = OntonotesDataset(data_file_path, is_training, batch_size, args)
     # Note that DistributedSampler samples randomly
     if is_training:
         sampler = RandomSampler(dataset) if args.local_rank == -1 else DistributedSampler(dataset)
-        per_gpu_batch_size = args.per_gpu_eval_batch_size
         logger.info("Loaded train data")
     else:
         sampler = SequentialSampler(dataset) if args.local_rank == -1 else DistributedSampler(dataset)
-        per_gpu_batch_size = args.per_gpu_train_batch_size
         logger.info("Loaded eval data")
 
-    batch_size = per_gpu_batch_size * max(1, args.n_gpu)
     loader = DataLoader(dataset, sampler=sampler, batch_size=batch_size,
                              pin_memory=not args.no_cuda, collate_fn=lambda batch: batch[0], num_workers=args.num_workers,
                              worker_init_fn=lambda worker_id: np.random.seed(torch.initial_seed() % 2**32))

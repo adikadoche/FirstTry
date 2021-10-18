@@ -9,7 +9,7 @@ from transformers import AutoTokenizer
 
 class OntonotesDataset(Dataset):
 
-    def __init__(self, filepath, is_training, args) -> None:
+    def __init__(self, filepath, is_training, batch_size, args) -> None:
         super().__init__()
         with open(filepath) as f:
             lines = f.readlines()
@@ -18,6 +18,7 @@ class OntonotesDataset(Dataset):
             self.examples = self.examples[:args.limit_trainset]
         self.is_training = is_training
         self.args = args
+        self.batch_size = batch_size
         self.subtoken_maps = {}
         self.genres = {g: i for i, g in enumerate(["bc", "bn", "mz", "nw", "pt", "tc", "wb"])}
         if args.tokenizer_name:
@@ -45,6 +46,15 @@ class OntonotesDataset(Dataset):
         return len(self.examples)
 
     def __getitem__(self, index):
+        # tensorized_batch = ([],[],[],[],[],[],[],[],[],[])
+        # for i in range(1, self.batch_size+1):
+        #     if index*i > len(self.examples):
+        #         continue
+        #     example = self.examples[index*i]
+        #     tensorized_example = self.tensorize_example(example, self.is_training)
+        #     for j in range(len(tensorized_batch)):
+        #         tensorized_batch[j].append(tensorized_example[j])
+        # return tensorized_batch
         example = self.examples[index]
         tensorized_example = self.tensorize_example(example, self.is_training)
         return tensorized_example

@@ -95,7 +95,6 @@ def parse_args():
     )
 
     parser.add_argument("--max_total_seq_len", type=int, default=3500)
-    parser.add_argument("--batch_size_1", action="store_true")
 
 
     # * Transformer
