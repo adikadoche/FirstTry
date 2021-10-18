@@ -40,7 +40,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             # gold_mentions = []
             # if len(gold_clusters) > 0:  #TODO: create junk clusters even if 0 gold clusters
             gold_mentions = list(set([tuple(m) for c in gold_clusters for m in c]))
-            if args.is_junk:
+            if args.add_junk:
                 gold_mentions = create_junk_gold_mentions(gold_mentions, text_len.sum())
 
         gold_matrix = create_gold_matrix(args.device, text_len.sum(), args.num_queries, gold_clusters, gold_mentions)
@@ -233,7 +233,7 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
     start_time = time.time()
     for epoch in train_iterator:
         # if epoch > len(train_iterator) / 2:
-        #     args.is_junk = True
+        #     args.add_junk = True
         evaluator = CorefEvaluator()
         epoch_iterator = tqdm(train_loader, desc="Iteration in Epoch {}".format(epoch), disable=args.local_rank not in [-1, 0], leave=False)
         global_step, threshold = train_one_epoch(   #TODO: do I need to let the threshold return to 0.5 every time? or is it correct to update it?

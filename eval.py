@@ -138,7 +138,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
         gold_mentions = []
         # if len(gold_clusters) > 0: #TODO:
         gold_mentions = list(set([tuple(m) for c in gold_clusters for m in c]))
-        if args.is_junk:
+        if args.add_junk:
             gold_mentions = create_junk_gold_mentions(gold_mentions, text_len.sum())
         all_gold_mentions.append(gold_mentions)
             

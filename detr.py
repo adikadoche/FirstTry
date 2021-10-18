@@ -156,7 +156,7 @@ class DETR(nn.Module):
         # print("coref_logits_unnorm")
         # print(coref_logits_unnorm)
 
-        # if not args.is_junk: 
+        # if not args.add_junk: 
         #     if self.args.is_softmax:
         coref_logits = coref_logits_unnorm.softmax(dim=1)
         #     else:
