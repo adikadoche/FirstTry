@@ -158,12 +158,12 @@ class DETR(nn.Module):
 
         # if not args.is_junk: 
         #     if self.args.is_softmax:
-            # coref_logits = coref_logits_unnorm.softmax(dim=1)
+        coref_logits = coref_logits_unnorm.softmax(dim=1)
         #     else:
         #         coref_logits = coref_logits_unnorm.sigmoid()
         #     # print("coref_logits softmax")
         # else:
-        coref_logits = coref_logits_unnorm.sigmoid()
+        # coref_logits = coref_logits_unnorm.sigmoid()
             # print("coref_logits sigmoid")
         # print(coref_logits) 
 

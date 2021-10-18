@@ -20,7 +20,7 @@ from transformers import AdamW, get_linear_schedule_with_warmup
 logger = logging.getLogger(__name__)
 
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
-                    epoch_iterator, optimizer: torch.optim.Optimizer,
+                    epoch_iterator, optimizer: torch.optim.Optimizer, scaler: torch.cuda.amp.GradScaler,
                     args, evaluator, skip_steps, recent_grad_norms, recent_cluster_logits,
         recent_coref_logits, recent_losses, recent_logits_sums, global_step, lr_scheduler, eval_loader, eval_dataset, threshold):
     for step, batch in enumerate(epoch_iterator):
@@ -51,13 +51,23 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         orig_input_dim = input_ids.shape
         input_ids = torch.reshape(input_ids, (1, -1))
         input_mask = torch.reshape(input_mask, (1, -1))
-        outputs = model(input_ids, orig_input_dim, input_mask, gold_mentions)
-        cluster_logits, coref_logits = outputs['cluster_logits'], outputs['coref_logits']
+        if args.amp:
+            with torch.cuda.amp.autocast():
+                outputs = model(input_ids, orig_input_dim, input_mask, gold_mentions)
+                cluster_logits, coref_logits = outputs['cluster_logits'], outputs['coref_logits']
 
-        predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(),
-                                                     threshold, gold_mentions)
-        evaluator.update(predicted_clusters, gold_clusters)
-        loss = criterion(outputs, gold_matrix)
+                predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(),
+                                                            threshold, gold_mentions)
+                evaluator.update(predicted_clusters, gold_clusters)
+                loss = criterion(outputs, gold_matrix)
+        else:
+            outputs = model(input_ids, orig_input_dim, input_mask, gold_mentions)
+            cluster_logits, coref_logits = outputs['cluster_logits'], outputs['coref_logits']
+
+            predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(),
+                                                        threshold, gold_mentions)
+            evaluator.update(predicted_clusters, gold_clusters)
+            loss = criterion(outputs, gold_matrix)
 
         # recent_cluster_logits.append(cluster_logits.detach().cpu().numpy())
         # recent_coref_logits.append(coref_logits.detach().cpu().numpy().flatten())
@@ -77,7 +87,10 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         # else:
         # print("before")
         # print(model.IO_score[0].weight)
-        loss.backward()
+        if args.amp:
+            scaler.scale(loss).backward()
+        else:
+            loss.backward()
         total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
 
         recent_grad_norms.append(total_norm.item())
@@ -85,7 +98,11 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         epoch_iterator.set_postfix({'loss': loss.item()})
 
         if (step + 1) % args.gradient_accumulation_steps == 0:
-            optimizer.step()
+            if args.amp:
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                optimizer.step()
             if args.lr_drop_interval == 'step':
                 lr_scheduler.step()  # Update learning rate schedule
             model.zero_grad()
@@ -162,14 +179,9 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
     #     lr_scheduler.load_state_dict(torch.load(os.path.join(args.model_name_or_path, "lr_scheduler.pt")))
     #     loaded_saved_optimizer = True
 
-
-    # if args.amp:
-    #     try:
-    #         from apex import amp
-    #     except ImportError:
-    #         raise ImportError("Please install apex from https://www.github.com/nvidia/apex to use fp16 training.")
-    #     model, optimizer = amp.initialize(model, optimizer, opt_level=args.fp16_opt_level)
-    #
+    scaler = None
+    if args.amp:
+        scaler = torch.cuda.amp.GradScaler()
     # multi-gpu training (should be after apex fp16 initialization)
     if args.n_gpu > 1:
         model = torch.nn.DataParallel(model)
@@ -225,7 +237,7 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
         evaluator = CorefEvaluator()
         epoch_iterator = tqdm(train_loader, desc="Iteration in Epoch {}".format(epoch), disable=args.local_rank not in [-1, 0], leave=False)
         global_step, threshold = train_one_epoch(   #TODO: do I need to let the threshold return to 0.5 every time? or is it correct to update it?
-            model, criterion, epoch_iterator, optimizer, args, evaluator, skip_steps, recent_grad_norms,
+            model, criterion, epoch_iterator, optimizer, scaler, args, evaluator, skip_steps, recent_grad_norms,
             recent_cluster_logits, recent_coref_logits, recent_losses, recent_logits_sums, global_step,
             lr_scheduler, eval_loader, eval_dataset, threshold)
 
