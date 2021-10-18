@@ -9,7 +9,7 @@ from eval import evaluate, report_eval
 from tqdm import tqdm, trange
 import time, datetime
 from misc import save_on_master, is_main_process
-from utils import create_gold_matrix, calc_predicted_clusters, create_fake_gold_mentions, try_measure_len
+from utils import create_gold_matrix, calc_predicted_clusters, create_junk_gold_mentions, try_measure_len
 from optimization import WarmupLinearSchedule
 import itertools
 from metrics import CorefEvaluator
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     epoch_iterator, optimizer: torch.optim.Optimizer,
                     args, evaluator, skip_steps, recent_grad_norms, recent_cluster_logits,
-        recent_coref_logits, recent_losses, recent_logits_sums, global_step, lr_scheduler, eval_loader, eval_dataset, threshold, is_fake):
+        recent_coref_logits, recent_losses, recent_logits_sums, global_step, lr_scheduler, eval_loader, eval_dataset, threshold):
     for step, batch in enumerate(epoch_iterator):
         if skip_steps > 0:
             skip_steps -= 1
@@ -38,10 +38,10 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         gold_mentions = None
         if args.use_gold_mentions:
             # gold_mentions = []
-            # if len(gold_clusters) > 0:  #TODO: create fake clusters even if 0 gold clusters
+            # if len(gold_clusters) > 0:  #TODO: create junk clusters even if 0 gold clusters
             gold_mentions = list(set([tuple(m) for c in gold_clusters for m in c]))
-            if is_fake:
-                gold_mentions = create_fake_gold_mentions(gold_mentions, text_len.sum())
+            if args.is_junk:
+                gold_mentions = create_junk_gold_mentions(gold_mentions, text_len.sum())
 
         gold_matrix = create_gold_matrix(args.device, text_len.sum(), args.num_queries, gold_clusters, gold_mentions)
 
@@ -51,7 +51,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         orig_input_dim = input_ids.shape
         input_ids = torch.reshape(input_ids, (1, -1))
         input_mask = torch.reshape(input_mask, (1, -1))
-        outputs = model(input_ids, orig_input_dim, input_mask, gold_mentions, is_fake)
+        outputs = model(input_ids, orig_input_dim, input_mask, gold_mentions)
         cluster_logits, coref_logits = outputs['cluster_logits'], outputs['coref_logits']
 
         predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(),
@@ -218,17 +218,16 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
     skip_steps = args.skip_steps
     threshold = 0.5 # starting threshold, later fixed by eval
 
-    is_fake = False
     start_time = time.time()
     for epoch in train_iterator:
-        if epoch > len(train_iterator) / 2:
-            is_fake = True
+        # if epoch > len(train_iterator) / 2:
+        #     args.is_junk = True
         evaluator = CorefEvaluator()
         epoch_iterator = tqdm(train_loader, desc="Iteration in Epoch {}".format(epoch), disable=args.local_rank not in [-1, 0], leave=False)
         global_step, threshold = train_one_epoch(   #TODO: do I need to let the threshold return to 0.5 every time? or is it correct to update it?
             model, criterion, epoch_iterator, optimizer, args, evaluator, skip_steps, recent_grad_norms,
             recent_cluster_logits, recent_coref_logits, recent_losses, recent_logits_sums, global_step,
-            lr_scheduler, eval_loader, eval_dataset, threshold, is_fake)
+            lr_scheduler, eval_loader, eval_dataset, threshold)
 
         p, r, f1 = evaluator.get_prf()
         if args.local_rank in [-1, 0]:

@@ -12,7 +12,7 @@ from tqdm import tqdm
 from coref_bucket_batch_sampler import BucketBatchSampler
 from coref_analysis import print_predictions, print_per_batch
 from data import get_dataset
-from utils import calc_best_avg_f1, create_gold_matrix, try_measure_len, load_from_checkpoint, create_fake_gold_mentions
+from utils import calc_best_avg_f1, create_gold_matrix, try_measure_len, load_from_checkpoint, create_junk_gold_mentions
 from conll import evaluate_conll
 import wandb
 logger = logging.getLogger(__name__)
@@ -138,7 +138,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
         gold_mentions = []
         # if len(gold_clusters) > 0: #TODO:
         gold_mentions = list(set([tuple(m) for c in gold_clusters for m in c]))
-        gold_mentions = create_fake_gold_mentions(gold_mentions, text_len.sum())
+        gold_mentions = create_junk_gold_mentions(gold_mentions, text_len.sum())
         all_gold_mentions.append(gold_mentions)
             
         gold_matrix = create_gold_matrix(args.device, text_len.sum(), args.num_queries, gold_clusters, gold_mentions)
@@ -169,7 +169,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
                'recall': r,  
                'prec_correct_mentions': metrics[0],
                'prec_gold': metrics[1],
-               'prec_fake': metrics[2],
+               'prec_junk': metrics[2],
                'prec_correct_gold_clusters': metrics[3],
                'prec_correct_predict_clusters': metrics[4]}
 

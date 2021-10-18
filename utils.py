@@ -257,11 +257,11 @@ def evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_gold_cluster
     for i, (cluster_logits, coref_logits, gold_clusters, gold_mentions) in enumerate(
             zip(all_cluster_logits, all_coref_logits, all_gold_clusters, all_gold_mentions)):
         predicted_clusters = calc_predicted_clusters(cluster_logits, coref_logits, threshold, gold_mentions)
-        prec_correct_mentions, prec_gold, prec_fake, prec_correct_gold_clusters, prec_correct_predict_clusters = \
+        prec_correct_mentions, prec_gold, prec_junk, prec_correct_gold_clusters, prec_correct_predict_clusters = \
             get_more_metrics(predicted_clusters, gold_clusters, gold_mentions)
         metrics[0] += prec_correct_mentions / len(all_cluster_logits)
         metrics[1] += prec_gold / len(all_cluster_logits)
-        metrics[2] += prec_fake / len(all_cluster_logits)
+        metrics[2] += prec_junk / len(all_cluster_logits)
         metrics[3] += prec_correct_gold_clusters / len(all_cluster_logits)
         metrics[4] += prec_correct_predict_clusters / len(all_cluster_logits)
         evaluator.update(predicted_clusters, gold_clusters)
@@ -269,9 +269,9 @@ def evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_gold_cluster
     return p, r, f1, metrics
 
 def get_more_metrics(predicted_clusters, gold_clusters, gold_mentions):
-    prec_correct_mentions, prec_gold, prec_fake, prec_correct_gold_clusters, prec_correct_predict_clusters = 0,0,0,0,0
+    prec_correct_mentions, prec_gold, prec_junk, prec_correct_gold_clusters, prec_correct_predict_clusters = 0,0,0,0,0
     real_gold_mentions = [m for c in gold_clusters for m in c]
-    fake_gold_mentions = [m for m in gold_mentions if m not in real_gold_mentions]
+    junk_gold_mentions = [m for m in gold_mentions if m not in real_gold_mentions]
     predicted_mentions = [m for c in predicted_clusters for m in c]
 
     if len(predicted_mentions)==0:
@@ -281,20 +281,20 @@ def get_more_metrics(predicted_clusters, gold_clusters, gold_mentions):
         else:
             prec_correct_mentions = 1
             prec_gold = 1
-        if len(fake_gold_mentions)>0:
-            prec_fake = 0
+        if len(junk_gold_mentions)>0:
+            prec_junk = 0
         else:
-            prec_fake = 1
+            prec_junk = 1
     else:
         prec_correct_mentions = len([m for m in predicted_mentions if m in real_gold_mentions]) / len(predicted_mentions)
         if len(real_gold_mentions) == 0:
             prec_gold = 1
         else:
             prec_gold = len([m for m in real_gold_mentions if m in predicted_mentions]) / len(real_gold_mentions)
-        if len(fake_gold_mentions) == 0:
-            prec_fake = 1
+        if len(junk_gold_mentions) == 0:
+            prec_junk = 1
         else:
-            prec_fake = len([m for m in fake_gold_mentions if m in predicted_mentions]) / len(fake_gold_mentions)
+            prec_junk = len([m for m in junk_gold_mentions if m in predicted_mentions]) / len(junk_gold_mentions)
 
     if len(predicted_clusters) == 0:
         if len(gold_clusters) > 0:
@@ -310,7 +310,7 @@ def get_more_metrics(predicted_clusters, gold_clusters, gold_mentions):
         else:
             prec_correct_gold_clusters = 1
 
-    return prec_correct_mentions, prec_gold, prec_fake, prec_correct_gold_clusters, prec_correct_predict_clusters
+    return prec_correct_mentions, prec_gold, prec_junk, prec_correct_gold_clusters, prec_correct_predict_clusters
 
 def try_measure_len(iter):
     try:
@@ -320,19 +320,19 @@ def try_measure_len(iter):
 
 
 
-def create_fake_gold_mentions(gold_mentions, text_len):
+def create_junk_gold_mentions(gold_mentions, text_len):
     num_mentions = len(gold_mentions)
     if num_mentions == 0:
-        num_fake_mentions = random.randint(0, int(text_len/5))
+        num_junk_mentions = random.randint(0, int(text_len/5))
     else:
-        num_fake_mentions = random.randint(0, min(num_mentions*2, int(text_len/5)))
+        num_junk_mentions = random.randint(0, min(num_mentions*2, int(text_len/5)))
 
-    fake_start_indices = np.random.permutation(range(text_len))[:num_fake_mentions]
-    fake_end_indices = [min(start + random.randint(0, 5), text_len-1) for start in fake_start_indices]
-    only_fake_mentions = [tuple((fake_start_indices[i], fake_end_indices[i])) for i in range(len(fake_start_indices))]
-    only_fake_mentions = [f for f in only_fake_mentions if f not in gold_mentions]
+    junk_start_indices = np.random.permutation(range(text_len))[:num_junk_mentions]
+    junk_end_indices = [min(start + random.randint(0, 5), text_len-1) for start in junk_start_indices]
+    only_junk_mentions = [tuple((junk_start_indices[i], junk_end_indices[i])) for i in range(len(junk_start_indices))]
+    only_junk_mentions = [f for f in only_junk_mentions if f not in gold_mentions]
 
-    all_mentions = gold_mentions + only_fake_mentions
+    all_mentions = gold_mentions + only_junk_mentions
     random.shuffle(all_mentions)
 
     return all_mentions
