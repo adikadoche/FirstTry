@@ -208,8 +208,13 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
     else:
         args.t_total = len(train_loader) // args.gradient_accumulation_steps * args.num_train_epochs
 
-    lr_scheduler = WarmupLinearSchedule(optimizer, warmup_steps=args.warmup_steps,
+    lr_scheduler = WarmupLinearSchedule(optimizer, warmup_steps=int(args.warmup_steps / args.train_batch_size),
                                         t_total=args.t_total)  # ConstantLRSchedule(optimizer)
+    
+    if args.train_batch_size > 1:
+        args.eval_steps = -1 if args.eval_steps == -1 else max(1, int(round(args.eval_steps / args.train_batch_size)))
+        args.save_steps = -1 if args.save_steps == -1 else max(1, int(round(args.save_steps / args.train_batch_size)))
+        args.logging_steps = -1 if args.logging_steps == -1 else max(1, int(round(args.logging_steps / args.train_batch_size)))
 
 
     global_step = 0 if not args.resume_from else args.resume_global_step
