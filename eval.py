@@ -92,6 +92,16 @@ def make_evaluation(model, criterion, eval_loader, eval_dataset, args):
                 wandb.log({'eval_second_best_f1_checkpoint': second_best_checkpoint})
                 time.sleep(args.eval_sleep)
 
+def tensor_and_remove_empty(batch, gold_mentions, args):
+    input_ids, input_mask, sum_text_len, gold_clusters, new_gold_mentions = [], [], [], [], []
+    for i in range(len(gold_mentions)):
+        if len(gold_mentions[i]) > 0:
+            input_ids.append(torch.tensor(batch['input_ids'][i]).to(args.device))
+            input_mask.append(torch.tensor(batch['input_mask'][i]).to(args.device))
+            sum_text_len.append(sum(batch['text_len'][i]))
+            gold_clusters.append(batch['clusters'][i])
+            new_gold_mentions.append(gold_mentions[i])
+    return input_ids, input_mask, sum_text_len, gold_clusters, new_gold_mentions
 
 
 def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", threshold=0.5):  #TODO: use threshold when resuming from checkpoint rather than searching it
@@ -126,39 +136,41 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
     for batch in tqdm(eval_dataloader, desc="Evaluating"):
         model.eval()
 
-        batch = tuple(t.to(args.device) if torch.is_tensor(t) else t for t in batch)
-        input_ids, input_mask, text_len, speaker_ids, genre, gold_starts, gold_ends, cluster_ids, sentence_map, gold_clusters = batch
-        all_input_ids.append(input_ids)
-        
-        if len(gold_clusters) == 0 or len(gold_clusters) > args.num_queries:
-            logger.info("eval exceeds num_queries with length {}".format(len(gold_clusters)))
+        sum_text_len = [sum(tl) for tl in batch['text_len']]
+        gold_clusters = batch['clusters']
 
-        all_gold_clusters.append(gold_clusters)
 
         gold_mentions = []
         # if len(gold_clusters) > 0: #TODO:
-        gold_mentions = list(set([tuple(m) for c in gold_clusters for m in c]))
+        gold_mentions = [list(set([tuple(m) for c in gc for m in c])) for gc in gold_clusters]
         if args.add_junk:
-            gold_mentions = create_junk_gold_mentions(gold_mentions, text_len.sum())
-        all_gold_mentions.append(gold_mentions)
+            gold_mentions = create_junk_gold_mentions(gold_mentions, sum_text_len)
+        
+        input_ids, input_mask, sum_text_len, gold_clusters, gold_mentions = tensor_and_remove_empty(batch, gold_mentions, args)
+        if len(input_ids) == 0:
+            continue
             
-        gold_matrix = create_gold_matrix(args.device, text_len.sum(), args.num_queries, gold_clusters, gold_mentions)
+        gold_matrix = create_gold_matrix(args.device, sum_text_len, args.num_queries, gold_clusters, gold_mentions)
+
+        all_gold_mentions += gold_mentions
+        all_input_ids += input_ids    
+        all_gold_clusters += gold_clusters
 
         with torch.no_grad():
-            orig_input_dim = input_ids.shape
-            input_ids = torch.reshape(input_ids, (1, -1))
-            input_mask = torch.reshape(input_mask, (1, -1))
-            outputs = model(input_ids, orig_input_dim, input_mask, gold_mentions)
+            # orig_input_dim = input_ids.shape
+            # input_ids = torch.reshape(input_ids, (1, -1))
+            # input_mask = torch.reshape(input_mask, (1, -1))
+            outputs = model(input_ids, sum_text_len, input_mask, gold_mentions)
             cluster_logits, coref_logits = outputs['cluster_logits'], outputs['coref_logits']
 
             loss = criterion(outputs, gold_matrix)
-            losses.append(loss.item())
-            batch_sizes.append(args.per_gpu_eval_batch_size) # TODO support batches
+            losses.append(loss.mean().detach().cpu())
+            batch_sizes.append(loss.shape[0]) 
 
-        all_cluster_logits_cuda.append(cluster_logits.detach().clone())
-        all_coref_logits_cuda.append(coref_logits.detach().clone())
-        all_cluster_logits_cpu.append(cluster_logits.detach().cpu())
-        all_coref_logits_cpu.append(coref_logits.detach().cpu())
+        all_cluster_logits_cuda += [cl.detach().clone() for cl in cluster_logits]
+        all_coref_logits_cuda += [cl.detach().clone() for cl in coref_logits]
+        all_cluster_logits_cpu += [cl.detach().cpu() for cl in cluster_logits]
+        all_coref_logits_cpu += [cl.detach().cpu() for cl in coref_logits]
 
     eval_loss = np.average(losses, weights=batch_sizes)
 

@@ -45,11 +45,13 @@ class Transformer(nn.Module):
                 nn.init.xavier_uniform_(p)
 
     def forward(self, src, mask, query_embed, pos_embed=None):
-        src = src.transpose(0,1)
+        # flatten NxMxE to ExNxM
+        bs, m, e = src.shape
+        src = src.permute(1,0,2)
         if pos_embed is not None:
             pos_embed = pos_embed.transpose(0,1)
         binary_mask = mask == 0
-        query_embed = query_embed.unsqueeze(1)
+        query_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)
 
         # tgt = torch.zeros_like(query_embed)
         tgt = query_embed

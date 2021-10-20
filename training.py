@@ -19,6 +19,17 @@ from transformers import AdamW, get_linear_schedule_with_warmup
 
 logger = logging.getLogger(__name__)
 
+def tensor_and_remove_empty(batch, gold_mentions, args):
+    input_ids, input_mask, sum_text_len, gold_clusters, new_gold_mentions = [], [], [], [], []
+    for i in range(len(gold_mentions)):
+        if len(gold_mentions[i]) > 0:
+            input_ids.append(torch.tensor(batch['input_ids'][i]).to(args.device))
+            input_mask.append(torch.tensor(batch['input_mask'][i]).to(args.device))
+            sum_text_len.append(sum(batch['text_len'][i]))
+            gold_clusters.append(batch['clusters'][i])
+            new_gold_mentions.append(gold_mentions[i])
+    return input_ids, input_mask, sum_text_len, gold_clusters, new_gold_mentions
+
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     epoch_iterator, optimizer: torch.optim.Optimizer, scaler: torch.cuda.amp.GradScaler,
                     args, evaluator, skip_steps, recent_grad_norms, recent_cluster_logits,
@@ -29,31 +40,30 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             continue
 
         model.train()
-        batch = tuple(t.to(args.device) if torch.is_tensor(t) else t for t in batch)
-        input_ids, input_mask, text_len, speaker_ids, genre, gold_starts, gold_ends, cluster_ids, sentence_map, gold_clusters = batch
 
-        if len(gold_clusters) == 0 or len(gold_clusters) > args.num_queries:
-            logger.info("train exceeds num_queries with length {}".format(len(gold_clusters)))
+        sum_text_len = [sum(tl) for tl in batch['text_len']]
+        gold_clusters = batch['clusters']
 
         gold_mentions = None
         if args.use_gold_mentions:
             # gold_mentions = []
             # if len(gold_clusters) > 0:  #TODO: create junk clusters even if 0 gold clusters
-            gold_mentions = list(set([tuple(m) for c in gold_clusters for m in c]))
+            gold_mentions = [list(set([tuple(m) for c in gc for m in c])) for gc in gold_clusters]
             if args.add_junk:
-                gold_mentions = create_junk_gold_mentions(gold_mentions, text_len.sum())
+                gold_mentions = create_junk_gold_mentions(gold_mentions, sum_text_len)
 
-        gold_matrix = create_gold_matrix(args.device, text_len.sum(), args.num_queries, gold_clusters, gold_mentions)
+        input_ids, input_mask, sum_text_len, gold_clusters, gold_mentions = tensor_and_remove_empty(batch, gold_mentions, args)
+        if len(input_ids) == 0:
+            continue
 
-        if gold_matrix.shape[1] == 0:
-            logger.info("size of gold_cluster {}, size of gold matrix {}".format(len(gold_clusters), gold_matrix.shape))
+        gold_matrix = create_gold_matrix(args.device, sum_text_len, args.num_queries, gold_clusters, gold_mentions)
 
-        orig_input_dim = input_ids.shape
-        input_ids = torch.reshape(input_ids, (1, -1))
-        input_mask = torch.reshape(input_mask, (1, -1))
+        # orig_input_dim = input_ids.shape
+        # input_ids = torch.reshape(input_ids, (1, -1))
+        # input_mask = torch.reshape(input_mask, (1, -1))
         if args.amp:
             with torch.cuda.amp.autocast():
-                outputs = model(input_ids, orig_input_dim, input_mask, gold_mentions)
+                outputs = model(input_ids, sum_text_len, input_mask, gold_mentions)
                 cluster_logits, coref_logits = outputs['cluster_logits'], outputs['coref_logits']
 
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(),
@@ -61,10 +71,10 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                 evaluator.update(predicted_clusters, gold_clusters)
                 loss = criterion(outputs, gold_matrix)
         else:
-            outputs = model(input_ids, orig_input_dim, input_mask, gold_mentions)
+            outputs = model(input_ids, sum_text_len, input_mask, gold_mentions)
             cluster_logits, coref_logits = outputs['cluster_logits'], outputs['coref_logits']
 
-            predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(),
+            predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), [cl.cpu().detach() for cl in coref_logits],
                                                         threshold, gold_mentions)
             evaluator.update(predicted_clusters, gold_clusters)
             loss = criterion(outputs, gold_matrix)
@@ -75,7 +85,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
         # TODO handle NaNs and +-infs
 
-        if args.n_gpu > 1:
+        if args.n_gpu > 1 or args.train_batch_size > 1:
             loss = loss.mean()  # mean() to average on multi-gpu parallel training
         if args.gradient_accumulation_steps > 1:
             loss = loss / args.gradient_accumulation_steps
@@ -106,7 +116,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             if args.lr_drop_interval == 'step':
                 lr_scheduler.step()  # Update learning rate schedule
             model.zero_grad()
-            global_step += 1
+            global_step += args.train_batch_size
 
             if args.local_rank in [-1, 0] and args.eval_steps > 0 and global_step % args.eval_steps == 0:
                 results = report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, threshold)

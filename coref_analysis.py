@@ -215,11 +215,11 @@ def is_cluster_contains_linked_entities(cluster, entities_per_sentence, sentence
 def print_per_batch(example_ind, is_print, cluster_logits, coref_logits, threshold, gold_clusters, gold_mentions, input_ids,
 count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, count_missed_mentions,
 count_missed_pronouns, count_excess_pronous, count_excess_mentions, tokenizer):
-    predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(),
-                                                    threshold, gold_mentions)
+    predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach().unsqueeze(0), coref_logits.cpu().detach(),
+                                                    threshold, [gold_mentions])
 
     gold, gold_correct, pred, pred_correct, pred_to_most_similar_gold, pred_to_most_similar_golds_list, gold_is_completely_missed, gold_to_most_similar_pred = match_clusters(
-        gold_clusters, predicted_clusters)
+        gold_clusters, predicted_clusters[0])
 
     pred_is_completely_missed = [similar_pred == -1 for similar_pred in pred_to_most_similar_gold]
     real_input_ids = [t for t in input_ids.reshape(-1) if t != 1]

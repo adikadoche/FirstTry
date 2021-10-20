@@ -5,6 +5,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 from transformers import AutoTokenizer
+from consts import TOKENS_PAD, SPEAKER_PAD
 
 
 class OntonotesDataset(Dataset):
@@ -46,15 +47,6 @@ class OntonotesDataset(Dataset):
         return len(self.examples)
 
     def __getitem__(self, index):
-        # tensorized_batch = ([],[],[],[],[],[],[],[],[],[])
-        # for i in range(1, self.batch_size+1):
-        #     if index*i > len(self.examples):
-        #         continue
-        #     example = self.examples[index*i]
-        #     tensorized_example = self.tensorize_example(example, self.is_training)
-        #     for j in range(len(tensorized_batch)):
-        #         tensorized_batch[j].append(tensorized_example[j])
-        # return tensorized_batch
         example = self.examples[index]
         tensorized_example = self.tensorize_example(example, self.is_training)
         return tensorized_example
@@ -69,6 +61,7 @@ class OntonotesDataset(Dataset):
                 # max_cluster_size = max(max_cluster_size, max(len(cluster) for cluster in clusters) if clusters else 0)
                 # max_num_clusters = max(max_num_clusters, len(clusters) if clusters else 0)
                 # speakers = flatten_list_of_lists(d["speakers"])
+        tensorized_example = {}
         old_clusters = example["clusters"]
         sentences = example["sentences"]
         num_words = sum(len(s) for s in sentences)
@@ -124,8 +117,8 @@ class OntonotesDataset(Dataset):
             sent_input_mask = [1] * cur_text_len
             sent_speaker_ids = [speaker_dict.get(s, 3) for s in speaker_per_token]
             sent_input_mask += [0] * (max_sentence_length - cur_text_len)
-            sent_speaker_ids += [0] * (max_sentence_length - cur_text_len)
-            sent_input_ids += [1] * (max_sentence_length - cur_text_len)
+            sent_speaker_ids += [SPEAKER_PAD] * (max_sentence_length - cur_text_len)
+            sent_input_ids += [TOKENS_PAD] * (max_sentence_length - cur_text_len)
             input_ids.append(sent_input_ids)
             speaker_ids.append(sent_speaker_ids)
             input_mask.append(sent_input_mask)
@@ -152,31 +145,33 @@ class OntonotesDataset(Dataset):
         genre = self.genres.get(doc_key[:2], 0)
 
         gold_starts, gold_ends = self.tensorize_mentions(gold_mentions)
-        example_tensors = (
-            input_ids, input_mask, text_len, speaker_ids, genre, gold_starts, gold_ends, cluster_ids, sentence_map)
+        tensorized_example['input_ids'] = input_ids
+        tensorized_example['input_mask'] = input_mask
+        tensorized_example['text_len'] = text_len
+        tensorized_example['speaker_ids'] = speaker_ids
+        tensorized_example['genre'] = genre
+        tensorized_example['gold_starts'] = gold_starts
+        tensorized_example['gold_ends'] = gold_ends
+        tensorized_example['cluster_ids'] = cluster_ids
+        tensorized_example['sentence_map'] = sentence_map
 
         if is_training and len(input_ids) > self.args.max_training_sentences:
-            # if self.args['single_example']:
-            example_tensors = self.truncate_example(*example_tensors)
-            # else:
-            #     offsets = range(self.args['max_training_sentences'], len(sentences),
-            #                     self.args['max_training_sentences'])
-            #     tensor_list = [self.truncate_example(*(example_tensors + (offset,))) for offset in offsets]
-            #     return tensor_list
+            tensorized_example = self.truncate_example(tensorized_example)
 
-        input_ids, input_mask, text_len, speaker_ids, genre, gold_starts, gold_ends, cluster_ids, sentence_map = example_tensors
 
         # calc clusters after truncation
-        if len(cluster_ids) == 0:
+        if len(tensorized_example['cluster_ids']) == 0:
             clusters = []
         else:
-            cluster_ids_int = cluster_ids.astype(np.int)
+            cluster_ids_int = tensorized_example['cluster_ids'].astype(np.int)
             clusters = [[] for _ in range(cluster_ids_int.max())]
-            for start, end, cluster_id in zip(gold_starts, gold_ends, cluster_ids_int):
+            for start, end, cluster_id in zip(tensorized_example['gold_starts'], tensorized_example['gold_ends'], cluster_ids_int):
                 clusters[cluster_id-1].append((start, end))
             clusters = [c for c in clusters if len(c) > 0]
+        
+        tensorized_example['clusters'] = clusters
 
-        return tuple([torch.tensor(t) for t in example_tensors]) + (clusters,)
+        return tensorized_example
 
     def tensorize_mentions(self, mentions):
         if len(mentions) > 0:
@@ -185,35 +180,34 @@ class OntonotesDataset(Dataset):
             starts, ends = [], []
         return np.array(starts), np.array(ends)
 
-    def truncate_example(self, input_ids, input_mask, text_len, speaker_ids, genre, gold_starts, gold_ends,
-                         cluster_ids, sentence_map, sentence_offset=None):
+    def truncate_example(self, tensorized_example, sentence_offset=None):
         max_training_sentences = self.args.max_training_sentences
-        num_sentences = input_ids.shape[0]
+        num_sentences = tensorized_example['input_ids'].shape[0]
         assert num_sentences > max_training_sentences
 
         sentence_offset = random.randint(0,
                                          num_sentences - max_training_sentences) if sentence_offset is None else sentence_offset
-        word_offset = sum(text_len[:sentence_offset])
-        num_words = sum(text_len[sentence_offset:sentence_offset + max_training_sentences])
-        input_ids = input_ids[sentence_offset:sentence_offset + max_training_sentences, :]
-        input_mask = input_mask[sentence_offset:sentence_offset + max_training_sentences, :]
-        speaker_ids = speaker_ids[sentence_offset:sentence_offset + max_training_sentences, :]
-        text_len = text_len[sentence_offset:sentence_offset + max_training_sentences]
+        word_offset = sum(tensorized_example['text_len'][:sentence_offset])
+        num_words = sum(tensorized_example['text_len'][sentence_offset:sentence_offset + max_training_sentences])
+        tensorized_example['input_ids'] = tensorized_example['input_ids'][sentence_offset:sentence_offset + max_training_sentences, :]
+        tensorized_example['input_mask'] = tensorized_example['input_mask'][sentence_offset:sentence_offset + max_training_sentences, :]
+        tensorized_example['speaker_ids'] = tensorized_example['speaker_ids'][sentence_offset:sentence_offset + max_training_sentences, :]
+        tensorized_example['text_len'] = tensorized_example['text_len'][sentence_offset:sentence_offset + max_training_sentences]
 
         # sentence_map = sentence_map[word_offset: word_offset + num_words]
-        gold_spans = np.logical_and(gold_ends >= word_offset, gold_starts < word_offset + num_words)
-        gold_starts = gold_starts[gold_spans] - word_offset
-        gold_ends = gold_ends[gold_spans] - word_offset
-        cluster_ids = cluster_ids[gold_spans]
+        gold_spans = np.logical_and(tensorized_example['gold_ends'] >= word_offset, tensorized_example['gold_starts'] < word_offset + num_words)
+        tensorized_example['gold_starts'] = tensorized_example['gold_starts'][gold_spans] - word_offset
+        tensorized_example['gold_ends'] = tensorized_example['gold_ends'][gold_spans] - word_offset
+        tensorized_example['cluster_ids'] = tensorized_example['cluster_ids'][gold_spans]
 
-        return input_ids, input_mask, text_len, speaker_ids, genre, gold_starts, gold_ends, cluster_ids, sentence_map
+        return tensorized_example
 
     @staticmethod
     def flatten(l):
         return [item for sublist in l for item in sublist]
 
     def get_speaker_dict(self, speakers):
-        speaker_dict = {'UNK': 0, '[SPL]': 1}
+        speaker_dict = {'UNK': SPEAKER_PAD, '[SPL]': 1}
         for s in speakers:
             if s not in speaker_dict and len(speaker_dict) < self.args.max_num_speakers:
                 speaker_dict[s] = len(speaker_dict)

@@ -46,12 +46,13 @@ class CorefEvaluator(object):
 
 
     def update(self, predicted, gold):
-        gold = [tuple([tuple(m) for m in c]) for c in gold]
-        predicted = [tuple([tuple(m) for m in c]) for c in predicted]
-        mention_to_predicted = calc_mention_to_cluster(predicted)
-        mention_to_gold = calc_mention_to_cluster(gold)
-        for e in self.evaluators:
-            e.update(predicted, gold, mention_to_predicted, mention_to_gold)
+        for i in range(len(predicted)):
+            gold_flat = [tuple([tuple(m) for m in c]) for c in gold[i]]
+            predicted_flat = [tuple([tuple(m) for m in c]) for c in predicted[i]]
+            mention_to_predicted = calc_mention_to_cluster(predicted_flat)
+            mention_to_gold = calc_mention_to_cluster(gold_flat)
+            for e in self.evaluators:
+                e.update(predicted_flat, gold_flat, mention_to_predicted, mention_to_gold)
 
     def get_f1(self):
         return sum(e.get_f1() for e in self.evaluators) / len(self.evaluators)
