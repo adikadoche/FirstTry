@@ -114,6 +114,8 @@ def parse_args():
     parser.add_argument('--multiclass_ce', action='store_true')
     parser.add_argument('--cost_is_cluster', default=1, type=float,
                         help="Class coefficient in the matching cost")
+    parser.add_argument('--cost_is_mention', default=1, type=float,
+                        help="Class coefficient in the matching cost")
     parser.add_argument('--cost_coref', default=5, type=float,
                         help="L1 box coefficient in the matching cost")
     parser.add_argument('--eos_coef', default=0.1, type=float,

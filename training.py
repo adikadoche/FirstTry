@@ -50,7 +50,9 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             # if len(gold_clusters) > 0:  #TODO: create junk clusters even if 0 gold clusters
             gold_mentions = [list(set([tuple(m) for c in gc for m in c])) for gc in gold_clusters]
             if args.add_junk:
-                gold_mentions = create_junk_gold_mentions(gold_mentions, sum_text_len)
+                gold_mentions, gold_mentions_vector = create_junk_gold_mentions(gold_mentions, sum_text_len, args.device)
+            else:
+                gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float) for gm in gold_mentions]
 
         input_ids, input_mask, sum_text_len, gold_clusters, gold_mentions = tensor_and_remove_empty(batch, gold_mentions, args)
         if len(input_ids) == 0:
@@ -72,12 +74,12 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                 loss = criterion(outputs, gold_matrix)
         else:
             outputs = model(input_ids, sum_text_len, input_mask, gold_mentions)
-            cluster_logits, coref_logits = outputs['cluster_logits'], outputs['coref_logits']
+            cluster_logits, coref_logits, mention_logits = outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits']
 
-            predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), [cl.cpu().detach() for cl in coref_logits],
+            predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), [cl.cpu().detach() for cl in coref_logits], [ml.cpu().detach() for ml in mention_logits],
                                                         threshold, gold_mentions)
             evaluator.update(predicted_clusters, gold_clusters)
-            loss = criterion(outputs, gold_matrix)
+            loss = criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
 
         # recent_cluster_logits.append(cluster_logits.detach().cpu().numpy())
         # recent_coref_logits.append(coref_logits.detach().cpu().numpy().flatten())

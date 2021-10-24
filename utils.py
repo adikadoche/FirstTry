@@ -184,7 +184,7 @@ def create_gold_matrix(device, doc_len, num_queries, gold_clusters, gold_mention
 def make_mentions_from_clustered_tokens(self, coref_logits):
     pass
 
-def calc_predicted_clusters(cluster_logits, coref_logits, threshold, gold_mentions: List):
+def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, threshold, gold_mentions: List):
     # when we are using gold mentions, we get coref_logits at the size of the gold mentions ([bs, clusters, gold_mentions]) (because we know they are mentions, what we are predicting is the clustering)
     bs = cluster_logits.shape[0]
 
@@ -220,10 +220,14 @@ def calc_predicted_clusters(cluster_logits, coref_logits, threshold, gold_mentio
         for i in range(bs):
             cur_cluster_bool = cluster_bools[i]
             cur_coref_logits = coref_logits[i]
-            cur_cluster_bool = np.tile(cur_cluster_bool.reshape([1, -1, 1]), (1, 1, cur_coref_logits.shape[-1]))
-            cluster_bools_mask = cur_cluster_bool.astype(int)
+            cur_mention_bools = mention_logits[i].squeeze(-1).numpy() >= threshold
             
-            coref_logits_after_cluster_bool = np.multiply(cluster_bools_mask, cur_coref_logits)
+            cur_mention_bools = np.tile(cur_mention_bools.reshape([1, 1, -1]), (1, cur_cluster_bool.shape[0], 1))
+            cur_cluster_bool = np.tile(cur_cluster_bool.reshape([1, -1, 1]), (1, 1, cur_coref_logits.shape[-1]))
+            cluster_mention_mask = cur_mention_bools & cur_cluster_bool
+            cluster_mention_mask = cluster_mention_mask.astype(int)
+            
+            coref_logits_after_cluster_bool = np.multiply(cluster_mention_mask, cur_coref_logits)
             max_coref_score, max_coref_cluster_ind = coref_logits_after_cluster_bool[0].max(-2) #[gold_mention] choosing the index of the best cluster per gold mention
             coref_bools = max_coref_score >= threshold #[gold_mention] is the chosen cluster's score passes the threshold
 
@@ -331,8 +335,9 @@ def try_measure_len(iter):
 
 
 
-def create_junk_gold_mentions(gold_mentions, text_len):
+def create_junk_gold_mentions(gold_mentions, text_len, device):
     all_mentions = []
+    real_mentions_bools = []
     for i in range(len(gold_mentions)):
         num_mentions = len(gold_mentions[i])
         if num_mentions == 0:
@@ -346,7 +351,9 @@ def create_junk_gold_mentions(gold_mentions, text_len):
         only_junk_mentions = [f for f in only_junk_mentions if f not in gold_mentions[i]]
 
         unite_mentions = gold_mentions[i] + only_junk_mentions
-        random.shuffle(unite_mentions)
-        all_mentions.append(unite_mentions)
+        indices = list(range(len(unite_mentions)))
+        random.shuffle(indices)
+        all_mentions.append([unite_mentions[ind] for ind in indices])
+        real_mentions_bools.append(torch.tensor([int(ind < len(gold_mentions[i])) for ind in indices], dtype=torch.float, device=device))
 
-    return all_mentions
+    return all_mentions, real_mentions_bools

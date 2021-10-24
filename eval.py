@@ -144,7 +144,9 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
         # if len(gold_clusters) > 0: #TODO:
         gold_mentions = [list(set([tuple(m) for c in gc for m in c])) for gc in gold_clusters]
         if args.add_junk:
-            gold_mentions = create_junk_gold_mentions(gold_mentions, sum_text_len)
+            gold_mentions, gold_mentions_vector = create_junk_gold_mentions(gold_mentions, sum_text_len, args.device)
+        else:
+            gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=args.device) for gm in gold_mentions]
         
         input_ids, input_mask, sum_text_len, gold_clusters, gold_mentions = tensor_and_remove_empty(batch, gold_mentions, args)
         if len(input_ids) == 0:
@@ -161,9 +163,9 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
             # input_ids = torch.reshape(input_ids, (1, -1))
             # input_mask = torch.reshape(input_mask, (1, -1))
             outputs = model(input_ids, sum_text_len, input_mask, gold_mentions)
-            cluster_logits, coref_logits = outputs['cluster_logits'], outputs['coref_logits']
+            cluster_logits, coref_logits, mention_logits = outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits']
 
-            loss = criterion(outputs, gold_matrix)
+            loss = criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
             losses.append(loss.mean().detach().cpu())
             batch_sizes.append(loss.shape[0]) 
 

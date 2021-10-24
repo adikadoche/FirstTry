@@ -55,18 +55,21 @@ class HungarianMatcher(nn.Module):
             For each batch element, it holds:
                 len(index_i) = len(index_j) = min(num_queries, num_target_boxes)
         """
-        bs = len(targets)
+        targets_clusters = targets['clusters']
+        targets_mentions = targets['mentions']
+        bs = len(targets_clusters)
         matched_predicted_cluster_id = []
         matched_gold_cluster_id = []
         for i in range(bs):
 
-            if targets[i].shape[1] == 0 or sum(sum(targets[i])) == 0:
+            if targets_clusters[i].shape[1] == 0 or sum(sum(targets_clusters[i])) == 0:
                 matched_predicted_cluster_id.append(False)
                 matched_gold_cluster_id.append(False)
                 continue
 
             coref_logits = outputs["coref_logits"][i].squeeze(0) # [num_queries, tokens]
             cluster_logits = outputs["cluster_logits"][i] # [num_queries, 1]
+            mention_logits = outputs["mention_logits"][i].squeeze(-1).unsqueeze(0) # [tokens]
 
             if not self.args.use_gold_mentions:  #TODO: implement
                 # real_cluster_target_rows = torch.sum(targets, -1) > 0
@@ -85,13 +88,18 @@ class HungarianMatcher(nn.Module):
                 # total_cost = self.cost_coref * cost_coref
                 pass
             else:
-                real_cluster_target_rows = torch.sum(targets[i], -1) > 0
-                real_cluster_target = targets[i][real_cluster_target_rows]
+                real_cluster_target_rows = torch.sum(targets_clusters[i], -1) > 0
+                real_cluster_target = targets_clusters[i][real_cluster_target_rows]
                 num_of_gold_clusters = int(real_cluster_target.shape[0])
                 num_queries, doc_len = coref_logits.shape
 
                 cost_is_cluster = F.binary_cross_entropy(cluster_logits, torch.ones_like(cluster_logits), reduction='none') # [num_queries, 1]
                 cost_is_cluster = cost_is_cluster.repeat(1, num_of_gold_clusters) # [num_queries, gold_clusters]
+
+                cost_is_mention = F.binary_cross_entropy(mention_logits, targets_mentions[i].unsqueeze(0), reduction='none') # [num_queries, 1]
+                cost_is_mention = cost_is_mention.repeat(num_queries, 1) # [num_queries, tokens]
+
+                coref_logits = coref_logits * cost_is_mention
 
                 cost_coref = []
                 for cluster in real_cluster_target:

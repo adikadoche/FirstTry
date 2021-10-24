@@ -58,7 +58,8 @@ class DETR(nn.Module):
         self.word_attn_projection = nn.Linear(backbone.config.hidden_size, 1)
         self.span_width_embed = nn.Embedding(30, 20)
         self.span_proj = nn.Linear(3*backbone.config.hidden_size+20, hidden_dim) # TODO config
-
+             
+        self.mention_classifier = nn.Linear(hidden_dim, 1)
 
         self.IO_score = nn.Sequential(
             nn.Linear(2*hidden_dim, 300),
@@ -114,7 +115,7 @@ class DETR(nn.Module):
 
 
         last_hs = hs[-1] # [1, num_queries, emb]
-        cluster_logits, coref_logits = self.calc_cluster_and_coref_logits(last_hs, memory, gold_mentions is not None, span_mask)
+        cluster_logits, coref_logits, mention_logits = self.calc_cluster_and_coref_logits(last_hs, memory, gold_mentions is not None, span_mask)
 
         # aux_coref_logits = [self.calc_cluster_and_coref_logits(curr_hs, memory)[1] for curr_hs in hs[:-1]]
 
@@ -126,7 +127,8 @@ class DETR(nn.Module):
         #     out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
 
         out = {"coref_logits": coref_logits,
-                "cluster_logits": cluster_logits}
+                "cluster_logits": cluster_logits,
+                "mention_logits": mention_logits}
                 # "aux_coref_logits": aux_coref_logits}
         return out
 
@@ -167,6 +169,7 @@ class DETR(nn.Module):
         # memory [bs, tokens, emb]
 
         cluster_logits = self.is_cluster(last_hs).sigmoid()  # [bs, num_queries, 1]
+        mention_logits = self.mention_classifier(memory).sigmoid()  # [bs, tokens, 1]
 
         #TODO: check cross attention? (without values)
 
@@ -180,6 +183,7 @@ class DETR(nn.Module):
         #     coref_logits_unnorm = self.query_token_IO_score(coref_features).squeeze(-1) # [bs, num_queries, tokens/mentions, 1]
         # else:
         bs = last_hs.shape[0]
+        mention_logits_masked = []
         coref_logits = []
         for i in range(bs):
             cur_memory = memory[i][span_mask[i]==1].unsqueeze(0)
@@ -197,10 +201,12 @@ class DETR(nn.Module):
             cur_coref_logits = coref_logits_unnorm.sigmoid()
             coref_logits.append(cur_coref_logits)
 
+            mention_logits_masked.append(mention_logits[i][span_mask[i]==1])
+
         # if not is_gold_mention:  #TODO: do I want this?
         #     coref_logits = coref_logits * cluster_logits
 
-        return cluster_logits, coref_logits
+        return cluster_logits, coref_logits, mention_logits_masked
 
     def get_span_emb(self, context_outputs, span_starts, span_ends, sum_text_len):
         max_mentions = max([len(s) for s in span_starts])
@@ -500,7 +506,7 @@ class MatchingLoss(nn.Module):
         1) we compute hungarian assignment between ground truth boxes and the outputs of the model
         2) we supervise each pair of matched ground-truth / prediction (supervise class and box)
     """
-    def __init__(self, matcher, eos_coef, cost_is_cluster, cost_coref, args):
+    def __init__(self, matcher, eos_coef, cost_is_cluster, cost_coref, cost_is_mention, args):
         """ Create the criterion.
         Parameters:
             matcher: module able to compute a matching between targets and proposals
@@ -512,6 +518,7 @@ class MatchingLoss(nn.Module):
         self.matcher = matcher
         self.cost_is_cluster = cost_is_cluster
         self.cost_coref = cost_coref
+        self.cost_is_mention = cost_is_mention
         self.args = args
         self.eos_coef = eos_coef
 
@@ -528,12 +535,15 @@ class MatchingLoss(nn.Module):
         # Retrieve the matching between the outputs of the last layer and the targets
         matched_predicted_cluster_id, matched_gold_cluster_id = self.matcher(outputs, targets)
 
-        bs = len(targets)
+        targets_clusters = targets['clusters']
+        targets_mentions = targets['mentions']
+        bs = len(targets_clusters)
         costs = []
         for i in range(bs):
         # Compute the average number of target boxes accross all nodes, for normalization purposes
             coref_logits = outputs["coref_logits"][i].squeeze(0)  # [num_queries, tokens]
             cluster_logits = outputs["cluster_logits"][i].squeeze() # [num_queries]
+            mention_logits = outputs["mention_logits"][i].squeeze() # [tokens]
             num_queries, doc_len = coref_logits.shape
             #TODO: normalize according to number of clusters? (identical to DETR)
 
@@ -544,16 +554,19 @@ class MatchingLoss(nn.Module):
             # num_of_gold_clusters = torch.clamp(num_of_gold_clusters / get_world_size(), min=1).item()
 
             gold_is_cluster = torch.zeros_like(cluster_logits)
-            weight = self.eos_coef * torch.ones_like(cluster_logits)
+            weight_cluster = self.eos_coef * torch.ones_like(cluster_logits)
             if matched_predicted_cluster_id[i] is not False:
                 gold_is_cluster[matched_predicted_cluster_id[i]] = 1
-                weight[matched_predicted_cluster_id[i]] = 1
-            cost_is_cluster = F.binary_cross_entropy(cluster_logits, gold_is_cluster, weight=weight)
+                weight_cluster[matched_predicted_cluster_id[i]] = 1
+            cost_is_cluster = F.binary_cross_entropy(cluster_logits, gold_is_cluster, weight=weight_cluster)
+
+            weight_mention = targets_mentions[i] + self.eos_coef * (1 - targets_mentions[i])
+            cost_is_mention = F.binary_cross_entropy(mention_logits, targets_mentions[i], weight=weight_mention)
 
             cost_coref = 0
             if matched_predicted_cluster_id[i] is not False:
                 permuted_coref_logits = coref_logits[matched_predicted_cluster_id[i].numpy()]
-                permuted_gold = targets[i][matched_gold_cluster_id[i].numpy()]
+                permuted_gold = targets_clusters[i][matched_gold_cluster_id[i].numpy()]
 
                 if self.args.multiclass_ce:
                     logits = permuted_coref_logits.transpose(0, 1)  # [mentions, num_queries]
@@ -581,7 +594,7 @@ class MatchingLoss(nn.Module):
             #     cost_coref.append(loss_for_predicted_gold_match)
             #
             # cost_coref = torch.stack(cost_coref).sum() if len(cost_coref) > 0 else 0
-            total_cost = self.cost_coref * cost_coref + self.cost_is_cluster * cost_is_cluster
+            total_cost = self.cost_coref * cost_coref + self.cost_is_cluster * cost_is_cluster + self.cost_is_mention * cost_is_mention
             costs.append(total_cost)
         return torch.stack(costs)
 
@@ -653,7 +666,7 @@ def build_DETR(args):
     matcher = build_matcher(args)
     # TODO maybe return consideration of aux loss
 
-    criterion = MatchingLoss(matcher=matcher, eos_coef=args.eos_coef, cost_is_cluster=args.cost_is_cluster,
+    criterion = MatchingLoss(matcher=matcher, eos_coef=args.eos_coef, cost_is_cluster=args.cost_is_cluster, cost_is_mention=args.cost_is_mention,
                              cost_coref=args.cost_coref, args=args)
 
     # if args.loss == 'match':
