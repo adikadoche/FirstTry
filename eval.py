@@ -116,9 +116,11 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
     batch_sizes = []
     all_cluster_logits_cpu = []
     all_coref_logits_cpu = []
+    all_mention_logits_cpu = []
     all_cluster_logits_cuda = []
     all_input_ids = []
     all_coref_logits_cuda = []
+    all_mention_logits_cuda = []
     all_gold_clusters = []
     all_gold_mentions = []
 
@@ -169,14 +171,16 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
             losses.append(loss.mean().detach().cpu())
             batch_sizes.append(loss.shape[0]) 
 
+        all_mention_logits_cuda += [ml.detach().clone() for ml in mention_logits]
         all_cluster_logits_cuda += [cl.detach().clone() for cl in cluster_logits]
         all_coref_logits_cuda += [cl.detach().clone() for cl in coref_logits]
+        all_mention_logits_cpu += [ml.detach().cpu() for ml in mention_logits]
         all_cluster_logits_cpu += [cl.detach().cpu() for cl in cluster_logits]
         all_coref_logits_cpu += [cl.detach().cpu() for cl in coref_logits]
 
     eval_loss = np.average(losses, weights=batch_sizes)
 
-    p, r, f1, threshold, metrics = calc_best_avg_f1(all_cluster_logits_cpu, all_coref_logits_cpu, all_gold_clusters, all_gold_mentions)
+    p, r, f1, threshold, metrics = calc_best_avg_f1(all_cluster_logits_cpu, all_coref_logits_cpu, all_mention_logits_cpu, all_gold_clusters, all_gold_mentions)
     results = {'loss': eval_loss,
                'avg_f1': f1,
                'threshold': threshold,
@@ -189,7 +193,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
                'prec_correct_predict_clusters': metrics[4]}
 
 
-    print_predictions(all_cluster_logits_cuda, all_coref_logits_cuda, all_gold_clusters, all_gold_mentions, all_input_ids, threshold, args, eval_dataset.tokenizer)
+    print_predictions(all_cluster_logits_cuda, all_coref_logits_cuda, all_mention_logits_cuda, all_gold_clusters, all_gold_mentions, all_input_ids, threshold, args, eval_dataset.tokenizer)
 
     output_eval_file = os.path.join(args.output_dir, "eval_results.txt")
     with open(output_eval_file, "a") as writer:

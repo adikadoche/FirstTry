@@ -212,10 +212,10 @@ def is_cluster_contains_linked_entities(cluster, entities_per_sentence, sentence
         return found_entity_in_cluster
 
 
-def print_per_batch(example_ind, is_print, cluster_logits, coref_logits, threshold, gold_clusters, gold_mentions, input_ids,
+def print_per_batch(example_ind, is_print, cluster_logits, coref_logits, mention_logits, threshold, gold_clusters, gold_mentions, input_ids,
 count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, count_missed_mentions,
 count_missed_pronouns, count_excess_pronous, count_excess_mentions, tokenizer):
-    predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach().unsqueeze(0), coref_logits.cpu().detach(),
+    predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach().unsqueeze(0), coref_logits.cpu().detach(), mention_logits.cpu().detach().unsqueeze(0),
                                                     threshold, [gold_mentions])
 
     gold, gold_correct, pred, pred_correct, pred_to_most_similar_gold, pred_to_most_similar_golds_list, gold_is_completely_missed, gold_to_most_similar_pred = match_clusters(
@@ -315,7 +315,7 @@ count_missed_pronouns, count_excess_pronous, count_excess_mentions, tokenizer):
 
 
 
-def print_predictions(all_cluster_logits, all_coref_logits, all_gold_clusters, all_gold_mentions, all_input_ids, threshold, args, tokenizer):
+def print_predictions(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, all_gold_mentions, all_input_ids, threshold, args, tokenizer):
 
     count_clusters = 0
     count_mentions = 0
@@ -338,12 +338,12 @@ def print_predictions(all_cluster_logits, all_coref_logits, all_gold_clusters, a
     for i, input_ids in enumerate(all_input_ids):
         gold_clusters = all_gold_clusters[i]
         gold_mentions = all_gold_mentions[i]
-        cluster_logits, coref_logits = all_cluster_logits[i], all_coref_logits[i]
+        cluster_logits, coref_logits, mention_logits = all_cluster_logits[i], all_coref_logits[i], all_mention_logits[i]
 
 
         count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, \
             count_missed_mentions, count_missed_pronouns, count_excess_pronous, count_excess_mentions = print_per_batch(i, i in indices_to_print,
-            cluster_logits, coref_logits, threshold, gold_clusters, gold_mentions, input_ids,
+            cluster_logits, coref_logits, mention_logits, threshold, gold_clusters, gold_mentions, input_ids,
             count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, count_missed_mentions,
             count_missed_pronouns, count_excess_pronous, count_excess_mentions, tokenizer)
 

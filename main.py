@@ -55,7 +55,8 @@ def main():
     for key, val in vars(args).items():
         logger.info(f"{key} - {val}")
         wb_config[key] = val
-
+    if "GIT_HASH" in os.environ:
+        wb_config["GIT_HASH"] = os.environ["GIT_HASH"]
     set_seed(args)
 
     # Load pretrained model and tokenizer
