@@ -560,10 +560,10 @@ class MatchingLoss(nn.Module):
                 weight_cluster[matched_predicted_cluster_id[i]] = 1
             cost_is_cluster = F.binary_cross_entropy(cluster_logits, gold_is_cluster, weight=weight_cluster)
 
-            if sum(mention_logits.shape) == 0:
+            if sum(targets_mentions[i].shape) == 0:
                 cost_is_mention = 0
             else:
-                if sum(targets_mentions[i]) == 0:
+                if sum(mention_logits.shape) == 0:
                     mention_logits = mention_logits.reshape(1)
                 weight_mention = targets_mentions[i] + self.eos_coef * (1 - targets_mentions[i])
                 cost_is_mention = F.binary_cross_entropy(mention_logits, targets_mentions[i], weight=weight_mention)
