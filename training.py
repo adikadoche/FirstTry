@@ -52,7 +52,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             if args.add_junk:
                 gold_mentions, gold_mentions_vector = create_junk_gold_mentions(gold_mentions, sum_text_len, args.device)
             else:
-                gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float) for gm in gold_mentions]
+                gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=args.device) for gm in gold_mentions]
 
         input_ids, input_mask, sum_text_len, gold_clusters, gold_mentions = tensor_and_remove_empty(batch, gold_mentions, args)
         if len(input_ids) == 0:
