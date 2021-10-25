@@ -67,7 +67,6 @@ def parse_args():
     parser.add_argument("--add_junk", action="store_true", help="whether to use junk spans")
     parser.add_argument("--eval", type=str, choices=['no', 'specific', 'all', 'vanilla'], default='no')
 
-    parser.add_argument("--dropout_prob", default=0.3, type=float)
     parser.add_argument("--weight_decay", default=0.01, type=float, help="Weight deay if we apply some.")
 
     parser.add_argument("--logging_steps", type=int, default=500, help="Log every X updates steps.")

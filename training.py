@@ -15,7 +15,7 @@ import itertools
 from metrics import CorefEvaluator
 from utils import load_from_checkpoint, save_checkpoint
 
-from transformers import AdamW, get_linear_schedule_with_warmup
+from transformers import AdamW, get_constant_schedule_with_warmup
 
 logger = logging.getLogger(__name__)
 
@@ -218,8 +218,9 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
     else:
         args.t_total = len(train_loader) // args.gradient_accumulation_steps * args.num_train_epochs
 
-    lr_scheduler = WarmupLinearSchedule(optimizer, warmup_steps=int(args.warmup_steps / args.train_batch_size),
-                                        t_total=args.t_total)  # ConstantLRSchedule(optimizer)
+    lr_scheduler = get_constant_schedule_with_warmup(optimizer, num_warmup_steps=int(args.warmup_steps / args.train_batch_size))
+    # lr_scheduler = WarmupLinearSchedule(optimizer, warmup_steps=int(args.warmup_steps / args.train_batch_size),
+    #                                     t_total=args.t_total)  # ConstantLRSchedule(optimizer)
     
     if args.train_batch_size > 1:
         args.eval_steps = -1 if args.eval_steps == -1 else max(1, int(round(args.eval_steps / args.train_batch_size)))
