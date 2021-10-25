@@ -172,9 +172,9 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
             losses.append(loss.mean().detach().cpu())
             for key in loss_parts.keys():
                 if key in losses_parts.keys() and len(losses_parts[key]) > 0:
-                    losses_parts[key] += [lp.detach().cpu() for lp in loss_parts[key]]
+                    losses_parts[key] += loss_parts[key]
                 else:
-                    losses_parts[key] = [lp.detach().cpu() for lp in loss_parts[key]]
+                    losses_parts[key] = loss_parts[key]
             batch_sizes.append(loss.shape[0]) 
 
         all_mention_logits_cuda += [ml.detach().clone() for ml in mention_logits]

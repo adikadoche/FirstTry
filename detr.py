@@ -600,9 +600,9 @@ class MatchingLoss(nn.Module):
             #     cost_coref.append(loss_for_predicted_gold_match)
             #
             # cost_coref = torch.stack(cost_coref).sum() if len(cost_coref) > 0 else 0
-            costs_parts['loss_is_cluster'].append(self.cost_is_cluster * cost_is_cluster)
-            costs_parts['loss_is_mention'].append(self.cost_is_mention * cost_is_mention)
-            costs_parts['loss_coref'].append(self.cost_coref * cost_coref)
+            costs_parts['loss_is_cluster'].append(self.cost_is_cluster * cost_is_cluster.detach().cpu())
+            costs_parts['loss_is_mention'].append(self.cost_is_mention * cost_is_mention.detach().cpu())
+            costs_parts['loss_coref'].append(self.cost_coref * cost_coref.detach().cpu())
             total_cost = self.cost_coref * cost_coref + self.cost_is_cluster * cost_is_cluster + self.cost_is_mention * cost_is_mention
             costs.append(total_cost)
         return torch.stack(costs), costs_parts

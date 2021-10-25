@@ -149,6 +149,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                 for key in recent_losses_parts.keys():
                     wandb.log({key: np.mean(recent_losses_parts[key])}, step=global_step)
                 recent_losses.clear()
+                recent_losses_parts.clear()
                 # wandb.log({'coref_logits_sum_over_clusters': np.concatenate(recent_logits_sums)}, step=global_step)
                 # recent_logits_sums.clear()
 
