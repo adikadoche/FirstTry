@@ -7,6 +7,7 @@
 JOB_NAME=$1
 SCRIPT_PATH=$2
 SCRIPT_PARAMS="${@:3:99999}"
+export GIT_HASH="$(git rev-parse HEAD)"
 LOG_DIR="slurm_logs"
 # SLURM_PARTITION="studentbatch"  # max 1 concurrent job per student
 SLURM_PARTITION="killable"  # allows multiple concurrent jobs per student
@@ -42,6 +43,7 @@ sbatch \
   --nodes=1  \
   --ntasks=1  \
   --gpus=4  \
+  --export GIT_HASH \
   --constraint="geforce_rtx_3090|quadro_rtx_8000|tesla_v100"  \
   ${SCRIPT_PATH} ${SCRIPT_PARAMS}  |  tee ${TEMPFILE_PATH}
 
