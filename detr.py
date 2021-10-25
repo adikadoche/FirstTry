@@ -539,6 +539,7 @@ class MatchingLoss(nn.Module):
         targets_mentions = targets['mentions']
         bs = len(targets_clusters)
         costs = []
+        costs_parts = {'loss_is_cluster':[], 'loss_is_mention':[], 'loss_coref':[]}
         for i in range(bs):
         # Compute the average number of target boxes accross all nodes, for normalization purposes
             coref_logits = outputs["coref_logits"][i].squeeze(0)  # [num_queries, tokens]
@@ -599,9 +600,12 @@ class MatchingLoss(nn.Module):
             #     cost_coref.append(loss_for_predicted_gold_match)
             #
             # cost_coref = torch.stack(cost_coref).sum() if len(cost_coref) > 0 else 0
+            costs_parts['loss_is_cluster'].append(self.cost_is_cluster * cost_is_cluster)
+            costs_parts['loss_is_mention'].append(self.cost_is_mention * cost_is_mention)
+            costs_parts['loss_coref'].append(self.cost_coref * cost_coref)
             total_cost = self.cost_coref * cost_coref + self.cost_is_cluster * cost_is_cluster + self.cost_is_mention * cost_is_mention
             costs.append(total_cost)
-        return torch.stack(costs)
+        return torch.stack(costs), costs_parts
 
         # # Compute all the requested losses
         # losses = {}

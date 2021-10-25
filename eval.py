@@ -113,6 +113,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
     logger.info("  Num steps = %d", try_measure_len(eval_dataloader))
     logger.info("  Batch size = %d", args.eval_batch_size)
     losses = []
+    losses_parts = {}
     batch_sizes = []
     all_cluster_logits_cpu = []
     all_coref_logits_cpu = []
@@ -167,8 +168,13 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
             outputs = model(input_ids, sum_text_len, input_mask, gold_mentions)
             cluster_logits, coref_logits, mention_logits = outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits']
 
-            loss = criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
+            loss, loss_parts = criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
             losses.append(loss.mean().detach().cpu())
+            for key in loss_parts.keys():
+                if key in losses_parts.keys() and len(losses_parts[key]) > 0:
+                    losses_parts[key] += [lp.detach().cpu() for lp in loss_parts[key]]
+                else:
+                    losses_parts[key] = [lp.detach().cpu() for lp in loss_parts[key]]
             batch_sizes.append(loss.shape[0]) 
 
         all_mention_logits_cuda += [ml.detach().clone() for ml in mention_logits]
@@ -179,6 +185,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
         all_coref_logits_cpu += [cl.detach().cpu() for cl in coref_logits]
 
     eval_loss = np.average(losses, weights=batch_sizes)
+    losses_parts = {key:np.average(losses_parts[key]) for key in losses_parts.keys()}
 
     p, r, f1, threshold, metrics = calc_best_avg_f1(all_cluster_logits_cpu, all_coref_logits_cpu, all_mention_logits_cpu, all_gold_clusters, all_gold_mentions)
     results = {'loss': eval_loss,
@@ -190,7 +197,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
                'prec_gold': metrics[1],
                'prec_junk': metrics[2],
                'prec_correct_gold_clusters': metrics[3],
-               'prec_correct_predict_clusters': metrics[4]}
+               'prec_correct_predict_clusters': metrics[4]} | losses_parts
 
 
     print_predictions(all_cluster_logits_cuda, all_coref_logits_cuda, all_mention_logits_cuda, all_gold_clusters, all_gold_mentions, all_input_ids, threshold, args, eval_dataset.tokenizer)

@@ -33,7 +33,7 @@ def tensor_and_remove_empty(batch, gold_mentions, args):
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     epoch_iterator, optimizer: torch.optim.Optimizer, scaler: torch.cuda.amp.GradScaler,
                     args, evaluator, skip_steps, recent_grad_norms, recent_cluster_logits,
-        recent_coref_logits, recent_losses, recent_logits_sums, global_step, lr_scheduler, eval_loader, eval_dataset, threshold):
+        recent_coref_logits, recent_losses, recent_losses_parts, recent_logits_sums, global_step, lr_scheduler, eval_loader, eval_dataset, threshold):
     for step, batch in enumerate(epoch_iterator):
         if skip_steps > 0:
             skip_steps -= 1
@@ -79,7 +79,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), [cl.cpu().detach() for cl in coref_logits], [ml.cpu().detach() for ml in mention_logits],
                                                         threshold, gold_mentions)
             evaluator.update(predicted_clusters, gold_clusters)
-            loss = criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
+            loss, loss_parts = criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
 
         # recent_cluster_logits.append(cluster_logits.detach().cpu().numpy())
         # recent_coref_logits.append(coref_logits.detach().cpu().numpy().flatten())
@@ -107,6 +107,11 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
         recent_grad_norms.append(total_norm.item())
         recent_losses.append(loss.item())
+        for key in loss_parts.keys():
+            if key in recent_losses_parts.keys() and len(recent_losses_parts[key]) > 0:
+                recent_losses_parts[key] += loss_parts[key]
+            else:
+                recent_losses_parts[key] = loss_parts[key]
         epoch_iterator.set_postfix({'loss': loss.item()})
 
         if (step + 1) % args.gradient_accumulation_steps == 0:
@@ -141,6 +146,8 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                 wandb.log({'lr': optimizer.param_groups[0]['lr']}, step=global_step)
                 wandb.log({'lr_bert': optimizer.param_groups[1]['lr']}, step=global_step)
                 wandb.log({'loss': np.mean(recent_losses)}, step=global_step)
+                for key in recent_losses_parts.keys():
+                    wandb.log({key: np.mean(recent_losses_parts[key])}, step=global_step)
                 recent_losses.clear()
                 # wandb.log({'coref_logits_sum_over_clusters': np.concatenate(recent_logits_sums)}, step=global_step)
                 # recent_logits_sums.clear()
@@ -240,6 +247,7 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
     recent_cluster_logits = []
     recent_coref_logits = []
     recent_losses = []
+    recent_losses_parts = {}
     recent_logits_sums = []
     train_iterator = itertools.count() if args.num_train_epochs is None else range(int(args.num_train_epochs))
     train_iterator = tqdm(train_iterator, desc="Epoch", disable=args.local_rank not in [-1, 0])
@@ -255,7 +263,7 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
         epoch_iterator = tqdm(train_loader, desc="Iteration in Epoch {}".format(epoch), disable=args.local_rank not in [-1, 0], leave=False)
         global_step, threshold = train_one_epoch(   #TODO: do I need to let the threshold return to 0.5 every time? or is it correct to update it?
             model, criterion, epoch_iterator, optimizer, scaler, args, evaluator, skip_steps, recent_grad_norms,
-            recent_cluster_logits, recent_coref_logits, recent_losses, recent_logits_sums, global_step,
+            recent_cluster_logits, recent_coref_logits, recent_losses, recent_losses_parts, recent_logits_sums, global_step,
             lr_scheduler, eval_loader, eval_dataset, threshold)
 
         p, r, f1 = evaluator.get_prf()
