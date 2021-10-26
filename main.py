@@ -5,6 +5,9 @@
 import os
 # os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 # os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+import cProfile, pstats
+import pandas as pd
+import io
 
 import logging
 from cli import parse_args
@@ -45,7 +48,7 @@ def main():
         torch.distributed.init_process_group(backend='nccl')
         args.n_gpu = 1
     args.device = device
-    # args.n_gpu = 1   #TODO:REMOVEEEEEEEe
+    args.n_gpu = 1   #TODO:REMOVEEEEEEEe
 
     # Setup logging
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
@@ -84,6 +87,23 @@ def main():
 
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
+    profiler = cProfile.Profile()
+    profiler.enable()
     main()
+    profiler.disable()
+
+    result = io.StringIO()
+    pstats.Stats(profiler,stream=result).sort_stats('tottime').print_stats()
+    result=result.getvalue()
+    # chop the string into a csv-like buffer
+    result='ncalls'+result.split('ncalls')[-1]
+    result='\n'.join([','.join(line.rstrip().split(None,5)) for line in result.split('\n')])
+    # save it to disk
+    
+    with open('test.csv', 'w+') as f:
+        #f=open(result.rsplit('.')[0]+'.csv','w')
+        f.write(result)
+        f.close()
+
 
 # See PyCharm help at https://www.jetbrains.com/help/pycharm/

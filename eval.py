@@ -90,7 +90,8 @@ def make_evaluation(model, criterion, eval_loader, eval_dataset, args):
                 wandb.log({'eval_best_f1_checkpoint': best_checkpoint})
                 wandb.log({'eval_second_best_f1': second_best_f1})
                 wandb.log({'eval_second_best_f1_checkpoint': second_best_checkpoint})
-                time.sleep(args.eval_sleep)
+                # time.sleep(args.eval_sleep)
+                return True
 
 def tensor_and_remove_empty(batch, gold_mentions, args):
     input_ids, input_mask, sum_text_len, gold_clusters, new_gold_mentions = [], [], [], [], []
