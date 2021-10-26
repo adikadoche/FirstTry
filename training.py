@@ -10,7 +10,7 @@ from tqdm import tqdm, trange
 import time, datetime
 from misc import save_on_master, is_main_process
 from utils import create_gold_matrix, calc_predicted_clusters, create_junk_gold_mentions, try_measure_len
-from optimization import WarmupLinearSchedule
+from optimization import WarmupLinearSchedule, WarmupExponentialSchedule
 import itertools
 from metrics import CorefEvaluator
 from utils import load_from_checkpoint, save_checkpoint
@@ -219,8 +219,10 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
         args.t_total = len(train_loader) // args.gradient_accumulation_steps * args.num_train_epochs
 
     # lr_scheduler = get_constant_schedule_with_warmup(optimizer, num_warmup_steps=int(args.warmup_steps / args.train_batch_size))
-    lr_scheduler = WarmupLinearSchedule(optimizer, warmup_steps=int(args.warmup_steps / args.train_batch_size),
-                                        t_total=args.t_total)  # ConstantLRSchedule(optimizer)
+    # lr_scheduler = WarmupLinearSchedule(optimizer, warmup_steps=int(args.warmup_steps / args.train_batch_size),
+    #                                     t_total=args.t_total)  # ConstantLRSchedule(optimizer)
+    lr_scheduler = WarmupExponentialSchedule(optimizer, warmup_steps=int(args.warmup_steps / args.train_batch_size),
+                                        gamma=0.99998)  # ConstantLRSchedule(optimizer)
     
     if args.train_batch_size > 1:
         args.eval_steps = -1 if args.eval_steps == -1 else max(1, int(round(args.eval_steps / args.train_batch_size)))
