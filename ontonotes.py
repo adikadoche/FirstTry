@@ -31,36 +31,24 @@ class OntonotesDataset(Dataset):
                 "You are instantiating a new tokenizer from scratch. This is not supported, but you can do it from another script, save it,"
                 "and load it from here, using --tokenizer_name"
             )
-
-
-        # clusters_counts = []
-        # for x in self:
-        #     clusters = x[-1]
-        #     clusters_counts.append(len(clusters))
-        #
-        # import pickle
-        # pickle.dump(clusters_counts, open("clusters_counts.p", "wb"))
-        # print(clusters_counts)
+        self.tensorized_examples_training, self.tensorized_examples_eval = self.get_all_tensorized_examples()
 
 
     def __len__(self):
         return len(self.examples)
 
     def __getitem__(self, index):
-        example = self.examples[index]
-        tensorized_example = self.tensorize_example(example, self.is_training)
-        return tensorized_example
+        return self.tensorized_examples_training[index] if self.is_training else self.tensorized_examples_eval[index]
 
-    def tensorize_example(self, example, is_training):
-        
-                # d = json.loads(line.strip())
-                # doc_key = d["doc_key"]
-                # input_words = flatten_list_of_lists(d["sentences"])
-                # clusters = d["clusters"]
-                # max_mention_num = max(max_mention_num, len(flatten_list_of_lists(clusters)))
-                # max_cluster_size = max(max_cluster_size, max(len(cluster) for cluster in clusters) if clusters else 0)
-                # max_num_clusters = max(max_num_clusters, len(clusters) if clusters else 0)
-                # speakers = flatten_list_of_lists(d["speakers"])
+    def get_all_tensorized_examples(self):
+        tensorized_training, tensorized_evel = [], []
+        for example in self.examples:
+            example_train, example_eval = self.tensorize_example(example)
+            tensorized_training.append(example_train)
+            tensorized_evel.append(example_eval)
+        return tensorized_training, tensorized_evel
+
+    def tensorize_example(self, example):
         tensorized_example = {}
         old_clusters = example["clusters"]
         sentences = example["sentences"]
@@ -69,6 +57,59 @@ class OntonotesDataset(Dataset):
         # assert num_words == len(speakers), (num_words, len(speakers))
         speaker_dict = self.get_speaker_dict(self.flatten(speakers))
         sentence_map = [] #example['sentence_map']
+
+
+
+
+        max_sentence_length = self.args.max_segment_len
+
+        input_ids, input_mask, speaker_ids, text_len = [], [], [], []
+        word_idx = 0
+        total_tokens = 0
+        word_idx_to_end_token_idx = dict()
+        word_idx_to_start_token_idx = dict()
+        sent_idx = 0
+        while sent_idx < len(sentences):
+            concat_sentence = []
+            concat_speaker = []
+            sentence = sentences[sent_idx]
+            speaker = speakers[sent_idx]
+            current_encoded = self.tokenizer.encode(' '.join(sentence))
+            total_sent_encoded = 1
+            current_len_encoded = len(current_encoded)
+            while current_len_encoded < max_sentence_length - total_sent_encoded and sent_idx < len(sentences):
+                concat_sentence += sentence
+                concat_speaker += speaker
+                sent_idx += 1
+                if sent_idx >= len(sentences):
+                    break
+                sentence = sentences[sent_idx]
+                speaker = speakers[sent_idx]
+                total_sent_encoded += 1
+                current_encoded = self.tokenizer.encode(' '.join(sentence))
+                current_len_encoded += len(current_encoded)
+            sent_input_ids = self.tokenizer.encode(' '.join(concat_sentence))
+            cur_text_len = len(sent_input_ids)
+            text_len.append(cur_text_len)
+
+            speaker_per_token = ['[SPL]']
+            for i in range(len(concat_sentence)):
+                word = concat_sentence[i]
+                if i > 0:
+                    word = ' ' + word
+                speaker = concat_speaker[i]
+                token_ids = self.tokenizer.tokenize(word)
+                word_idx_to_start_token_idx[word_idx] = total_tokens + 1  # +1 for <s>
+                total_tokens += len(token_ids)
+                word_idx_to_end_token_idx[word_idx] = total_tokens  # old_seq_len + 1 (for <s>) + len(tokenized_word) - 1 (we start counting from zero) = len(token_ids)
+                speaker_per_token += [speaker] * len(token_ids)
+                word_idx += 1
+            speaker_per_token += ['[SPL]']
+
+
+
+
+
 
 
         # pronoun_ids = []
@@ -86,7 +127,10 @@ class OntonotesDataset(Dataset):
             concat_speaker = []
             sentence = sentences[sent_idx]
             speaker = speakers[sent_idx]
-            while len(self.tokenizer.encode(' '.join(concat_sentence + sentence))) < max_sentence_length and sent_idx < len(sentences):
+            current_encoded = self.tokenizer.encode(' '.join(sentence))
+            total_sent_encoded = 1
+            current_len_encoded = len(current_encoded)
+            while current_len_encoded < max_sentence_length - total_sent_encoded and sent_idx < len(sentences):
                 concat_sentence += sentence
                 concat_speaker += speaker
                 sent_idx += 1
@@ -94,6 +138,9 @@ class OntonotesDataset(Dataset):
                     break
                 sentence = sentences[sent_idx]
                 speaker = speakers[sent_idx]
+                total_sent_encoded += 1
+                current_encoded = self.tokenizer.encode(' '.join(sentence))
+                current_len_encoded += len(current_encoded)
             sent_input_ids = self.tokenizer.encode(' '.join(concat_sentence))
             cur_text_len = len(sent_input_ids)
             text_len.append(cur_text_len)
@@ -154,12 +201,18 @@ class OntonotesDataset(Dataset):
         tensorized_example['gold_ends'] = gold_ends
         tensorized_example['cluster_ids'] = cluster_ids
         tensorized_example['sentence_map'] = sentence_map
+        tensorized_example_eval = tensorized_example
 
-        if is_training and len(input_ids) > self.args.max_training_sentences:
-            tensorized_example = self.truncate_example(tensorized_example)
-
+        if len(input_ids) > self.args.max_training_sentences:
+            tensorized_example_eval = self.truncate_example(tensorized_example)
 
         # calc clusters after truncation
+        tensorized_example['clusters'] = self.calc_clusters(tensorized_example)
+        tensorized_example_eval['clusters'] = self.calc_clusters(tensorized_example_eval)
+
+        return tensorized_example, tensorized_example_eval
+
+    def calc_clusters(self, tensorized_example):
         if len(tensorized_example['cluster_ids']) == 0:
             clusters = []
         else:
@@ -168,10 +221,7 @@ class OntonotesDataset(Dataset):
             for start, end, cluster_id in zip(tensorized_example['gold_starts'], tensorized_example['gold_ends'], cluster_ids_int):
                 clusters[cluster_id-1].append((start, end))
             clusters = [c for c in clusters if len(c) > 0]
-        
-        tensorized_example['clusters'] = clusters
-
-        return tensorized_example
+        return clusters
 
     def tensorize_mentions(self, mentions):
         if len(mentions) > 0:
