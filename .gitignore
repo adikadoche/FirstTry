@@ -5,3 +5,4 @@ venv
 slurm_logs
 .vscode/launch.json
 wandb/*
+test.csv

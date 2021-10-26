@@ -103,9 +103,9 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             scaler.scale(loss).backward()
         else:
             loss.backward()
-        total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+        # total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
 
-        recent_grad_norms.append(total_norm.item())
+        # recent_grad_norms.append(total_norm.item())
         recent_losses.append(loss.item())
         for key in loss_parts.keys():
             if key in recent_losses_parts.keys() and len(recent_losses_parts[key]) > 0:
