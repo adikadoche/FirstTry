@@ -82,28 +82,30 @@ def main():
 
     if args.do_train:
         train_dataset, train_sampler, train_loader, args.train_batch_size = get_data_objects(args, args.train_file, True)
-        global_step = train(args, model, criterion, train_loader, eval_loader, eval_dataset)
+        if args.do_profile:
+            profiler = cProfile.Profile()
+            profiler.enable()
+            global_step = train(args, model, criterion, train_loader, eval_loader, eval_dataset)
+            profiler.disable()
+            result = io.StringIO()
+            pstats.Stats(profiler,stream=result).sort_stats('tottime').print_stats()
+            result=result.getvalue()
+            # chop the string into a csv-like buffer
+            result='ncalls'+result.split('ncalls')[-1]
+            result='\n'.join([','.join(line.rstrip().split(None,5)) for line in result.split('\n')])
+            # save it to disk
+            
+            with open('test.csv', 'w+') as f:
+                #f=open(result.rsplit('.')[0]+'.csv','w')
+                f.write(result)
+                f.close()
+        else:
+            global_step = train(args, model, criterion, train_loader, eval_loader, eval_dataset)
     make_evaluation(model, criterion, eval_loader, eval_dataset, args) #TODO: report_eval won't work in here because of missing parameters
 
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
-    profiler = cProfile.Profile()
-    profiler.enable()
     main()
-    profiler.disable()
-
-    result = io.StringIO()
-    pstats.Stats(profiler,stream=result).sort_stats('tottime').print_stats()
-    result=result.getvalue()
-    # chop the string into a csv-like buffer
-    result='ncalls'+result.split('ncalls')[-1]
-    result='\n'.join([','.join(line.rstrip().split(None,5)) for line in result.split('\n')])
-    # save it to disk
-    
-    with open('test.csv', 'w+') as f:
-        #f=open(result.rsplit('.')[0]+'.csv','w')
-        f.write(result)
-        f.close()
 
 
 # See PyCharm help at https://www.jetbrains.com/help/pycharm/

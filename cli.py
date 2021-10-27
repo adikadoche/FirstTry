@@ -63,6 +63,7 @@ def parse_args():
                         help="Where do you want to store the pre-trained models downloaded from s3")
     parser.add_argument("--max_seq_length", default=-1, type=int)
 
+    parser.add_argument("--do_profile", action="store_true", help="Whether to run profiling.")
     parser.add_argument("--do_train", action="store_true", help="Whether to run training.")
     parser.add_argument("--add_junk", action="store_true", help="whether to use junk spans")
     parser.add_argument("--eval", type=str, choices=['no', 'specific', 'all', 'vanilla'], default='no')
