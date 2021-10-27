@@ -38,7 +38,7 @@ class OntonotesDataset(Dataset):
         return len(self.examples)
 
     def __getitem__(self, index):
-        return self.tensorized_examples_training[index] if self.is_training else self.tensorized_examples_eval[index]
+        return self.tensorized_examples[index]
 
     def get_all_tensorized_examples(self):
         tensorized_examples = []
