@@ -95,7 +95,6 @@ class OntonotesDataset(Dataset):
             current_encoded, word_idx, speaker_per_token, tmp_word_idx_to_start_token_idx, tmp_word_idx_to_end_token_idx, total_tokens = \
                 self.get_tokenized_words_and_new_indices(sentence, speaker, total_tokens, word_idx, is_first)
 
-            total_sent_encoded = 1
             concat_tokens = [TOKENS_START] + current_encoded
             speaker_per_token = ['[SPL]'] + speaker_per_token
             word_idx_to_start_token_idx |= tmp_word_idx_to_start_token_idx
@@ -103,7 +102,7 @@ class OntonotesDataset(Dataset):
             current_len_encoded = len(current_encoded)+2
             sent_idx += 1
 
-            while current_len_encoded + len(current_encoded) < max_sentence_length - total_sent_encoded  and sent_idx < len(sentences):
+            while current_len_encoded < max_sentence_length and sent_idx < len(sentences):
                 if not is_first:
                     concat_tokens += current_encoded
                     word_idx = tmp_word_idx
@@ -121,8 +120,7 @@ class OntonotesDataset(Dataset):
                 speaker = speakers[sent_idx]
                 current_encoded, tmp_word_idx, tmp_speaker_per_token, tmp_word_idx_to_start_token_idx, tmp_word_idx_to_end_token_idx, tmp_total_tokens = \
                     self.get_tokenized_words_and_new_indices(sentence, speaker, total_tokens, word_idx, is_first)
-                current_len_encoded += len(current_encoded)+2
-                total_sent_encoded += 1
+                current_len_encoded += len(current_encoded)
 
             concat_tokens += [TOKENS_END]
             total_tokens += 1
@@ -207,6 +205,7 @@ class OntonotesDataset(Dataset):
 
         sentence_offset = random.randint(0,
                                          num_sentences - max_training_sentences) if sentence_offset is None else sentence_offset
+        sentence_offset = 1
         word_offset = sum(tensorized_example['text_len'][:sentence_offset])
         num_words = sum(tensorized_example['text_len'][sentence_offset:sentence_offset + max_training_sentences])
         tensorized_example['input_ids'] = tensorized_example['input_ids'][sentence_offset:sentence_offset + max_training_sentences, :]
