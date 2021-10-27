@@ -563,7 +563,7 @@ class MatchingLoss(nn.Module):
             cost_is_cluster = F.binary_cross_entropy(cluster_logits, gold_is_cluster, weight=weight_cluster)
 
             if sum(targets_mentions[i].shape) == 0:
-                cost_is_mention = 0
+                cost_is_mention = torch.tensor(0)
             else:
                 if sum(mention_logits.shape) == 0:
                     mention_logits = mention_logits.reshape(1)
