@@ -93,6 +93,9 @@ class DETR(nn.Module):
         input_ids_cat = torch.cat(input_ids)
         mask_cat = torch.cat(mask)
         longformer_emb = self.backbone(input_ids_cat, attention_mask=mask_cat)[0]  # Getting representation for each token in the text
+        longformer_emb_size = longformer_emb.shape[-1]
+        # filter out masked tokens
+        longformer_emb = torch.masked_select(longformer_emb, mask_cat.unsqueeze(-1)==1).reshape(-1, longformer_emb_size)
 
         if self.args.random_queries:
             raw_query_embed = torch.normal(torch.zeros_like(self.query_embed.weight), 1) * self.query_sigma + self.query_mu #raw_query_embed = torch.normal(torch.zeros_like(self.query_embed.weight), 0.5)
@@ -104,7 +107,7 @@ class DETR(nn.Module):
         else:
             span_starts = [torch.tensor([m[0] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
             span_ends = [torch.tensor([m[1] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
-            span_emb = self.get_span_emb(longformer_emb, span_starts, span_ends, sum_text_len, mask_cat)  # [mentions, emb']
+            span_emb = self.get_span_emb(longformer_emb, span_starts, span_ends, sum_text_len)  # [mentions, emb']
             span_emb = self.span_proj(span_emb) # [mentions, emb]
             span_emb, span_mask = self.create_mask(span_emb, [len(ss) for ss in span_starts])
             hs, memory = self.transformer(span_emb, span_mask, raw_query_embed)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
@@ -206,14 +209,10 @@ class DETR(nn.Module):
 
         return cluster_logits, coref_logits, mention_logits_masked
 
-    def get_span_emb(self, longformer_emb, span_starts, span_ends, sum_text_len, mask_cat):
+    def get_span_emb(self, context_outputs, span_starts, span_ends, sum_text_len):
         max_mentions = max([len(s) for s in span_starts])
-        sum_mask = mask_cat.sum(1)
-        context_outputs = []
-        for i, sm in enumerate(sum_mask):
-            context_outputs.append(longformer_emb[i][:sm])
-        context_outputs = torch.cat(context_outputs)
-            
+        # span_mask_list = []
+
         span_emb_list = []
         end_ind = 0
         for i in range(len(sum_text_len)):
