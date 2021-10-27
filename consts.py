@@ -3,6 +3,8 @@ SPEAKER_END = 22560  # 'Ġ###'
 NULL_ID_FOR_COREF = 0
 TOKENS_PAD = 1
 SPEAKER_PAD = 0
+TOKENS_END = 2
+TOKENS_START = 0
 
 OUT_KEYS = ['pred_logits', 'pred_clusters', 'pred_is_cluster', 'aux_outputs']
 
