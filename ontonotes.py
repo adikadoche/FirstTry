@@ -205,7 +205,6 @@ class OntonotesDataset(Dataset):
 
         sentence_offset = random.randint(0,
                                          num_sentences - max_training_sentences) if sentence_offset is None else sentence_offset
-        sentence_offset = 1
         word_offset = sum(tensorized_example['text_len'][:sentence_offset])
         num_words = sum(tensorized_example['text_len'][sentence_offset:sentence_offset + max_training_sentences])
         tensorized_example['input_ids'] = tensorized_example['input_ids'][sentence_offset:sentence_offset + max_training_sentences, :]
