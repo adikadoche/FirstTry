@@ -101,9 +101,9 @@ class OntonotesDataset(Dataset):
             word_idx_to_start_token_idx |= tmp_word_idx_to_start_token_idx
             word_idx_to_end_token_idx |= tmp_word_idx_to_end_token_idx
             current_len_encoded = len(current_encoded)+2
+            sent_idx += 1
 
             while current_len_encoded + len(current_encoded) < max_sentence_length - total_sent_encoded  and sent_idx < len(sentences):
-                sent_idx += 1
                 if not is_first:
                     concat_tokens += current_encoded
                     word_idx = tmp_word_idx
@@ -111,6 +111,7 @@ class OntonotesDataset(Dataset):
                     word_idx_to_start_token_idx |= tmp_word_idx_to_start_token_idx
                     word_idx_to_end_token_idx |= tmp_word_idx_to_end_token_idx
                     total_tokens = tmp_total_tokens
+                    sent_idx += 1
                 is_first = False
 
                 if sent_idx >= len(sentences):
