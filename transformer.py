@@ -44,7 +44,7 @@ class Transformer(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def forward(self, src, mask, query_embed, pos_embed=None):
+    def forward(self, src, mask, query_embed, gold_matrix, pos_embed=None):
         # flatten NxMxE to ExNxM
         bs, m, e = src.shape
         src = src.permute(1,0,2)
@@ -53,13 +53,24 @@ class Transformer(nn.Module):
         binary_mask = mask == 0
         query_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)
 
-        # tgt = torch.zeros_like(query_embed)
         tgt = query_embed
         memory = self.encoder(src, src_key_padding_mask=binary_mask, pos=pos_embed)
+
+        new_tgt = self.create_new_tgt_and_mask(tgt, src, memory, gold_matrix)
+
         hs = self.decoder(tgt, memory, memory_key_padding_mask=binary_mask,
                           pos=pos_embed, query_pos=query_embed)
 
         return hs.transpose(1, 2), memory.transpose(0, 1)
+
+    def create_new_tgt_and_mask(self, tgt, src, memory, gold_matrix):
+        text = src
+        gold_matrix_cumsum = gold_matrix.cumsum()
+        #TODO: sort goldmatrix by first mention
+        new_tgt = []
+        for i in range(tgt.shape[-1]):
+            new_tgt.append(tgt[:,:,i])
+            new_tgt.append(text[:,:,gold_matrix[i].ind])
 
 
 class TransformerEncoder(nn.Module):
