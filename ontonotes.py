@@ -152,7 +152,6 @@ class OntonotesDataset(Dataset):
         genre = GENRES.get(doc_key, 0)
 
         genre = self.encode_genre_binary(genre)
-        speaker_ids = self.encode_speaker_binary(speaker_ids)
 
         gold_starts, gold_ends = self.tensorize_mentions(gold_mentions)
         tensorized_example['input_ids'] = input_ids
@@ -167,6 +166,8 @@ class OntonotesDataset(Dataset):
 
         if is_training and len(input_ids) > self.args.max_training_sentences:
             tensorized_example = self.truncate_example(tensorized_example)
+        
+        tensorized_example['speaker_ids'] = self.encode_speaker_binary(tensorized_example['speaker_ids'])
 
         # calc clusters after truncation
         if len(tensorized_example['cluster_ids']) == 0:
