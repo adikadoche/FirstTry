@@ -170,8 +170,8 @@ class DETR(nn.Module):
         # memory [bs, tokens, emb]
 
         cluster_logits = self.is_cluster(last_hs).sigmoid()  # [bs, num_queries, 1]
-        if self.args.add_junk:
-            mention_logits = self.mention_classifier(memory).sigmoid()  # [bs, tokens, 1]
+        # if self.args.add_junk:
+        mention_logits = self.mention_classifier(memory).sigmoid()  # [bs, tokens, 1]
 
         #TODO: check cross attention? (without values)
 
@@ -203,8 +203,8 @@ class DETR(nn.Module):
             cur_coref_logits = coref_logits_unnorm.sigmoid()
             coref_logits.append(cur_coref_logits)
 
-            if self.args.add_junk:
-                mention_logits_masked.append(mention_logits[i][span_mask[i]==1])
+            # if self.args.add_junk:
+            mention_logits_masked.append(mention_logits[i][span_mask[i]==1])
 
         # if not is_gold_mention:  #TODO: do I want this?
         #     coref_logits = coref_logits * cluster_logits
@@ -553,8 +553,8 @@ class MatchingLoss(nn.Module):
         # Compute the average number of target boxes accross all nodes, for normalization purposes
             coref_logits = outputs["coref_logits"][i].squeeze(0)  # [num_queries, tokens]
             cluster_logits = outputs["cluster_logits"][i].squeeze() # [num_queries]
-            if self.args.add_junk:
-                mention_logits = outputs["mention_logits"][i].squeeze() # [tokens]
+            # if self.args.add_junk:
+            mention_logits = outputs["mention_logits"][i].squeeze() # [tokens]
             num_queries, doc_len = coref_logits.shape
             #TODO: normalize according to number of clusters? (identical to DETR)
 
@@ -571,15 +571,15 @@ class MatchingLoss(nn.Module):
                 weight_cluster[matched_predicted_cluster_id[i]] = 1
             cost_is_cluster = F.binary_cross_entropy(cluster_logits, gold_is_cluster, weight=weight_cluster)
 
-            cost_is_mention = torch.tensor(0)
-            if self.args.add_junk:
-                if sum(targets_mentions[i].shape) == 0:
-                    cost_is_mention = torch.tensor(0)
-                else:
-                    if sum(mention_logits.shape) == 0:
-                        mention_logits = mention_logits.reshape(1)
-                    weight_mention = targets_mentions[i] + self.eos_coef * (1 - targets_mentions[i])
-                    cost_is_mention = F.binary_cross_entropy(mention_logits, targets_mentions[i], weight=weight_mention)
+            # cost_is_mention = torch.tensor(0)
+            # if self.args.add_junk:
+            if sum(targets_mentions[i].shape) == 0:
+                cost_is_mention = torch.tensor(0)
+            else:
+                if sum(mention_logits.shape) == 0:
+                    mention_logits = mention_logits.reshape(1)
+                weight_mention = targets_mentions[i] + self.eos_coef * (1 - targets_mentions[i])
+                cost_is_mention = F.binary_cross_entropy(mention_logits, targets_mentions[i], weight=weight_mention)
 
             cost_coref = 0
             if matched_predicted_cluster_id[i] is not False:

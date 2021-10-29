@@ -221,14 +221,11 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, thresh
             cur_cluster_bool = cluster_bools[i]
             cur_coref_logits = coref_logits[i]
             
-            cur_cluster_bool = np.tile(cur_cluster_bool.reshape([1, -1, 1]), (1, 1, cur_coref_logits.shape[-1]))
-            cluster_mention_mask = cur_cluster_bool
-
-            if len(mention_logits) > 0:
-                cur_mention_bools = mention_logits[i].squeeze(-1).numpy() >= threshold
+            cur_mention_bools = mention_logits[i].squeeze(-1).numpy() >= threshold
             
-                cur_mention_bools = np.tile(cur_mention_bools.reshape([1, 1, -1]), (1, cur_cluster_bool.shape[1], 1))
-                cluster_mention_mask = cur_mention_bools & cur_cluster_bool
+            cur_mention_bools = np.tile(cur_mention_bools.reshape([1, 1, -1]), (1, cur_cluster_bool.shape[0], 1))
+            cur_cluster_bool = np.tile(cur_cluster_bool.reshape([1, -1, 1]), (1, 1, cur_coref_logits.shape[-1]))
+            cluster_mention_mask = cur_mention_bools & cur_cluster_bool
 
             cluster_mention_mask = cluster_mention_mask.astype(int)
             
@@ -274,13 +271,9 @@ def calc_best_avg_f1(all_cluster_logits, all_coref_logits, all_mention_logits, a
 def evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, threshold, all_gold_mentions):
     evaluator = CorefEvaluator()
     metrics = [0] * 5
-    for i, (cluster_logits, coref_logits, gold_clusters, gold_mentions) in enumerate(
-            zip(all_cluster_logits, all_coref_logits, all_gold_clusters, all_gold_mentions)):
-        if len(all_mention_logits) > 0:
-            mention_logits = all_mention_logits[i]
-            predicted_clusters = calc_predicted_clusters(cluster_logits.unsqueeze(0), coref_logits, mention_logits.unsqueeze(0), threshold, [gold_mentions])
-        else:
-            predicted_clusters = calc_predicted_clusters(cluster_logits.unsqueeze(0), coref_logits, [], threshold, [gold_mentions])
+    for i, (cluster_logits, coref_logits, mention_logits, gold_clusters, gold_mentions) in enumerate(
+            zip(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, all_gold_mentions)):
+        predicted_clusters = calc_predicted_clusters(cluster_logits.unsqueeze(0), coref_logits, mention_logits.unsqueeze(0), threshold, [gold_mentions])
         # prec_correct_mentions, prec_gold, prec_junk, prec_correct_gold_clusters, prec_correct_predict_clusters = \
         #     get_more_metrics(predicted_clusters, gold_clusters, gold_mentions)  #TODO: predicted_clusters[0]?
         # metrics[0] += prec_correct_mentions / len(all_cluster_logits)
