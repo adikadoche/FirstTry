@@ -16,3 +16,5 @@ PRONOUNS = {'i', 'me', 'my', 'mine', 'myself',
             'it', 'its', 'itself',
             'they', 'them', 'their', 'theirs', 'themself', 'themselves',
             'this', 'these', 'that', 'those'}
+
+GENRES =  {g: i+1 for i, g in enumerate(["bc", "bn", "mz", "nw", "pt", "tc", "wb"])}

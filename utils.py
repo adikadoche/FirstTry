@@ -366,3 +366,17 @@ def create_junk_gold_mentions(gold_mentions, text_len, device):
         real_mentions_bools.append(torch.tensor([int(ind < len(gold_mentions[i])) for ind in indices], dtype=torch.float, device=device))
 
     return all_mentions, real_mentions_bools
+
+
+def tensor_and_remove_empty(batch, gold_mentions, args):
+    input_ids, input_mask, sum_text_len, gold_clusters, speaker_ids, genre, new_gold_mentions = [], [], [], [], [], [], []
+    for i in range(len(gold_mentions)):
+        if len(gold_mentions[i]) > 0:
+            input_ids.append(torch.tensor(batch['input_ids'][i]).to(args.device))
+            input_mask.append(torch.tensor(batch['input_mask'][i]).to(args.device))
+            speaker_ids.append(torch.tensor(batch['speaker_ids'][i]).to(args.device))
+            genre.append(torch.tensor(batch['genre'][i]).to(args.device))
+            sum_text_len.append(sum(batch['text_len'][i]))
+            gold_clusters.append(batch['clusters'][i])
+            new_gold_mentions.append(gold_mentions[i])
+    return input_ids, input_mask, sum_text_len, gold_clusters, new_gold_mentions, genre, speaker_ids
