@@ -24,7 +24,6 @@ wandb.init(project='coref-detr', entity='adizicher')
 
 
 def main():
-    print("FML")
     args = parse_args()
     if args.resume_from:
         args.output_dir = args.resume_from

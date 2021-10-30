@@ -89,14 +89,16 @@ class DETR(nn.Module):
                - "aux_outputs": Optional, only returned when auxilary losses are activated. It is a list of
                                 dictionnaries containing the two above keys for each decoder layer.
         """
-        # input_ids, mask = self.make_batch_same_len(input_ids, mask, sum_text_len)
-        input_ids_cat = torch.cat(input_ids)
-        mask_cat = torch.cat(mask)
+        input_ids_cat, mask_cat = self.make_batch_same_len(input_ids, mask, sum_text_len)
+        # print(f'input_ids {input_ids_cat.shape}')
+
         longformer_emb = self.backbone(input_ids_cat, attention_mask=mask_cat)[0]  # Getting representation for each token in the text
 
         longformer_emb_size = longformer_emb.shape[-1]
         # filter out masked tokens
-        longformer_emb = torch.masked_select(longformer_emb, mask_cat.unsqueeze(-1)==1).reshape(-1, longformer_emb_size)
+        longfomer_no_pad_list = []
+        for i in range(len(sum_text_len)):
+            longfomer_no_pad_list.append(torch.masked_select(longformer_emb[i], mask_cat[i].unsqueeze(-1)==1).reshape(-1, longformer_emb_size))
 
         if self.args.random_queries:
             raw_query_embed = torch.normal(torch.zeros_like(self.query_embed.weight), 1) * self.query_sigma + self.query_mu #raw_query_embed = torch.normal(torch.zeros_like(self.query_embed.weight), 0.5)
@@ -108,9 +110,10 @@ class DETR(nn.Module):
         else:
             span_starts = [torch.tensor([m[0] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
             span_ends = [torch.tensor([m[1] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
-            span_emb = self.get_span_emb(longformer_emb, span_starts, span_ends, sum_text_len)  # [mentions, emb']
+            # print(f'longformer_emb {longformer_emb.shape}')
+            # print(f'span_starts[0] {span_starts[0].shape} len {len(span_starts)}')
+            span_emb, span_mask = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends, sum_text_len)  # [mentions, emb']
             span_emb = self.span_proj(span_emb) # [mentions, emb]
-            span_emb, span_mask = self.create_mask(span_emb, [len(ss) for ss in span_starts])
             hs, memory = self.transformer(span_emb, span_mask, raw_query_embed)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
 
 
@@ -131,6 +134,25 @@ class DETR(nn.Module):
                 "mention_logits": mention_logits}
                 # "aux_coref_logits": aux_coref_logits}
         return out
+
+    def make_batch_same_len(self, input_ids, mask, sum_text_len):
+        input_ids_pads = torch.ones(1, self.args.max_segment_len, dtype=torch.int, device=input_ids[0].device) * TOKENS_PAD
+        mask_pads = torch.zeros(1, self.args.max_segment_len, dtype=torch.int, device=input_ids[0].device)
+
+        max_seq_num = np.argmax(sum_text_len)
+        seq_num = input_ids[max_seq_num].shape[0]
+        #TODO: change to martix mult and sum
+        new_input_ids = []
+        new_maks = []
+        for i in range(len(input_ids)):
+            if input_ids[i].shape[0] < seq_num:
+                input_ids[i] = torch.cat([input_ids[i], input_ids_pads.detach().clone().repeat([seq_num - input_ids[i].shape[0], 1])])
+                mask[i] = torch.cat([mask[i], mask_pads.detach().clone().repeat([seq_num - mask[i].shape[0], 1])])
+            new_input_ids.append(input_ids[i].reshape([1, seq_num*self.args.max_segment_len]))
+            new_maks.append(mask[i].reshape([1, seq_num*self.args.max_segment_len]))
+        input_ids = torch.cat(new_input_ids)
+        mask = torch.cat(new_maks)
+        return input_ids, mask
 
     def create_mask(self, span_emb, mention_num):
         new_span_emb = []
@@ -208,19 +230,19 @@ class DETR(nn.Module):
 
         return cluster_logits, coref_logits, mention_logits_masked
 
-    def get_span_emb(self, context_outputs, span_starts, span_ends, sum_text_len):
-        max_mentions = max([len(s) for s in span_starts])
-        # span_mask_list = []
+    def get_span_emb(self, context_outputs_list, span_starts, span_ends, sum_text_len):
+        max_mentions = max([len(s) for s in span_starts])+50
+        span_mask_list = []
         span_emb_list = []
-        end_ind = 0
+        # print(f'context outputs {context_outputs.shape}')
+        # print(f'span_starts {span_starts[0].shape}')
         for i in range(len(sum_text_len)):
-            start_ind = end_ind
-            end_ind += sum_text_len[i]
             span_emb_construct = []
-            span_start_emb = context_outputs[start_ind + span_starts[i]] # [k, emb]
+            # print(f'span_starts max {span_starts[i].max()} min {span_starts[i].min()}')
+            span_start_emb = context_outputs_list[i][span_starts[i]] # [k, emb]
             span_emb_construct.append(span_start_emb)
 
-            span_end_emb = context_outputs[start_ind + span_ends[i]]  # [k, emb]
+            span_end_emb = context_outputs_list[i][span_ends[i]]  # [k, emb]
             span_emb_construct.append(span_end_emb)
 
             span_width = (1 + span_ends[i] - span_starts[i]).clamp(max=30)  # [k]
@@ -233,19 +255,19 @@ class DETR(nn.Module):
             span_emb_construct.append(span_width_emb)
 
             # if self.config["model_heads"]:
-            mention_word_score = self.get_masked_mention_word_scores(context_outputs[start_ind:end_ind], span_starts[i], span_ends[i])  # [K, T]
-            head_attn_reps = torch.matmul(mention_word_score, context_outputs[start_ind:end_ind])  # [K, emb]
+            mention_word_score = self.get_masked_mention_word_scores(context_outputs_list[i], span_starts[i], span_ends[i])  # [K, T]
+            head_attn_reps = torch.matmul(mention_word_score, context_outputs_list[i])  # [K, emb]
             span_emb_construct.append(head_attn_reps)
             span_emb_cat = torch.cat(span_emb_construct, 1)
-            # span_mask = torch.cat([torch.ones(span_emb_cat.shape[0], dtype=torch.int, device=context_outputs.device), \
-            #     torch.zeros(max_mentions-span_emb_cat.shape[0], dtype=torch.int, device=context_outputs.device)])
-            span_emb_cat = torch.cat([span_emb_cat, torch.zeros(max_mentions-span_emb_cat.shape[0], span_emb_cat.shape[1], dtype=torch.float, device=context_outputs.device)])
+            span_mask = torch.cat([torch.ones(span_emb_cat.shape[0], dtype=torch.int, device=context_outputs_list[i].device), \
+                torch.zeros(max_mentions-span_emb_cat.shape[0], dtype=torch.int, device=context_outputs_list[i].device)])
+            span_emb_cat = torch.cat([span_emb_cat, torch.zeros(max_mentions-span_emb_cat.shape[0], span_emb_cat.shape[1], dtype=torch.float, device=context_outputs_list[i].device)])
 
             span_emb_list.append(span_emb_cat.unsqueeze(0))  
-            # span_mask_list.append(span_mask.unsqueeze(0))  
+            span_mask_list.append(span_mask.unsqueeze(0))  
         span_emb_tensor = torch.cat(span_emb_list, 0)
-        # span_mask_tensor = torch.cat(span_mask_list, 0)
-        return span_emb_tensor#, span_mask_tensor  # [k, emb], [K, T]
+        span_mask_tensor = torch.cat(span_mask_list, 0)
+        return span_emb_tensor, span_mask_tensor  # [k, emb], [K, T]
 
     def get_masked_mention_word_scores(self, encoded_doc, span_starts, span_ends):
         num_words = encoded_doc.shape[0]  # T
@@ -562,7 +584,7 @@ class MatchingLoss(nn.Module):
             cost_is_cluster = F.binary_cross_entropy(cluster_logits, gold_is_cluster, weight=weight_cluster)
 
             if sum(targets_mentions[i].shape) == 0:
-                cost_is_mention = 0
+                cost_is_mention = torch.tensor(0)
             else:
                 if sum(mention_logits.shape) == 0:
                     mention_logits = mention_logits.reshape(1)

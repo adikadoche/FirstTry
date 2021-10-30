@@ -205,6 +205,7 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
     # multi-gpu training (should be after apex fp16 initialization)
     if args.n_gpu > 1:
         model = torch.nn.DataParallel(model)
+        print("FML")
 
     # Distributed training (should be after apex fp16 initialization)
     if args.local_rank != -1:
