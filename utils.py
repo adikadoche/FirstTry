@@ -184,9 +184,12 @@ def create_gold_matrix(device, doc_len, num_queries, gold_clusters, gold_mention
 def make_mentions_from_clustered_tokens(self, coref_logits):
     pass
 
-def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, threshold, gold_mentions: List):
+def calc_predicted_clusters(outputs, threshold, gold_mentions: List):
     # when we are using gold mentions, we get coref_logits at the size of the gold mentions ([bs, clusters, gold_mentions]) (because we know they are mentions, what we are predicting is the clustering)
-    bs = cluster_logits.shape[0]
+    cluster_logits, coref_logits, mention_logits = outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits']
+    
+    n_gpu = cluster_logits.shape[0]
+    bs = cluster_logits.shape[1]
 
     if gold_mentions is None:
         cluster_bools = cluster_logits.numpy() >= threshold #TODO: should the cluster and coref share the same threshold?
@@ -216,37 +219,38 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, thresh
                 clusters.append(current_cluster)
     else:
         cluster_bools = cluster_logits.squeeze(-1).numpy() >= threshold #TODO: should the cluster and coref share the same threshold?
-        clusters = []
-        for i in range(bs):
-            cur_cluster_bool = cluster_bools[i]
-            cur_coref_logits = coref_logits[i]
-            cur_mention_bools = mention_logits[i].squeeze(-1).numpy() >= threshold
-            
-            cur_mention_bools = np.tile(cur_mention_bools.reshape([1, 1, -1]), (1, cur_cluster_bool.shape[0], 1))
-            cur_cluster_bool = np.tile(cur_cluster_bool.reshape([1, -1, 1]), (1, 1, cur_coref_logits.shape[-1]))
-            cluster_mention_mask = cur_mention_bools & cur_cluster_bool
-            cluster_mention_mask = cluster_mention_mask.astype(int)
-            
-            coref_logits_after_cluster_bool = np.multiply(cluster_mention_mask, cur_coref_logits)
-            max_coref_score, max_coref_cluster_ind = coref_logits_after_cluster_bool[0].max(-2) #[gold_mention] choosing the index of the best cluster per gold mention
-            coref_bools = max_coref_score >= threshold #[gold_mention] is the chosen cluster's score passes the threshold
+        clusters = [[]]*bs*n_gpu
+        for i in range(n_gpu):
+            for j in range(bs):
+                cur_cluster_bool = cluster_bools[i][j]
+                cur_coref_logits = coref_logits[i][j]
+                cur_mention_bools = mention_logits[i][j].squeeze(-1).numpy() >= threshold
+                
+                cur_mention_bools = np.tile(cur_mention_bools.reshape([1, 1, -1]), (1, cur_cluster_bool.shape[0], 1))
+                cur_cluster_bool = np.tile(cur_cluster_bool.reshape([1, -1, 1]), (1, 1, cur_coref_logits.shape[-1]))
+                cluster_mention_mask = cur_mention_bools & cur_cluster_bool
+                cluster_mention_mask = cluster_mention_mask.astype(int)
+                
+                coref_logits_after_cluster_bool = np.multiply(cluster_mention_mask, cur_coref_logits)
+                max_coref_score, max_coref_cluster_ind = coref_logits_after_cluster_bool[0].max(-2) #[gold_mention] choosing the index of the best cluster per gold mention
+                coref_bools = max_coref_score >= threshold #[gold_mention] is the chosen cluster's score passes the threshold
 
-            true_coref_indices = np.where(coref_bools)[0] #indices of the gold mention that their clusters pass threshold
-            max_coref_cluster_ind_filtered = max_coref_cluster_ind[coref_bools] #index of the best clusters per gold mention, if it passes the threshold
+                true_coref_indices = np.where(coref_bools)[0] #indices of the gold mention that their clusters pass threshold
+                max_coref_cluster_ind_filtered = max_coref_cluster_ind[coref_bools] #index of the best clusters per gold mention, if it passes the threshold
 
-            cluster_id_to_tokens = {k: list(v) for k, v in itertools.groupby(sorted(list(zip(true_coref_indices, max_coref_cluster_ind_filtered.numpy())), key=lambda x: x[-1]), lambda x: x[-1])}
+                cluster_id_to_tokens = {k: list(v) for k, v in itertools.groupby(sorted(list(zip(true_coref_indices, max_coref_cluster_ind_filtered.numpy())), key=lambda x: x[-1]), lambda x: x[-1])}
 
-            b_clusters = []
+                b_clusters = []
 
-            for gold_mentions_inds in cluster_id_to_tokens.values():
-                current_cluster = []
-                for mention_id in gold_mentions_inds:
-                    try:
-                        current_cluster.append(gold_mentions[i][mention_id[0]])
-                    except:
-                        print('here')
-                b_clusters.append(current_cluster)
-            clusters.append(b_clusters)
+                for gold_mentions_inds in cluster_id_to_tokens.values():
+                    current_cluster = []
+                    for mention_id in gold_mentions_inds:
+                        try:
+                            current_cluster.append(gold_mentions[i][j][mention_id[0]])
+                        except:
+                            print('here')
+                    b_clusters.append(current_cluster)
+                clusters[i*n_gpu+j] = b_clusters
 
     return clusters
 

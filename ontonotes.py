@@ -17,6 +17,10 @@ class OntonotesDataset(Dataset):
             self.examples = [json.loads(jsonline) for jsonline in lines]
         if args.limit_trainset >= 0:
             self.examples = self.examples[:args.limit_trainset]
+        #TODO:REMOVE
+        for i, e in reversed(list(enumerate(self.examples))):
+            if len(e['clusters']) == 0:
+                del self.examples[i]
         self.is_training = is_training
         self.args = args
         self.batch_size = batch_size

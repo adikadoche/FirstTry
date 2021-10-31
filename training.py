@@ -14,26 +14,49 @@ from optimization import WarmupLinearSchedule, WarmupExponentialSchedule
 import itertools
 from metrics import CorefEvaluator
 from utils import load_from_checkpoint, save_checkpoint
+from consts import TOKENS_PAD
 
 from transformers import AdamW, get_constant_schedule_with_warmup
 
 logger = logging.getLogger(__name__)
 
-def tensor_and_remove_empty(batch, gold_mentions, args):
-    input_ids, input_mask, sum_text_len, gold_clusters, new_gold_mentions = [], [], [], [], []
+def pad_input_ids_and_mask_to_max_sentences(input_ids, mask, input_ids_pads, mask_pads, max_sentences):
+    if input_ids.shape[0] == max_sentences:
+        return input_ids.unsqueeze(0), mask.unsqueeze(0)
+    padded_input_ids = torch.cat([input_ids, input_ids_pads.repeat(max_sentences - input_ids.shape[0], 1)]).unsqueeze(0)
+    padded_mask = torch.cat([mask, mask_pads.repeat(max_sentences - input_ids.shape[0], 1)]).unsqueeze(0)
+    return padded_input_ids, padded_mask
+
+def pad_mentions(gold_mentions, max_mentions):
+    padded_gold_mentions = torch.tensor(np.asarray(gold_mentions + (max_mentions-len(gold_mentions)) * [(-1, -1)])).unsqueeze(0)
+    return padded_gold_mentions
+
+def tensor_and_remove_empty(batch, gold_mentions, args, input_ids_pads, mask_pads):
+    input_ids, input_mask, sum_text_len, num_mentions, new_gold_mentions = [], [], [], [], []
+    max_mentions = max([len(gm) for gm in gold_mentions])
+    max_sentences = max([ii.shape[0] for ii in batch['input_ids']])
+    # for i in range(len(gold_mentions)/args.train_batch_size):
     for i in range(len(gold_mentions)):
-        if len(gold_mentions[i]) > 0:
-            input_ids.append(torch.tensor(batch['input_ids'][i]).to(args.device))
-            input_mask.append(torch.tensor(batch['input_mask'][i]).to(args.device))
-            sum_text_len.append(sum(batch['text_len'][i]))
-            gold_clusters.append(batch['clusters'][i])
-            new_gold_mentions.append(gold_mentions[i])
-    return input_ids, input_mask, sum_text_len, gold_clusters, new_gold_mentions
+        # for j in range(i*args.train_batch_size, (i+1)*args.train_batch_size):
+        padded_input_ids, padded_mask = pad_input_ids_and_mask_to_max_sentences(\
+            torch.tensor(batch['input_ids'][i]).to(args.device), torch.tensor(batch['input_mask'][i]).to(args.device), input_ids_pads, mask_pads, max_sentences)
+        input_ids.append(padded_input_ids)
+        input_mask.append(padded_mask)
+        sum_text_len.append(torch.tensor([sum(batch['text_len'][i])]).to(args.device))
+        new_gold_mentions.append(pad_mentions(gold_mentions[i], max_mentions))
+        num_mentions.append(torch.tensor([len(gold_mentions[i])]).to(args.device))
+    return torch.cat(input_ids).reshape(args.n_gpu, args.per_gpu_train_batch_size, max_sentences, -1), \
+        torch.cat(input_mask).reshape(args.n_gpu, args.per_gpu_train_batch_size, max_sentences, -1), \
+            torch.cat(sum_text_len).reshape(args.n_gpu, args.per_gpu_train_batch_size), \
+                torch.cat(new_gold_mentions).reshape(args.n_gpu, args.per_gpu_train_batch_size, max_mentions, 2),\
+                    torch.cat(num_mentions).reshape(args.n_gpu, args.per_gpu_train_batch_size)
 
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     epoch_iterator, optimizer: torch.optim.Optimizer, scaler: torch.cuda.amp.GradScaler,
                     args, evaluator, skip_steps, recent_grad_norms, recent_cluster_logits,
         recent_coref_logits, recent_losses, recent_losses_parts, recent_logits_sums, global_step, lr_scheduler, eval_loader, eval_dataset, threshold):
+    input_ids_pads = torch.ones(1, args.max_segment_len, dtype=torch.int, device=args.device) * TOKENS_PAD
+    mask_pads = torch.zeros(1, args.max_segment_len, dtype=torch.int, device=args.device)
     for step, batch in enumerate(epoch_iterator):
         if skip_steps > 0:
             skip_steps -= 1
@@ -54,11 +77,12 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             else:
                 gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=args.device) for gm in gold_mentions]
 
-        input_ids, input_mask, sum_text_len, gold_clusters, gold_mentions = tensor_and_remove_empty(batch, gold_mentions, args)
+        gold_matrix = create_gold_matrix(args.device, sum_text_len, args.num_queries, gold_clusters, gold_mentions)
+
+        input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = tensor_and_remove_empty(batch, gold_mentions, args, input_ids_pads, mask_pads)
         if len(input_ids) == 0:
             continue
 
-        gold_matrix = create_gold_matrix(args.device, sum_text_len, args.num_queries, gold_clusters, gold_mentions)
 
         # orig_input_dim = input_ids.shape
         # input_ids = torch.reshape(input_ids, (1, -1))
@@ -73,10 +97,11 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                 evaluator.update(predicted_clusters, gold_clusters)
                 loss = criterion(outputs, gold_matrix)
         else:
-            outputs = model(input_ids, sum_text_len, input_mask, gold_mentions)
+            outputs = model(input_ids, sum_text_len, input_mask, gold_mentions, num_mentions)
             cluster_logits, coref_logits, mention_logits = outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits']
+            outputs_cpu = {'cluster_logits': cluster_logits.cpu().detach(), 'coref_logits': coref_logits.cpu().detach(), 'mention_logits': mention_logits.cpu().detach()}
 
-            predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), [cl.cpu().detach() for cl in coref_logits], [ml.cpu().detach() for ml in mention_logits],
+            predicted_clusters = calc_predicted_clusters(outputs_cpu,
                                                         threshold, gold_mentions)
             evaluator.update(predicted_clusters, gold_clusters)
             loss, loss_parts = criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
