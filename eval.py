@@ -14,6 +14,7 @@ from coref_analysis import print_predictions, print_per_batch
 from data import get_dataset
 from utils import tensor_and_remove_empty, calc_best_avg_f1, create_gold_matrix, try_measure_len, load_from_checkpoint, create_junk_gold_mentions
 from conll import evaluate_conll
+from consts import TOKENS_PAD
 import wandb
 logger = logging.getLogger(__name__)
 
