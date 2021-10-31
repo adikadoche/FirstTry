@@ -68,9 +68,8 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         else:
             outputs = model(input_ids, sum_text_len, input_mask, gold_mentions, num_mentions)
             cluster_logits, coref_logits, mention_logits = outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits']
-            outputs_cpu = {'cluster_logits': cluster_logits.cpu().detach(), 'coref_logits': coref_logits.cpu().detach(), 'mention_logits': mention_logits.cpu().detach()}
 
-            predicted_clusters = calc_predicted_clusters(outputs_cpu,
+            predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), mention_logits.cpu().detach(),
                                                         threshold, gold_mentions)
             evaluator.update(predicted_clusters, gold_clusters)
             loss, loss_parts = criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
