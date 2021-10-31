@@ -36,22 +36,21 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         sum_text_len = [sum(tl) for tl in batch['text_len']]
         gold_clusters = batch['clusters']
 
-        gold_mentions = None
+        gold_mentions_list = None
         if args.use_gold_mentions:
             # gold_mentions = []
             # if len(gold_clusters) > 0:  #TODO: create junk clusters even if 0 gold clusters
-            gold_mentions = [list(set([tuple(m) for c in gc for m in c])) for gc in gold_clusters]
+            gold_mentions_list = [list(set([tuple(m) for c in gc for m in c])) for gc in gold_clusters]
             if args.add_junk:
-                gold_mentions, gold_mentions_vector = create_junk_gold_mentions(gold_mentions, sum_text_len, args.device)
+                gold_mentions_list, gold_mentions_vector = create_junk_gold_mentions(gold_mentions_list, sum_text_len, args.device)
             else:
-                gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=args.device) for gm in gold_mentions]
+                gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=args.device) for gm in gold_mentions_list]
 
-        gold_matrix = create_gold_matrix(args.device, sum_text_len, args.num_queries, gold_clusters, gold_mentions)
-
-        input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = tensor_and_remove_empty(batch, gold_mentions, args, input_ids_pads, mask_pads)
+        input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = tensor_and_remove_empty(batch, gold_mentions_list, args, input_ids_pads, mask_pads)
         if len(input_ids) == 0:
             continue
 
+        gold_matrix = create_gold_matrix(args.device, sum_text_len, args.num_queries, gold_clusters, gold_mentions_list)
 
         # orig_input_dim = input_ids.shape
         # input_ids = torch.reshape(input_ids, (1, -1))
@@ -62,7 +61,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                 cluster_logits, coref_logits = outputs['cluster_logits'], outputs['coref_logits']
 
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(),
-                                                            threshold, gold_mentions)
+                                                            threshold, gold_mentions_list)
                 evaluator.update(predicted_clusters, gold_clusters)
                 loss = criterion(outputs, gold_matrix)
         else:
@@ -70,7 +69,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             cluster_logits, coref_logits, mention_logits = outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits']
 
             predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), mention_logits.cpu().detach(),
-                                                        threshold, gold_mentions)
+                                                        threshold, gold_mentions_list)
             evaluator.update(predicted_clusters, gold_clusters)
             loss, loss_parts = criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
 

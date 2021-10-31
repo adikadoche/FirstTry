@@ -135,21 +135,21 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
         gold_clusters = batch['clusters']
 
 
-        gold_mentions = []
+        gold_mentions_list = []
         # if len(gold_clusters) > 0: #TODO:
-        gold_mentions = [list(set([tuple(m) for c in gc for m in c])) for gc in gold_clusters]
+        gold_mentions_list = [list(set([tuple(m) for c in gc for m in c])) for gc in gold_clusters]
         if args.add_junk:
-            gold_mentions, gold_mentions_vector = create_junk_gold_mentions(gold_mentions, sum_text_len, args.device)
+            gold_mentions_list, gold_mentions_vector = create_junk_gold_mentions(gold_mentions_list, sum_text_len, args.device)
         else:
-            gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=args.device) for gm in gold_mentions]
+            gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=args.device) for gm in gold_mentions_list]
         
-        gold_matrix = create_gold_matrix(args.device, sum_text_len, args.num_queries, gold_clusters, gold_mentions)
+        gold_matrix = create_gold_matrix(args.device, sum_text_len, args.num_queries, gold_clusters, gold_mentions_list)
 
-        input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = tensor_and_remove_empty(batch, gold_mentions, args, input_ids_pads, mask_pads)
+        input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = tensor_and_remove_empty(batch, gold_mentions_list, args, input_ids_pads, mask_pads)
         if len(input_ids) == 0:
             continue
             
-        all_gold_mentions += gold_mentions
+        all_gold_mentions += gold_mentions_list
         all_input_ids += input_ids    
         all_gold_clusters += gold_clusters
 
