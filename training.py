@@ -9,7 +9,7 @@ from eval import evaluate, report_eval
 from tqdm import tqdm, trange
 import time, datetime
 from misc import save_on_master, is_main_process
-from utils import create_gold_matrix, calc_predicted_clusters, create_junk_gold_mentions, try_measure_len
+from utils import tensor_and_remove_empty, create_gold_matrix, calc_predicted_clusters, create_junk_gold_mentions, try_measure_len
 from optimization import WarmupLinearSchedule, WarmupExponentialSchedule
 import itertools
 from metrics import CorefEvaluator
@@ -19,37 +19,6 @@ from consts import TOKENS_PAD
 from transformers import AdamW, get_constant_schedule_with_warmup
 
 logger = logging.getLogger(__name__)
-
-def pad_input_ids_and_mask_to_max_sentences(input_ids, mask, input_ids_pads, mask_pads, max_sentences):
-    if input_ids.shape[0] == max_sentences:
-        return input_ids.unsqueeze(0), mask.unsqueeze(0)
-    padded_input_ids = torch.cat([input_ids, input_ids_pads.repeat(max_sentences - input_ids.shape[0], 1)]).unsqueeze(0)
-    padded_mask = torch.cat([mask, mask_pads.repeat(max_sentences - input_ids.shape[0], 1)]).unsqueeze(0)
-    return padded_input_ids, padded_mask
-
-def pad_mentions(gold_mentions, max_mentions):
-    padded_gold_mentions = torch.tensor(np.asarray(gold_mentions + (max_mentions-len(gold_mentions)) * [(-1, -1)])).unsqueeze(0)
-    return padded_gold_mentions
-
-def tensor_and_remove_empty(batch, gold_mentions, args, input_ids_pads, mask_pads):
-    input_ids, input_mask, sum_text_len, num_mentions, new_gold_mentions = [], [], [], [], []
-    max_mentions = max([len(gm) for gm in gold_mentions])
-    max_sentences = max([ii.shape[0] for ii in batch['input_ids']])
-    # for i in range(len(gold_mentions)/args.train_batch_size):
-    for i in range(len(gold_mentions)):
-        # for j in range(i*args.train_batch_size, (i+1)*args.train_batch_size):
-        padded_input_ids, padded_mask = pad_input_ids_and_mask_to_max_sentences(\
-            torch.tensor(batch['input_ids'][i]).to(args.device), torch.tensor(batch['input_mask'][i]).to(args.device), input_ids_pads, mask_pads, max_sentences)
-        input_ids.append(padded_input_ids)
-        input_mask.append(padded_mask)
-        sum_text_len.append(torch.tensor([sum(batch['text_len'][i])]).to(args.device))
-        new_gold_mentions.append(pad_mentions(gold_mentions[i], max_mentions))
-        num_mentions.append(torch.tensor([len(gold_mentions[i])]).to(args.device))
-    return torch.cat(input_ids).reshape(args.n_gpu, args.per_gpu_train_batch_size, max_sentences, -1), \
-        torch.cat(input_mask).reshape(args.n_gpu, args.per_gpu_train_batch_size, max_sentences, -1), \
-            torch.cat(sum_text_len).reshape(args.n_gpu, args.per_gpu_train_batch_size), \
-                torch.cat(new_gold_mentions).reshape(args.n_gpu, args.per_gpu_train_batch_size, max_mentions, 2),\
-                    torch.cat(num_mentions).reshape(args.n_gpu, args.per_gpu_train_batch_size)
 
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     epoch_iterator, optimizer: torch.optim.Optimizer, scaler: torch.cuda.amp.GradScaler,

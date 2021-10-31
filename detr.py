@@ -91,11 +91,6 @@ class DETR(nn.Module):
         """
         # input_ids_cat = torch.cat(input_ids, dim=1).squeeze(0)
         # mask_cat = torch.cat(mask, dim=1).squeeze(0)
-        input_ids = input_ids.squeeze(0)
-        mask = mask.squeeze(0)
-        gold_mentions = gold_mentions.squeeze(0)
-        num_mentions = num_mentions.squeeze(0)
-        sum_text_len = sum_text_len.squeeze(0)
 
         bs = input_ids.shape[0]
         longformer_emb = self.backbone(input_ids.reshape(-1, input_ids.shape[-1]), attention_mask=mask.reshape(-1, mask.shape[-1]))[0]  # Getting representation for each token in the text
@@ -117,9 +112,9 @@ class DETR(nn.Module):
         if not self.args.use_gold_mentions:
             hs, memory = self.transformer(self.input_proj(longformer_emb), mask, raw_query_embed) # [dec_layers, 1, num_queries, emb], [1, seg*seq, emb]
         else:
-            span_starts = [torch.tensor([gold_mentions[i][j][0] for j in range(num_mentions[i])], dtype=torch.long) for i in range(bs)]
-            span_ends = [torch.tensor([gold_mentions[i][j][1] for j in range(num_mentions[i])], dtype=torch.long) for i in range(bs)]
-            span_emb, span_mask = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends, sum_text_len)  # [mentions, emb']
+            span_starts = [torch.tensor([m[0] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
+            span_ends = [torch.tensor([m[1] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
+            span_emb, span_mask = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends, num_mentions)  # [mentions, emb']
             span_emb = self.span_proj(span_emb) # [mentions, emb]
             hs, memory = self.transformer(span_emb, span_mask, raw_query_embed)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
 
@@ -136,9 +131,9 @@ class DETR(nn.Module):
         # if self.aux_loss:
         #     out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
 
-        out = {"coref_logits": coref_logits.unsqueeze(0),
-                "cluster_logits": cluster_logits.unsqueeze(0),
-                "mention_logits": mention_logits.unsqueeze(0)}
+        out = {"coref_logits": coref_logits,
+                "cluster_logits": cluster_logits,
+                "mention_logits": mention_logits}
                 # "aux_coref_logits": aux_coref_logits}
         return out
 
@@ -236,22 +231,22 @@ class DETR(nn.Module):
 
         return cluster_logits, torch.cat(coref_logits), torch.cat(mention_logits_masked)
 
-    def get_span_emb(self, context_outputs_list, span_starts, span_ends, sum_text_len):
-        max_mentions = max([len(s) for s in span_starts])
+    def get_span_emb(self, context_outputs_list, span_starts, span_ends, num_mentions):
+        max_mentions = num_mentions.max()
         span_mask_list = []
         span_emb_list = []
         # print(f'context outputs {context_outputs.shape}')
         # print(f'span_starts {span_starts[0].shape}')
-        for i in range(len(sum_text_len)):
+        for i in range(len(num_mentions)):
             span_emb_construct = []
             # print(f'span_starts max {span_starts[i].max()} min {span_starts[i].min()}')
-            span_start_emb = context_outputs_list[i][span_starts[i]] # [k, emb]
+            span_start_emb = context_outputs_list[i][span_starts[i][:num_mentions[i]]] # [k, emb]
             span_emb_construct.append(span_start_emb)
 
-            span_end_emb = context_outputs_list[i][span_ends[i]]  # [k, emb]
+            span_end_emb = context_outputs_list[i][span_ends[i][:num_mentions[i]]]  # [k, emb]
             span_emb_construct.append(span_end_emb)
 
-            span_width = (1 + span_ends[i] - span_starts[i]).clamp(max=30)  # [k]
+            span_width = (1 + span_ends[i][:num_mentions[i]] - span_starts[i][:num_mentions[i]]).clamp(max=30)  # [k]
 
             # if self.config["use_features"]:
             span_width_index = span_width - 1  # [k]
@@ -261,7 +256,7 @@ class DETR(nn.Module):
             span_emb_construct.append(span_width_emb)
 
             # if self.config["model_heads"]:
-            mention_word_score = self.get_masked_mention_word_scores(context_outputs_list[i], span_starts[i], span_ends[i])  # [K, T]
+            mention_word_score = self.get_masked_mention_word_scores(context_outputs_list[i], span_starts[i][:num_mentions[i]], span_ends[i][:num_mentions[i]])  # [K, T]
             head_attn_reps = torch.matmul(mention_word_score, context_outputs_list[i])  # [K, emb]
             span_emb_construct.append(head_attn_reps)
             span_emb_cat = torch.cat(span_emb_construct, 1)
@@ -565,81 +560,78 @@ class MatchingLoss(nn.Module):
 
         targets_clusters = targets['clusters']
         targets_mentions = targets['mentions']
-        bs = outputs["coref_logits"].shape[1]
-        n_gpu = outputs["coref_logits"].shape[0]
+        bs = outputs["coref_logits"].shape[0]
         costs = []
         costs_parts = {'loss_is_cluster':[], 'loss_is_mention':[], 'loss_coref':[]}
-        for i in range(n_gpu):
-            for j in range(bs):
-                ind = i*n_gpu + j
-                # Compute the average number of target boxes accross all nodes, for normalization purposes
-                coref_logits = outputs["coref_logits"][i][j].squeeze(0)  # [num_queries, tokens]
-                cluster_logits = outputs["cluster_logits"][i][j].squeeze() # [num_queries]
-                mention_logits = outputs["mention_logits"][i][j].squeeze() # [tokens]
-                num_queries, doc_len = coref_logits.shape
-                #TODO: normalize according to number of clusters? (identical to DETR)
+        for i in range(bs):
+            # Compute the average number of target boxes accross all nodes, for normalization purposes
+            coref_logits = outputs["coref_logits"][i].squeeze(0)  # [num_queries, tokens]
+            cluster_logits = outputs["cluster_logits"][i].squeeze() # [num_queries]
+            mention_logits = outputs["mention_logits"][i].squeeze() # [tokens]
+            num_queries, doc_len = coref_logits.shape
+            #TODO: normalize according to number of clusters? (identical to DETR)
 
-                # num_of_gold_clusters = len(targets)
-                # num_of_gold_clusters = torch.as_tensor([num_of_gold_clusters], dtype=torch.float, device=coref_logits.device)
-                # if is_dist_avail_and_initialized():
-                #     torch.distributed.all_reduce(num_of_gold_clusters)
-                # num_of_gold_clusters = torch.clamp(num_of_gold_clusters / get_world_size(), min=1).item()
+            # num_of_gold_clusters = len(targets)
+            # num_of_gold_clusters = torch.as_tensor([num_of_gold_clusters], dtype=torch.float, device=coref_logits.device)
+            # if is_dist_avail_and_initialized():
+            #     torch.distributed.all_reduce(num_of_gold_clusters)
+            # num_of_gold_clusters = torch.clamp(num_of_gold_clusters / get_world_size(), min=1).item()
 
-                gold_is_cluster = torch.zeros_like(cluster_logits)
-                weight_cluster = self.eos_coef * torch.ones_like(cluster_logits)
-                if matched_predicted_cluster_id[ind] is not False:
-                    gold_is_cluster[matched_predicted_cluster_id[ind]] = 1
-                    weight_cluster[matched_predicted_cluster_id[ind]] = 1
-                cost_is_cluster = F.binary_cross_entropy(cluster_logits, gold_is_cluster, weight=weight_cluster)
-                    
-                if sum(targets_mentions[ind].shape) == 0:
-                    cost_is_mention = torch.tensor(0)
+            gold_is_cluster = torch.zeros_like(cluster_logits)
+            weight_cluster = self.eos_coef * torch.ones_like(cluster_logits)
+            if matched_predicted_cluster_id[i] is not False:
+                gold_is_cluster[matched_predicted_cluster_id[i]] = 1
+                weight_cluster[matched_predicted_cluster_id[i]] = 1
+            cost_is_cluster = F.binary_cross_entropy(cluster_logits, gold_is_cluster, weight=weight_cluster)
+                
+            if sum(targets_mentions[i].shape) == 0:
+                cost_is_mention = torch.tensor(0)
+            else:
+                if sum(mention_logits.shape) == 0:
+                    mention_logits = mention_logits.reshape(1)
                 else:
-                    if sum(mention_logits.shape) == 0:
-                        mention_logits = mention_logits.reshape(1)
-                    else:
-                        mention_logits = mention_logits[:targets_mentions[ind].shape[0]]
-                    weight_mention = targets_mentions[ind] + self.eos_coef * (1 - targets_mentions[ind])
-                    cost_is_mention = F.binary_cross_entropy(mention_logits, targets_mentions[ind], weight=weight_mention)
+                    mention_logits = mention_logits[:targets_mentions[i].shape[0]]
+                weight_mention = targets_mentions[i] + self.eos_coef * (1 - targets_mentions[i])
+                cost_is_mention = F.binary_cross_entropy(mention_logits, targets_mentions[i], weight=weight_mention)
 
-                coref_logits = torch.index_select(coref_logits, 1, torch.arange(0, targets_clusters[ind].shape[1]).to(coref_logits.device))
+            coref_logits = torch.index_select(coref_logits, 1, torch.arange(0, targets_clusters[i].shape[1]).to(coref_logits.device))
 
-                cost_coref = 0
-                if matched_predicted_cluster_id[ind] is not False:
-                    permuted_coref_logits = coref_logits[matched_predicted_cluster_id[ind].numpy()]
-                    permuted_gold = targets_clusters[ind][matched_gold_cluster_id[ind].numpy()]
+            cost_coref = 0
+            if matched_predicted_cluster_id[i] is not False:
+                permuted_coref_logits = coref_logits[matched_predicted_cluster_id[i].numpy()]
+                permuted_gold = targets_clusters[i][matched_gold_cluster_id[i].numpy()]
 
-                    if self.args.multiclass_ce:
-                        logits = permuted_coref_logits.transpose(0, 1)  # [mentions, num_queries]
-                        gold = permuted_gold.transpose(0, 1).nonzero()[:, 1]  # [mentions]
-                        cost_coref = F.cross_entropy(logits, gold, reduction='mean')
-                    else:
-                        if self.args.sum_attn:
-                            permuted_coref_logits = permuted_coref_logits.clamp(0, 1)
-                        cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_gold, reduction='mean')
-                elif coref_logits.shape[1] > 0:
-                    cost_coref = F.binary_cross_entropy(coref_logits, torch.zeros_like(coref_logits), reduction='mean')
+                if self.args.multiclass_ce:
+                    logits = permuted_coref_logits.transpose(0, 1)  # [mentions, num_queries]
+                    gold = permuted_gold.transpose(0, 1).nonzero()[:, 1]  # [mentions]
+                    cost_coref = F.cross_entropy(logits, gold, reduction='mean')
+                else:
+                    if self.args.sum_attn:
+                        permuted_coref_logits = permuted_coref_logits.clamp(0, 1)
+                    cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_gold, reduction='mean')
+            elif coref_logits.shape[1] > 0:
+                cost_coref = F.binary_cross_entropy(coref_logits, torch.zeros_like(coref_logits), reduction='mean')
 
 
-                # cost_coref = []
-                # for predicted_cluster_id, gold_cluster_id in zip(matched_predicted_cluster_id, matched_gold_cluster_id):
-                #     # generate gold label for this cluster for all doc tokens
-                #     gold_per_token = torch.zeros(doc_len, device=coref_logits.device)
-                #     for start, end in targets[gold_cluster_id]:
-                #         gold_per_token[start: end + 1] = 1
-                #
-                #     loss_fn = F.binary_cross_entropy
-                #     # loss_fn = F.mse_loss
-                #     loss_for_predicted_gold_match = loss_fn(coref_logits[predicted_cluster_id], gold_per_token,
-                #                                             reduction='sum')
-                #     cost_coref.append(loss_for_predicted_gold_match)
-                #
-                # cost_coref = torch.stack(cost_coref).sum() if len(cost_coref) > 0 else 0
-                costs_parts['loss_is_cluster'].append(self.cost_is_cluster * cost_is_cluster.detach().cpu())
-                costs_parts['loss_is_mention'].append(self.cost_is_mention * cost_is_mention.detach().cpu())
-                costs_parts['loss_coref'].append(self.cost_coref * cost_coref.detach().cpu())
-                total_cost = self.cost_coref * cost_coref + self.cost_is_cluster * cost_is_cluster + self.cost_is_mention * cost_is_mention
-                costs.append(total_cost)
+            # cost_coref = []
+            # for predicted_cluster_id, gold_cluster_id in zip(matched_predicted_cluster_id, matched_gold_cluster_id):
+            #     # generate gold label for this cluster for all doc tokens
+            #     gold_per_token = torch.zeros(doc_len, device=coref_logits.device)
+            #     for start, end in targets[gold_cluster_id]:
+            #         gold_per_token[start: end + 1] = 1
+            #
+            #     loss_fn = F.binary_cross_entropy
+            #     # loss_fn = F.mse_loss
+            #     loss_for_predicted_gold_match = loss_fn(coref_logits[predicted_cluster_id], gold_per_token,
+            #                                             reduction='sum')
+            #     cost_coref.append(loss_for_predicted_gold_match)
+            #
+            # cost_coref = torch.stack(cost_coref).sum() if len(cost_coref) > 0 else 0
+            costs_parts['loss_is_cluster'].append(self.cost_is_cluster * cost_is_cluster.detach().cpu())
+            costs_parts['loss_is_mention'].append(self.cost_is_mention * cost_is_mention.detach().cpu())
+            costs_parts['loss_coref'].append(self.cost_coref * cost_coref.detach().cpu())
+            total_cost = self.cost_coref * cost_coref + self.cost_is_cluster * cost_is_cluster + self.cost_is_mention * cost_is_mention
+            costs.append(total_cost)
         return torch.stack(costs), costs_parts
 
         # # Compute all the requested losses

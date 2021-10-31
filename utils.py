@@ -188,8 +188,7 @@ def calc_predicted_clusters(outputs, threshold, gold_mentions: List):
     # when we are using gold mentions, we get coref_logits at the size of the gold mentions ([bs, clusters, gold_mentions]) (because we know they are mentions, what we are predicting is the clustering)
     cluster_logits, coref_logits, mention_logits = outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits']
     
-    n_gpu = cluster_logits.shape[0]
-    bs = cluster_logits.shape[1]
+    bs = cluster_logits.shape[0]
 
     if gold_mentions is None:
         cluster_bools = cluster_logits.numpy() >= threshold #TODO: should the cluster and coref share the same threshold?
@@ -219,38 +218,37 @@ def calc_predicted_clusters(outputs, threshold, gold_mentions: List):
                 clusters.append(current_cluster)
     else:
         cluster_bools = cluster_logits.squeeze(-1).numpy() >= threshold #TODO: should the cluster and coref share the same threshold?
-        clusters = [[]]*bs*n_gpu
-        for i in range(n_gpu):
-            for j in range(bs):
-                cur_cluster_bool = cluster_bools[i][j]
-                cur_coref_logits = coref_logits[i][j]
-                cur_mention_bools = mention_logits[i][j].squeeze(-1).numpy() >= threshold
-                
-                cur_mention_bools = np.tile(cur_mention_bools.reshape([1, 1, -1]), (1, cur_cluster_bool.shape[0], 1))
-                cur_cluster_bool = np.tile(cur_cluster_bool.reshape([1, -1, 1]), (1, 1, cur_coref_logits.shape[-1]))
-                cluster_mention_mask = cur_mention_bools & cur_cluster_bool
-                cluster_mention_mask = cluster_mention_mask.astype(int)
-                
-                coref_logits_after_cluster_bool = np.multiply(cluster_mention_mask, cur_coref_logits)
-                max_coref_score, max_coref_cluster_ind = coref_logits_after_cluster_bool[0].max(-2) #[gold_mention] choosing the index of the best cluster per gold mention
-                coref_bools = max_coref_score >= threshold #[gold_mention] is the chosen cluster's score passes the threshold
+        clusters = []
+        for i in range(bs):
+            cur_cluster_bool = cluster_bools[i]
+            cur_coref_logits = coref_logits[i]
+            cur_mention_bools = mention_logits[i].squeeze(-1).numpy() >= threshold
+            
+            cur_mention_bools = np.tile(cur_mention_bools.reshape([1, 1, -1]), (1, cur_cluster_bool.shape[0], 1))
+            cur_cluster_bool = np.tile(cur_cluster_bool.reshape([1, -1, 1]), (1, 1, cur_coref_logits.shape[-1]))
+            cluster_mention_mask = cur_mention_bools & cur_cluster_bool
+            cluster_mention_mask = cluster_mention_mask.astype(int)
+            
+            coref_logits_after_cluster_bool = np.multiply(cluster_mention_mask, cur_coref_logits.unsqueeze(0))
+            max_coref_score, max_coref_cluster_ind = coref_logits_after_cluster_bool[0].max(-2) #[gold_mention] choosing the index of the best cluster per gold mention
+            coref_bools = max_coref_score >= threshold #[gold_mention] is the chosen cluster's score passes the threshold
 
-                true_coref_indices = np.where(coref_bools)[0] #indices of the gold mention that their clusters pass threshold
-                max_coref_cluster_ind_filtered = max_coref_cluster_ind[coref_bools] #index of the best clusters per gold mention, if it passes the threshold
+            true_coref_indices = np.where(coref_bools)[0] #indices of the gold mention that their clusters pass threshold
+            max_coref_cluster_ind_filtered = max_coref_cluster_ind[coref_bools] #index of the best clusters per gold mention, if it passes the threshold
 
-                cluster_id_to_tokens = {k: list(v) for k, v in itertools.groupby(sorted(list(zip(true_coref_indices, max_coref_cluster_ind_filtered.numpy())), key=lambda x: x[-1]), lambda x: x[-1])}
+            cluster_id_to_tokens = {k: list(v) for k, v in itertools.groupby(sorted(list(zip(true_coref_indices, max_coref_cluster_ind_filtered.numpy())), key=lambda x: x[-1]), lambda x: x[-1])}
 
-                b_clusters = []
+            b_clusters = []
 
-                for gold_mentions_inds in cluster_id_to_tokens.values():
-                    current_cluster = []
-                    for mention_id in gold_mentions_inds:
-                        try:
-                            current_cluster.append(gold_mentions[i][j][mention_id[0]])
-                        except:
-                            print('here')
-                    b_clusters.append(current_cluster)
-                clusters[i*n_gpu+j] = b_clusters
+            for gold_mentions_inds in cluster_id_to_tokens.values():
+                current_cluster = []
+                for mention_id in gold_mentions_inds:
+                    try:
+                        current_cluster.append(gold_mentions[i][mention_id[0]])
+                    except:
+                        print('here')
+                b_clusters.append(current_cluster)
+            clusters.append(b_clusters)
 
     return clusters
 
@@ -361,3 +359,36 @@ def create_junk_gold_mentions(gold_mentions, text_len, device):
         real_mentions_bools.append(torch.tensor([int(ind < len(gold_mentions[i])) for ind in indices], dtype=torch.float, device=device))
 
     return all_mentions, real_mentions_bools
+
+
+def pad_input_ids_and_mask_to_max_sentences(input_ids, mask, input_ids_pads, mask_pads, max_sentences):
+    if input_ids.shape[0] == max_sentences:
+        return input_ids.unsqueeze(0), mask.unsqueeze(0)
+    padded_input_ids = torch.cat([input_ids, input_ids_pads.repeat(max_sentences - input_ids.shape[0], 1)]).unsqueeze(0)
+    padded_mask = torch.cat([mask, mask_pads.repeat(max_sentences - input_ids.shape[0], 1)]).unsqueeze(0)
+    return padded_input_ids, padded_mask
+
+def pad_mentions(gold_mentions, max_mentions):
+    padded_gold_mentions = torch.tensor(np.asarray(gold_mentions + (max_mentions-len(gold_mentions)) * [(-1, -1)])).unsqueeze(0)
+    return padded_gold_mentions
+
+def tensor_and_remove_empty(batch, gold_mentions, args, input_ids_pads, mask_pads):
+    input_ids, input_mask, sum_text_len, num_mentions, new_gold_mentions = [], [], [], [], []
+    max_mentions = max([len(gm) for gm in gold_mentions])
+    max_sentences = max([ii.shape[0] for ii in batch['input_ids']])
+    num_examples = len(gold_mentions)
+    # for i in range(len(gold_mentions)/args.train_batch_size):
+    for i in range(num_examples):
+        # for j in range(i*args.train_batch_size, (i+1)*args.train_batch_size):
+        padded_input_ids, padded_mask = pad_input_ids_and_mask_to_max_sentences(\
+            torch.tensor(batch['input_ids'][i]).to(args.device), torch.tensor(batch['input_mask'][i]).to(args.device), input_ids_pads, mask_pads, max_sentences)
+        input_ids.append(padded_input_ids)
+        input_mask.append(padded_mask)
+        sum_text_len.append(torch.tensor([sum(batch['text_len'][i])]).to(args.device))
+        new_gold_mentions.append(pad_mentions(gold_mentions[i], max_mentions))
+        num_mentions.append(torch.tensor([len(gold_mentions[i])]).to(args.device))
+    return torch.cat(input_ids).reshape(num_examples, max_sentences, -1), \
+        torch.cat(input_mask).reshape(num_examples, max_sentences, -1), \
+            torch.cat(sum_text_len).reshape(num_examples), \
+                torch.cat(new_gold_mentions).reshape(num_examples, max_mentions, 2),\
+                    torch.cat(num_mentions).reshape(num_examples)
