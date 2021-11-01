@@ -5,7 +5,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 from transformers import AutoTokenizer
-from consts import TOKENS_PAD, SPEAKER_PAD
+from consts import TOKENS_PAD, SPEAKER_PAD, GENRES
 
 
 class OntonotesDataset(Dataset):
@@ -25,7 +25,6 @@ class OntonotesDataset(Dataset):
         self.args = args
         self.batch_size = batch_size
         self.subtoken_maps = {}
-        self.genres = {g: i for i, g in enumerate(["bc", "bn", "mz", "nw", "pt", "tc", "wb"])}
         if args.tokenizer_name:
             self.tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name, cache_dir=args.cache_dir)
         elif args.model_name_or_path:
@@ -144,9 +143,10 @@ class OntonotesDataset(Dataset):
         speaker_ids = np.array(speaker_ids)
         assert total_tokens == np.sum(input_mask), (total_tokens, np.sum(input_mask))
 
-        doc_key = example["doc_key"]
-        # self.subtoken_maps[doc_key] = example.get("subtoken_map", None)
-        genre = self.genres.get(doc_key[:2], 0)
+        doc_key = example["doc_key"][:2]
+        genre = GENRES.get(doc_key, 0)
+
+        genre = self.encode_genre_binary(genre)
 
         gold_starts, gold_ends = self.tensorize_mentions(gold_mentions)
         tensorized_example['input_ids'] = input_ids
@@ -162,6 +162,7 @@ class OntonotesDataset(Dataset):
         if is_training and len(input_ids) > self.args.max_training_sentences:
             tensorized_example = self.truncate_example(tensorized_example)
 
+        tensorized_example['speaker_ids'] = self.encode_speaker_binary(tensorized_example['speaker_ids'])
 
         # calc clusters after truncation
         if len(tensorized_example['cluster_ids']) == 0:
@@ -176,6 +177,17 @@ class OntonotesDataset(Dataset):
         tensorized_example['clusters'] = clusters
 
         return tensorized_example
+
+    def encode_genre_binary(self, genre):
+        encoded = np.zeros(len(GENRES)+1, dtype='uint8')
+        encoded[genre] = 1
+        return encoded
+
+    def encode_speaker_binary(self, speaker_ids):
+        speaker_ids_onehot = []
+        for i in range(len(speaker_ids)):
+            speaker_ids_onehot.append(np.eye(self.args.max_num_speakers, dtype='uint8')[speaker_ids[i]])
+        return speaker_ids_onehot
 
     def tensorize_mentions(self, mentions):
         if len(mentions) > 0:

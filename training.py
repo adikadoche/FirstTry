@@ -14,7 +14,7 @@ from optimization import WarmupLinearSchedule, WarmupExponentialSchedule
 import itertools
 from metrics import CorefEvaluator
 from utils import load_from_checkpoint, save_checkpoint
-from consts import TOKENS_PAD
+from consts import TOKENS_PAD, SPEAKER_PAD
 
 from transformers import AdamW, get_constant_schedule_with_warmup
 
@@ -25,6 +25,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     args, evaluator, skip_steps, recent_grad_norms, recent_cluster_logits,
         recent_coref_logits, recent_losses, recent_losses_parts, recent_logits_sums, global_step, lr_scheduler, eval_loader, eval_dataset, threshold):
     input_ids_pads = torch.ones(1, args.max_segment_len, dtype=torch.int, device=args.device) * TOKENS_PAD
+    speaker_ids_pads = torch.ones(1, args.max_segment_len, args.max_num_speakers, dtype=torch.int, device=args.device) * SPEAKER_PAD
     mask_pads = torch.zeros(1, args.max_segment_len, dtype=torch.int, device=args.device)
     for step, batch in enumerate(epoch_iterator):
         if skip_steps > 0:
@@ -46,7 +47,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             else:
                 gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=args.device) for gm in gold_mentions_list]
 
-        input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = tensor_and_remove_empty(batch, gold_mentions_list, args, input_ids_pads, mask_pads)
+        input_ids, input_mask, sum_text_len, gold_mentions, num_mentions, speaker_ids, genre = tensor_and_remove_empty(batch, gold_mentions_list, args, input_ids_pads, mask_pads, speaker_ids_pads)
         if len(input_ids) == 0:
             continue
 
@@ -57,7 +58,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         # input_mask = torch.reshape(input_mask, (1, -1))
         if args.amp:
             with torch.cuda.amp.autocast():
-                outputs = model(input_ids, sum_text_len, input_mask, gold_mentions)
+                outputs = model(input_ids, sum_text_len, input_mask, gold_mentions, num_mentions, speaker_ids, genre)
                 cluster_logits, coref_logits = outputs['cluster_logits'], outputs['coref_logits']
 
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(),
@@ -65,7 +66,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                 evaluator.update(predicted_clusters, gold_clusters)
                 loss = criterion(outputs, gold_matrix)
         else:
-            outputs = model(input_ids, sum_text_len, input_mask, gold_mentions, num_mentions)
+            outputs = model(input_ids, sum_text_len, input_mask, gold_mentions, num_mentions, speaker_ids, genre)
             cluster_logits, coref_logits, mention_logits = outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits']
 
             predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), mention_logits.cpu().detach(),

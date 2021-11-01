@@ -23,6 +23,7 @@ from transformers import LongformerModel
 from typing import List
 from transformers import AutoConfig, CONFIG_MAPPING
 from misc import NestedTensor, accuracy
+from consts import GENRES
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +58,7 @@ class DETR(nn.Module):
 
         self.word_attn_projection = nn.Linear(backbone.config.hidden_size, 1)
         self.span_width_embed = nn.Embedding(30, 20)
-        self.span_proj = nn.Linear(3*backbone.config.hidden_size+20, hidden_dim) # TODO config
+        self.span_proj = nn.Linear(3*backbone.config.hidden_size+20+self.args.max_num_speakers+len(GENRES)+1, hidden_dim) # TODO config
              
         self.mention_classifier = nn.Linear(hidden_dim, 1)
 
@@ -74,7 +75,7 @@ class DETR(nn.Module):
         self.query_token_IO_score = nn.Linear(150, 1)  #TODO: change to 3 so it would be BIO instead of IO
  
 
-    def forward(self, input_ids, sum_text_len, mask, gold_mentions, num_mentions):
+    def forward(self, input_ids, sum_text_len, mask, gold_mentions, num_mentions, speaker_ids, genre):
         """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
@@ -99,9 +100,11 @@ class DETR(nn.Module):
         # # filter out masked tokens
         start_ind = 0
         longfomer_no_pad_list = []
+        speaker_ids_no_pad_list = []
         for i in range(bs):
             end_ind = start_ind + input_ids.shape[1]
             longfomer_no_pad_list.append(torch.masked_select(longformer_emb[start_ind:end_ind], mask[i].unsqueeze(-1)==1).reshape(-1, longformer_emb_size))
+            speaker_ids_no_pad_list.append(torch.masked_select(speaker_ids[i], mask[i].unsqueeze(-1)==1).reshape(-1, speaker_ids[0].shape[-1]))
             start_ind = end_ind
 
         if self.args.random_queries:
@@ -114,7 +117,7 @@ class DETR(nn.Module):
         else:
             span_starts = [torch.tensor([m[0] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
             span_ends = [torch.tensor([m[1] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
-            span_emb, span_mask = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends, num_mentions)  # [mentions, emb']
+            span_emb, span_mask = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends, num_mentions, speaker_ids_no_pad_list, genre)  # [mentions, emb']
             span_emb = self.span_proj(span_emb) # [mentions, emb]
             hs, memory = self.transformer(span_emb, span_mask, raw_query_embed)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
 
@@ -231,7 +234,7 @@ class DETR(nn.Module):
 
         return cluster_logits, torch.cat(coref_logits), torch.cat(mention_logits_masked)
 
-    def get_span_emb(self, context_outputs_list, span_starts, span_ends, num_mentions):
+    def get_span_emb(self, context_outputs_list, span_starts, span_ends, num_mentions, speaker_ids_masked, genre):
         max_mentions = num_mentions.max()
         span_mask_list = []
         span_emb_list = []
@@ -259,6 +262,11 @@ class DETR(nn.Module):
             mention_word_score = self.get_masked_mention_word_scores(context_outputs_list[i], span_starts[i][:num_mentions[i]], span_ends[i][:num_mentions[i]])  # [K, T]
             head_attn_reps = torch.matmul(mention_word_score, context_outputs_list[i])  # [K, emb]
             span_emb_construct.append(head_attn_reps)
+            span_emb_construct.append((genre[i].unsqueeze(0)/1.0).repeat(num_mentions[i], 1))
+            avg_speaker_onehot = []
+            for j in range(num_mentions[i]):
+                avg_speaker_onehot.append((speaker_ids_masked[i][span_starts[i][j]:span_ends[i][j]+1].sum(0) / (span_ends[i][j]-span_starts[i][j]+1.0)).unsqueeze(0))
+            span_emb_construct.append(torch.cat(avg_speaker_onehot,0))
             span_emb_cat = torch.cat(span_emb_construct, 1)
             span_mask = torch.cat([torch.ones(span_emb_cat.shape[0], dtype=torch.int, device=context_outputs_list[i].device), \
                 torch.zeros(max_mentions-span_emb_cat.shape[0], dtype=torch.int, device=context_outputs_list[i].device)])
