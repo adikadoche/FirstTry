@@ -58,7 +58,11 @@ class DETR(nn.Module):
 
         self.word_attn_projection = nn.Linear(backbone.config.hidden_size, 1)
         self.span_width_embed = nn.Embedding(30, 20)
-        self.span_proj = nn.Linear(3*backbone.config.hidden_size+20+self.args.max_num_speakers+len(GENRES)+1, hidden_dim) # TODO config
+        if self.args.is_speaker:
+            # self.span_proj = nn.Linear(3*backbone.config.hidden_size+20+self.args.max_num_speakers+len(GENRES)+1, hidden_dim) # TODO config
+            self.span_proj = nn.Linear(3*backbone.config.hidden_size+20+self.args.max_num_speakers, hidden_dim) # TODO config
+        else:
+            self.span_proj = nn.Linear(3*backbone.config.hidden_size+20, hidden_dim) # TODO config
              
         self.mention_classifier = nn.Linear(hidden_dim, 1)
 
@@ -262,11 +266,12 @@ class DETR(nn.Module):
             mention_word_score = self.get_masked_mention_word_scores(context_outputs_list[i], span_starts[i][:num_mentions[i]], span_ends[i][:num_mentions[i]])  # [K, T]
             head_attn_reps = torch.matmul(mention_word_score, context_outputs_list[i])  # [K, emb]
             span_emb_construct.append(head_attn_reps)
-            span_emb_construct.append((genre[i].unsqueeze(0)/1.0).repeat(num_mentions[i], 1))
-            avg_speaker_onehot = []
-            for j in range(num_mentions[i]):
-                avg_speaker_onehot.append((speaker_ids_masked[i][span_starts[i][j]:span_ends[i][j]+1].sum(0) / (span_ends[i][j]-span_starts[i][j]+1.0)).unsqueeze(0))
-            span_emb_construct.append(torch.cat(avg_speaker_onehot,0))
+            if self.args.is_speaker:
+                # span_emb_construct.append((genre[i].unsqueeze(0)/1.0).repeat(num_mentions[i], 1))
+                avg_speaker_onehot = []
+                for j in range(num_mentions[i]):
+                    avg_speaker_onehot.append((speaker_ids_masked[i][span_starts[i][j]:span_ends[i][j]+1].sum(0) / (span_ends[i][j]-span_starts[i][j]+1.0)).unsqueeze(0))
+                span_emb_construct.append(torch.cat(avg_speaker_onehot,0))
             span_emb_cat = torch.cat(span_emb_construct, 1)
             span_mask = torch.cat([torch.ones(span_emb_cat.shape[0], dtype=torch.int, device=context_outputs_list[i].device), \
                 torch.zeros(max_mentions-span_emb_cat.shape[0], dtype=torch.int, device=context_outputs_list[i].device)])

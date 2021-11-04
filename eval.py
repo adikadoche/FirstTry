@@ -91,7 +91,7 @@ def make_evaluation(model, criterion, eval_loader, eval_dataset, args):
                 wandb.log({'eval_best_f1_checkpoint': best_checkpoint})
                 wandb.log({'eval_second_best_f1': second_best_f1})
                 wandb.log({'eval_second_best_f1_checkpoint': second_best_checkpoint})
-                time.sleep(args.eval_sleep)
+                return True
 
 def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", threshold=0.5):  #TODO: use threshold when resuming from checkpoint rather than searching it
     if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]:
