@@ -5,7 +5,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 from transformers import AutoTokenizer
-from consts import TOKENS_PAD, SPEAKER_PAD, TOKENS_END, TOKENS_START, GENRES
+from consts import TOKENS_PAD, SPEAKER_PAD, GENRES
 
 
 class OntonotesDataset(Dataset):
@@ -17,6 +17,10 @@ class OntonotesDataset(Dataset):
             self.examples = [json.loads(jsonline) for jsonline in lines]
         if args.limit_trainset >= 0:
             self.examples = self.examples[:args.limit_trainset]
+        #TODO:REMOVE
+        for i, e in reversed(list(enumerate(self.examples))):
+            if len(e['clusters']) == 0:
+                del self.examples[i]
         self.is_training = is_training
         self.args = args
         self.batch_size = batch_size
@@ -166,7 +170,6 @@ class OntonotesDataset(Dataset):
 
         if is_training and len(input_ids) > self.args.max_training_sentences:
             tensorized_example = self.truncate_example(tensorized_example)
-        
         tensorized_example['speaker_ids'] = self.encode_speaker_binary(tensorized_example['speaker_ids'])
 
         # calc clusters after truncation
@@ -193,17 +196,6 @@ class OntonotesDataset(Dataset):
         for i in range(len(speaker_ids)):
             speaker_ids_onehot.append(np.eye(self.args.max_num_speakers, dtype='uint8')[speaker_ids[i]])
         return speaker_ids_onehot
-
-    def calc_clusters(self, tensorized_example):
-        if len(tensorized_example['cluster_ids']) == 0:
-            clusters = []
-        else:
-            cluster_ids_int = tensorized_example['cluster_ids'].astype(np.int)
-            clusters = [[] for _ in range(cluster_ids_int.max())]
-            for start, end, cluster_id in zip(tensorized_example['gold_starts'], tensorized_example['gold_ends'], cluster_ids_int):
-                clusters[cluster_id-1].append((start, end))
-            clusters = [c for c in clusters if len(c) > 0]
-        return clusters
 
     def tensorize_mentions(self, mentions):
         if len(mentions) > 0:

@@ -57,11 +57,10 @@ class HungarianMatcher(nn.Module):
         """
         targets_clusters = targets['clusters']
         targets_mentions = targets['mentions']
-        bs = len(targets_clusters)
+        bs = outputs["coref_logits"].shape[0]
         matched_predicted_cluster_id = []
         matched_gold_cluster_id = []
         for i in range(bs):
-
             if targets_clusters[i].shape[1] == 0 or sum(sum(targets_clusters[i])) == 0:
                 matched_predicted_cluster_id.append(False)
                 matched_gold_cluster_id.append(False)
@@ -101,6 +100,8 @@ class HungarianMatcher(nn.Module):
                 mention_logits = mention_logits.repeat(num_queries, 1) # [num_queries, tokens]
                 coref_logits = coref_logits * mention_logits
 
+                coref_logits = torch.index_select(coref_logits, 1, torch.arange(0, real_cluster_target.shape[1]).to(coref_logits.device))
+
                 cost_coref = []
                 for cluster in real_cluster_target:
                     gold_per_token_repeated = cluster.repeat(num_queries, 1) # [num_queries, tokens]
@@ -121,10 +122,10 @@ class HungarianMatcher(nn.Module):
             
             total_cost = total_cost.cpu()
             indices = linear_sum_assignment(total_cost)
-            i, j = indices
+            ind1, ind2 = indices
 
-            matched_predicted_cluster_id.append(torch.as_tensor(i, dtype=torch.int64))
-            matched_gold_cluster_id.append(torch.as_tensor(j, dtype=torch.int64))
+            matched_predicted_cluster_id.append(torch.as_tensor(ind1, dtype=torch.int64))
+            matched_gold_cluster_id.append(torch.as_tensor(ind2, dtype=torch.int64))
 
         return matched_predicted_cluster_id, matched_gold_cluster_id
 

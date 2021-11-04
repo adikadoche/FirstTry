@@ -14,6 +14,7 @@ from coref_analysis import print_predictions, print_per_batch
 from data import get_dataset
 from utils import tensor_and_remove_empty, calc_best_avg_f1, create_gold_matrix, try_measure_len, load_from_checkpoint, create_junk_gold_mentions
 from conll import evaluate_conll
+from consts import TOKENS_PAD, SPEAKER_PAD
 import wandb
 logger = logging.getLogger(__name__)
 
@@ -90,9 +91,7 @@ def make_evaluation(model, criterion, eval_loader, eval_dataset, args):
                 wandb.log({'eval_best_f1_checkpoint': best_checkpoint})
                 wandb.log({'eval_second_best_f1': second_best_f1})
                 wandb.log({'eval_second_best_f1_checkpoint': second_best_checkpoint})
-                # time.sleep(args.eval_sleep)
                 return True
-
 
 def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", threshold=0.5):  #TODO: use threshold when resuming from checkpoint rather than searching it
     if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]:
@@ -126,6 +125,10 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
     count_excess_mentions = 0
     count_excess_pronous = 0
 
+    input_ids_pads = torch.ones(1, args.max_segment_len, dtype=torch.int, device=args.device) * TOKENS_PAD
+    mask_pads = torch.zeros(1, args.max_segment_len, dtype=torch.int, device=args.device)
+    speaker_ids_pads = torch.ones(1, args.max_segment_len, args.max_num_speakers, dtype=torch.int, device=args.device) * SPEAKER_PAD
+
     for batch in tqdm(eval_dataloader, desc="Evaluating"):
         model.eval()
 
@@ -133,21 +136,21 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
         gold_clusters = batch['clusters']
 
 
-        gold_mentions = []
+        gold_mentions_list = []
         # if len(gold_clusters) > 0: #TODO:
-        gold_mentions = [list(set([tuple(m) for c in gc for m in c])) for gc in gold_clusters]
+        gold_mentions_list = [list(set([tuple(m) for c in gc for m in c])) for gc in gold_clusters]
         if args.add_junk:
-            gold_mentions, gold_mentions_vector = create_junk_gold_mentions(gold_mentions, sum_text_len, args.device)
+            gold_mentions_list, gold_mentions_vector = create_junk_gold_mentions(gold_mentions_list, sum_text_len, args.device)
         else:
-            gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=args.device) for gm in gold_mentions]
+            gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=args.device) for gm in gold_mentions_list]
         
-        input_ids, input_mask, sum_text_len, gold_clusters, gold_mentions, genre, speaker_ids = tensor_and_remove_empty(batch, gold_mentions, args)
+        gold_matrix = create_gold_matrix(args.device, sum_text_len, args.num_queries, gold_clusters, gold_mentions_list)
+
+        input_ids, input_mask, sum_text_len, gold_mentions, num_mentions, speaker_ids, genre = tensor_and_remove_empty(batch, gold_mentions_list, args, input_ids_pads, mask_pads, speaker_ids_pads)
         if len(input_ids) == 0:
             continue
             
-        gold_matrix = create_gold_matrix(args.device, sum_text_len, args.num_queries, gold_clusters, gold_mentions)
-
-        all_gold_mentions += gold_mentions
+        all_gold_mentions += gold_mentions_list
         all_input_ids += input_ids    
         all_gold_clusters += gold_clusters
 
@@ -155,7 +158,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
             # orig_input_dim = input_ids.shape
             # input_ids = torch.reshape(input_ids, (1, -1))
             # input_mask = torch.reshape(input_mask, (1, -1))
-            outputs = model(input_ids, sum_text_len, input_mask, gold_mentions, genre, speaker_ids)
+            outputs = model(input_ids, sum_text_len, input_mask, gold_mentions, num_mentions, speaker_ids, genre)
             cluster_logits, coref_logits, mention_logits = outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits']
 
             loss, loss_parts = criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})

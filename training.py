@@ -14,16 +14,19 @@ from optimization import WarmupLinearSchedule, WarmupExponentialSchedule
 import itertools
 from metrics import CorefEvaluator
 from utils import load_from_checkpoint, save_checkpoint
+from consts import TOKENS_PAD, SPEAKER_PAD
 
 from transformers import AdamW, get_constant_schedule_with_warmup
 
 logger = logging.getLogger(__name__)
 
-
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     epoch_iterator, optimizer: torch.optim.Optimizer, scaler: torch.cuda.amp.GradScaler,
                     args, evaluator, skip_steps, recent_grad_norms, recent_cluster_logits,
         recent_coref_logits, recent_losses, recent_losses_parts, recent_logits_sums, global_step, lr_scheduler, eval_loader, eval_dataset, threshold):
+    input_ids_pads = torch.ones(1, args.max_segment_len, dtype=torch.int, device=args.device) * TOKENS_PAD
+    speaker_ids_pads = torch.ones(1, args.max_segment_len, args.max_num_speakers, dtype=torch.int, device=args.device) * SPEAKER_PAD
+    mask_pads = torch.zeros(1, args.max_segment_len, dtype=torch.int, device=args.device)
     for step, batch in enumerate(epoch_iterator):
         if skip_steps > 0:
             skip_steps -= 1
@@ -34,40 +37,40 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         sum_text_len = [sum(tl) for tl in batch['text_len']]
         gold_clusters = batch['clusters']
 
-        gold_mentions = None
+        gold_mentions_list = None
         if args.use_gold_mentions:
             # gold_mentions = []
             # if len(gold_clusters) > 0:  #TODO: create junk clusters even if 0 gold clusters
-            gold_mentions = [list(set([tuple(m) for c in gc for m in c])) for gc in gold_clusters]
+            gold_mentions_list = [list(set([tuple(m) for c in gc for m in c])) for gc in gold_clusters]
             if args.add_junk:
-                gold_mentions, gold_mentions_vector = create_junk_gold_mentions(gold_mentions, sum_text_len, args.device)
+                gold_mentions_list, gold_mentions_vector = create_junk_gold_mentions(gold_mentions_list, sum_text_len, args.device)
             else:
-                gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=args.device) for gm in gold_mentions]
+                gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=args.device) for gm in gold_mentions_list]
 
-        input_ids, input_mask, sum_text_len, gold_clusters, gold_mentions, genre, speaker_ids = tensor_and_remove_empty(batch, gold_mentions, args)
+        input_ids, input_mask, sum_text_len, gold_mentions, num_mentions, speaker_ids, genre = tensor_and_remove_empty(batch, gold_mentions_list, args, input_ids_pads, mask_pads, speaker_ids_pads)
         if len(input_ids) == 0:
             continue
 
-        gold_matrix = create_gold_matrix(args.device, sum_text_len, args.num_queries, gold_clusters, gold_mentions)
+        gold_matrix = create_gold_matrix(args.device, sum_text_len, args.num_queries, gold_clusters, gold_mentions_list)
 
         # orig_input_dim = input_ids.shape
         # input_ids = torch.reshape(input_ids, (1, -1))
         # input_mask = torch.reshape(input_mask, (1, -1))
         if args.amp:
             with torch.cuda.amp.autocast():
-                outputs = model(input_ids, sum_text_len, input_mask, gold_mentions, genre, speaker_ids)
+                outputs = model(input_ids, sum_text_len, input_mask, gold_mentions, num_mentions, speaker_ids, genre)
                 cluster_logits, coref_logits = outputs['cluster_logits'], outputs['coref_logits']
 
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(),
-                                                            threshold, gold_mentions)
+                                                            threshold, gold_mentions_list)
                 evaluator.update(predicted_clusters, gold_clusters)
                 loss = criterion(outputs, gold_matrix)
         else:
-            outputs = model(input_ids, sum_text_len, input_mask, gold_mentions, genre, speaker_ids)
+            outputs = model(input_ids, sum_text_len, input_mask, gold_mentions, num_mentions, speaker_ids, genre)
             cluster_logits, coref_logits, mention_logits = outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits']
 
-            predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), [cl.cpu().detach() for cl in coref_logits], [ml.cpu().detach() for ml in mention_logits],
-                                                        threshold, gold_mentions)
+            predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), mention_logits.cpu().detach(),
+                                                        threshold, gold_mentions_list)
             evaluator.update(predicted_clusters, gold_clusters)
             loss, loss_parts = criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
 
@@ -165,7 +168,7 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
         },
     ]
 
-    optimizer = torch.optim.AdamW(param_dicts, lr=args.lr,
+    optimizer = torch.optim.AdamW(param_dicts, lr=args.lr,# * (1 + args.train_batch_size * args.n_gpu/100.0),
                                   weight_decay=args.weight_decay)
     
     if args.resume_from:
@@ -195,6 +198,7 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
     # multi-gpu training (should be after apex fp16 initialization)
     if args.n_gpu > 1:
         model = torch.nn.DataParallel(model)
+        print("FML")
 
     # Distributed training (should be after apex fp16 initialization)
     if args.local_rank != -1:
@@ -209,10 +213,10 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
         args.t_total = len(train_loader) // args.gradient_accumulation_steps * args.num_train_epochs
 
     # lr_scheduler = get_constant_schedule_with_warmup(optimizer, num_warmup_steps=int(args.warmup_steps / args.train_batch_size))
-    # lr_scheduler = WarmupLinearSchedule(optimizer, warmup_steps=int(args.warmup_steps / args.train_batch_size),
-    #                                     t_total=args.t_total)  # ConstantLRSchedule(optimizer)
-    lr_scheduler = WarmupExponentialSchedule(optimizer, warmup_steps=int(args.warmup_steps / args.train_batch_size),
-                                        gamma=0.99998)  # ConstantLRSchedule(optimizer)
+    lr_scheduler = WarmupLinearSchedule(optimizer, warmup_steps=int(args.warmup_steps),
+                                        t_total=args.t_total)  # ConstantLRSchedule(optimizer)
+    # lr_scheduler = WarmupExponentialSchedule(optimizer, warmup_steps=int(args.warmup_steps / args.train_batch_size),
+    #                                     gamma=0.99998)  # ConstantLRSchedule(optimizer)
     
     if args.train_batch_size > 1:
         args.eval_steps = -1 if args.eval_steps == -1 else max(1, int(round(args.eval_steps / args.train_batch_size)))

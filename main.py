@@ -3,7 +3,7 @@
 # Press Shift+F10 to execute it or replace it with your code.
 # Press Double Shift to search everywhere for classes, files, tool windows, actions, and settings.
 import os
-# os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "2, 3"
 # os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 import cProfile, pstats
 import pandas as pd
@@ -27,7 +27,6 @@ wandb.init(project='coref-detr', entity='adizicher')
 
 
 def main():
-    print("FML")
     args = parse_args()
     if args.resume_from:
         args.output_dir = args.resume_from
@@ -48,7 +47,7 @@ def main():
         torch.distributed.init_process_group(backend='nccl')
         args.n_gpu = 1
     args.device = device
-    # args.n_gpu = 1   #TODO:REMOVEEEEEEEe
+    # args.n_gpu = 2   #TODO:REMOVEEEEEEEe
 
     # Setup logging
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
