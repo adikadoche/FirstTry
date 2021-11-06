@@ -58,11 +58,11 @@ class DETR(nn.Module):
 
         self.word_attn_projection = nn.Linear(backbone.config.hidden_size, 1)
         self.span_width_embed = nn.Embedding(30, 20)
-        if self.args.is_speaker:
+        if self.args.speaker_before_emb:
             # self.span_proj = nn.Linear(3*backbone.config.hidden_size+20+self.args.max_num_speakers+len(GENRES)+1, hidden_dim) # TODO config
-            self.span_proj = nn.Linear(3*backbone.config.hidden_size+20, hidden_dim - self.args.max_num_speakers) # TODO config
-        else:
             self.span_proj = nn.Linear(3*backbone.config.hidden_size+20 + self.args.max_num_speakers, hidden_dim) # TODO config
+        else:
+            self.span_proj = nn.Linear(3*backbone.config.hidden_size+20, hidden_dim - self.args.max_num_speakers) # TODO config
              
         self.mention_classifier = nn.Linear(hidden_dim, 1)
 
@@ -123,7 +123,7 @@ class DETR(nn.Module):
             span_ends = [torch.tensor([m[1] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
             span_emb, span_mask, avg_speaker_onehot = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends, num_mentions, speaker_ids_no_pad_list, genre)  # [mentions, emb']
             span_emb = self.span_proj(span_emb) # [mentions, emb]
-            if self.args.is_speaker:
+            if not self.args.speaker_before_emb:
                 span_emb = torch.cat([span_emb, avg_speaker_onehot], 2)
             hs, memory = self.transformer(span_emb, span_mask, raw_query_embed)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
 
@@ -275,8 +275,8 @@ class DETR(nn.Module):
             for j in range(num_mentions[i]):
                 avg_speaker_onehot.append((speaker_ids_masked[i][span_starts[i][j]:span_ends[i][j]+1].sum(0) / (span_ends[i][j]-span_starts[i][j]+1.0)).unsqueeze(0))
             avg_speaker_onehot = torch.cat(avg_speaker_onehot,0)
-            if not self.args.is_speaker:
-                span_emb_construct.append(torch.cat(avg_speaker_onehot,0))
+            if self.args.speaker_before_emb:
+                span_emb_construct.append(avg_speaker_onehot)
             span_emb_cat = torch.cat(span_emb_construct, 1)
             span_mask = torch.cat([torch.ones(span_emb_cat.shape[0], dtype=torch.int, device=context_outputs_list[i].device), \
                 torch.zeros(max_mentions-span_emb_cat.shape[0], dtype=torch.int, device=context_outputs_list[i].device)])
@@ -284,7 +284,7 @@ class DETR(nn.Module):
 
             span_emb_list.append(span_emb_cat.unsqueeze(0))  
             span_mask_list.append(span_mask.unsqueeze(0))  
-            avg_speaker_onehot_list.append(avg_speaker_onehot.unsqueeze(0))
+            avg_speaker_onehot_list.append(torch.cat([avg_speaker_onehot, torch.zeros(max_mentions-avg_speaker_onehot.shape[0], avg_speaker_onehot.shape[1], dtype=torch.float, device=context_outputs_list[i].device)]).unsqueeze(0))
         span_emb_tensor = torch.cat(span_emb_list, 0)
         span_mask_tensor = torch.cat(span_mask_list, 0)
         return span_emb_tensor, span_mask_tensor, torch.cat(avg_speaker_onehot_list, 0)  # [k, emb], [K, T]
