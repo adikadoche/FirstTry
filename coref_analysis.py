@@ -217,12 +217,12 @@ count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pro
 count_missed_pronouns, count_excess_pronous, count_excess_mentions, tokenizer):
     predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach().unsqueeze(0), coref_logits.cpu().detach().unsqueeze(0), mention_logits.cpu().detach().unsqueeze(0),
                                                     threshold, [gold_mentions])
+
     gold, gold_correct, pred, pred_correct, pred_to_most_similar_gold, pred_to_most_similar_golds_list, gold_is_completely_missed, gold_to_most_similar_pred = match_clusters(
         gold_clusters, predicted_clusters[0])
 
     pred_is_completely_missed = [similar_pred == -1 for similar_pred in pred_to_most_similar_gold]
     real_input_ids = [t for t in input_ids.reshape(-1) if t != 1]
-
     tokens = tokenizer.convert_ids_to_tokens(real_input_ids)
     tokens = [t.replace('Ġ', '') for t in tokens]
     tokens = [t.replace('<pad>', '') for t in tokens]

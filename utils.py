@@ -221,13 +221,11 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, thresh
         for i in range(bs):
             cur_cluster_bool = cluster_bools[i]
             cur_coref_logits = coref_logits[i]
-            
             cur_mention_bools = mention_logits[i].squeeze(-1).numpy() >= threshold
             
             cur_mention_bools = np.tile(cur_mention_bools.reshape([1, 1, -1]), (1, cur_cluster_bool.shape[0], 1))
             cur_cluster_bool = np.tile(cur_cluster_bool.reshape([1, -1, 1]), (1, 1, cur_coref_logits.shape[-1]))
             cluster_mention_mask = cur_mention_bools & cur_cluster_bool
-
             cluster_mention_mask = cluster_mention_mask.astype(int)
             
             coref_logits_after_cluster_bool = np.multiply(cluster_mention_mask, cur_coref_logits.unsqueeze(0))

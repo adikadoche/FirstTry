@@ -133,7 +133,6 @@ class OntonotesDataset(Dataset):
             input_ids.append(sent_input_ids)
             speaker_ids.append(sent_speaker_ids)
             input_mask.append(sent_input_mask)
-
         clusters = [
             [(word_idx_to_start_token_idx[start], word_idx_to_end_token_idx[end]) for start, end in cluster] for
             cluster in old_clusters]
@@ -170,6 +169,7 @@ class OntonotesDataset(Dataset):
 
         if is_training and len(input_ids) > self.args.max_training_sentences:
             tensorized_example = self.truncate_example(tensorized_example)
+
         tensorized_example['speaker_ids'] = self.encode_speaker_binary(tensorized_example['speaker_ids'])
 
         # calc clusters after truncation

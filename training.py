@@ -96,7 +96,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             scaler.scale(loss).backward()
         else:
             loss.backward()
-        # total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
 
         # recent_grad_norms.append(total_norm.item())
         recent_losses.append(loss.item())
@@ -213,7 +213,7 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
         args.t_total = len(train_loader) // args.gradient_accumulation_steps * args.num_train_epochs
 
     # lr_scheduler = get_constant_schedule_with_warmup(optimizer, num_warmup_steps=int(args.warmup_steps / args.train_batch_size))
-    lr_scheduler = WarmupLinearSchedule(optimizer, warmup_steps=int(args.warmup_steps * args.per_gpu_train_batch_size),
+    lr_scheduler = WarmupLinearSchedule(optimizer, warmup_steps=int(args.warmup_steps * (1 + (args.per_gpu_train_batch_size - 1) / 5)),
                                         t_total=args.t_total)  # ConstantLRSchedule(optimizer)
     # lr_scheduler = WarmupExponentialSchedule(optimizer, warmup_steps=int(args.warmup_steps / args.train_batch_size),
     #                                     gamma=0.99998)  # ConstantLRSchedule(optimizer)
