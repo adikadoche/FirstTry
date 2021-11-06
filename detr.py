@@ -202,8 +202,8 @@ class DETR(nn.Module):
         # memory [bs, tokens, emb]
 
         cluster_logits = self.is_cluster(last_hs).sigmoid()  # [bs, num_queries, 1]
-        # if self.args.add_junk:
-        mention_logits = self.mention_classifier(memory).sigmoid()  # [bs, tokens, 1]
+        if self.args.add_junk:
+            mention_logits = self.mention_classifier(memory).sigmoid()  # [bs, tokens, 1]
 
         #TODO: check cross attention? (without values)
 
@@ -235,11 +235,15 @@ class DETR(nn.Module):
             cur_coref_logits = coref_logits_unnorm.sigmoid()
             coref_logits.append(torch.cat([cur_coref_logits, (torch.ones(1, cur_coref_logits.shape[1], max_num_mentions-cur_coref_logits.shape[2]) * -1).to(cur_coref_logits.device)], dim=2))
 
-            mention_logits_masked.append(torch.cat([mention_logits[i][span_mask[i]==1].unsqueeze(0), (torch.ones(1, max_num_mentions-cur_coref_logits.shape[2], 1) * -1).to(mention_logits.device)], dim=1))
+            if self.args.add_junk:
+                mention_logits_masked.append(torch.cat([mention_logits[i][span_mask[i]==1].unsqueeze(0), (torch.ones(1, max_num_mentions-cur_coref_logits.shape[2], 1) * -1).to(mention_logits.device)], dim=1))
         # if not is_gold_mention:  #TODO: do I want this?
         #     coref_logits = coref_logits * cluster_logits
 
-        return cluster_logits, torch.cat(coref_logits), torch.cat(mention_logits_masked)
+        if self.args.add_junk:
+            mention_logits_masked = torch.cat(mention_logits_masked)
+
+        return cluster_logits, torch.cat(coref_logits), mention_logits_masked
 
     def get_span_emb(self, context_outputs_list, span_starts, span_ends, num_mentions, speaker_ids_masked, genre):
         max_mentions = num_mentions.max()
@@ -586,8 +590,8 @@ class MatchingLoss(nn.Module):
             # Compute the average number of target boxes accross all nodes, for normalization purposes
             coref_logits = outputs["coref_logits"][i].squeeze(0)  # [num_queries, tokens]
             cluster_logits = outputs["cluster_logits"][i].squeeze() # [num_queries]
-            # if self.args.add_junk:
-            mention_logits = outputs["mention_logits"][i].squeeze() # [tokens]
+            if self.args.add_junk:
+                mention_logits = outputs["mention_logits"][i].squeeze() # [tokens]
             num_queries, doc_len = coref_logits.shape
             #TODO: normalize according to number of clusters? (identical to DETR)
 
@@ -604,7 +608,7 @@ class MatchingLoss(nn.Module):
                 weight_cluster[matched_predicted_cluster_id[i]] = 1
             cost_is_cluster = F.binary_cross_entropy(cluster_logits, gold_is_cluster, weight=weight_cluster)
                 
-            if sum(targets_mentions[i].shape) == 0:
+            if not self.args.add_junk or sum(targets_mentions[i].shape) == 0:
                 cost_is_mention = torch.tensor(0)
             else:
                 if sum(mention_logits.shape) == 0:
