@@ -170,10 +170,11 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
                     losses_parts[key] = loss_parts[key]
             batch_sizes.append(loss.shape[0]) 
 
-        all_mention_logits_cuda += [ml.detach().clone() for ml in mention_logits]
+        if args.add_junk:
+            all_mention_logits_cuda += [ml.detach().clone() for ml in mention_logits]
+            all_mention_logits_cpu += [ml.detach().cpu() for ml in mention_logits]
         all_cluster_logits_cuda += [cl.detach().clone() for cl in cluster_logits]
         all_coref_logits_cuda += [cl.detach().clone() for cl in coref_logits]
-        all_mention_logits_cpu += [ml.detach().cpu() for ml in mention_logits]
         all_cluster_logits_cpu += [cl.detach().cpu() for cl in cluster_logits]
         all_coref_logits_cpu += [cl.detach().cpu() for cl in coref_logits]
 
