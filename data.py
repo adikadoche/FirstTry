@@ -143,6 +143,7 @@ def get_dataset(args, tokenizer, evaluate=False):
     return coref_dataset
 
 def collate_fn(batch):
+    batch = batch[0]
     batch_concat = {}
     for key in batch[0].keys():
         batch_concat[key] = [0] * len(batch)
@@ -150,13 +151,24 @@ def collate_fn(batch):
             batch_concat[key][i] = batch[i][key]
     return batch_concat
 
-def get_data_objects(args, data_file_path, is_training):
-    if is_training:
-        per_gpu_batch_size = args.per_gpu_train_batch_size
-    else:
-        per_gpu_batch_size = args.per_gpu_eval_batch_size
+    
+# def collate_fn(batch):
+#     batch_concat = {}
+#     for key in batch[0][0].keys():
+#         batch_concat[key] = [0] * len(batch)
+#         for i in range(len(batch)):
+#             batch_concat[key][i] = [0] * len(batch[i])
+#             for j in range(len(batch[i])):
+#                 batch_concat[key][i][j] = batch[i][j][key]
+#     return batch_concat
 
-    batch_size = per_gpu_batch_size * max(1, args.n_gpu)
+def get_data_objects(args, data_file_path, is_training):
+    # if is_training:
+    #     per_gpu_batch_size = args.per_gpu_train_batch_size
+    # else:
+    #     per_gpu_batch_size = args.per_gpu_eval_batch_size
+
+    batch_size = max(1, args.n_gpu)
     dataset = OntonotesDataset(data_file_path, is_training, batch_size, args)
     # Note that DistributedSampler samples randomly
     if is_training:

@@ -236,7 +236,6 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
     logger.info("***** Running training *****")
     logger.info("  Num steps per epoch = %d", try_measure_len(train_loader))
     logger.info("  Num Epochs = %d", args.num_train_epochs if args.num_train_epochs is not None else -1)
-    logger.info("  Instantaneous batch size per GPU = %d", args.per_gpu_train_batch_size)
     logger.info("  Total train batch size (w. parallel, distributed & accumulation) = %d",
                 args.train_batch_size * args.gradient_accumulation_steps * (
                     torch.distributed.get_world_size() if args.local_rank != -1 else 1))

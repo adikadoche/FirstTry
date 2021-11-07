@@ -10,6 +10,7 @@ import numpy as np
 import torch.distributed as dist
 from tqdm import tqdm
 from metrics import CorefEvaluator
+from consts import TOKENS_PAD, SPEAKER_PAD
 
 from consts import NULL_ID_FOR_COREF
 
@@ -366,12 +367,25 @@ def create_junk_gold_mentions(gold_mentions, text_len, device):
 
 
 def pad_input_ids_and_mask_to_max_sentences(input_ids, mask, speaker_ids, input_ids_pads, mask_pads, speaker_ids_pads, max_sentences):
-    if input_ids.shape[0] == max_sentences:
+    if input_ids.shape[0] == max_sentences or max_sentences == 1:
         return input_ids.unsqueeze(0), mask.unsqueeze(0), speaker_ids.unsqueeze(0)
     padded_input_ids = torch.cat([input_ids, input_ids_pads.repeat(max_sentences - input_ids.shape[0], 1)]).unsqueeze(0)
     padded_mask = torch.cat([mask, mask_pads.repeat(max_sentences - input_ids.shape[0], 1)]).unsqueeze(0)
     padded_speaker_ids = torch.cat([speaker_ids, speaker_ids_pads.repeat(max_sentences - input_ids.shape[0], 1, 1)]).unsqueeze(0)
     return padded_input_ids, padded_mask, padded_speaker_ids
+
+def pad_to_max_len_sentences(input_ids, mask, speaker_ids, max_len_sentences, max_num_speakers):
+    mask += [0] * (max_len_sentences - len(input_ids))
+    speaker_ids += [SPEAKER_PAD] * (max_len_sentences - len(input_ids))
+    speaker_ids = encode_speaker_binary(np.array(speaker_ids), max_num_speakers)
+    input_ids += [TOKENS_PAD] * (max_len_sentences - len(input_ids))  
+    return np.array(input_ids), np.array(mask), speaker_ids
+
+def encode_speaker_binary(speaker_ids, max_num_speakers):
+    speaker_ids_onehot = []
+    for i in range(len(speaker_ids)):
+        speaker_ids_onehot.append(np.eye(max_num_speakers, dtype='uint8')[speaker_ids[i]])
+    return speaker_ids_onehot
 
 def pad_mentions(gold_mentions, max_mentions):
     padded_gold_mentions = torch.tensor(np.asarray(gold_mentions + (max_mentions-len(gold_mentions)) * [(-1, -1)])).unsqueeze(0)
@@ -380,13 +394,17 @@ def pad_mentions(gold_mentions, max_mentions):
 def tensor_and_remove_empty(batch, gold_mentions, args, input_ids_pads, mask_pads, speaker_ids_pads):
     input_ids, input_mask, sum_text_len, num_mentions, new_gold_mentions, speaker_ids, genre = [], [], [], [], [], [], []
     max_mentions = max([len(gm) for gm in gold_mentions])
-    max_sentences = max([ii.shape[0] for ii in batch['input_ids']])
+    # max_sentences = max([ii.shape[0] for ii in batch['input_ids']])
+    max_sentences = 1
+    max_len_sentences = max([sum(tl) for tl in batch['text_len']])
     num_examples = len(gold_mentions)
     for i in range(num_examples):
+        padded_input_ids, padded_mask, padded_speaker_ids = \
+            pad_to_max_len_sentences(batch['input_ids'][i][0], batch['input_mask'][i][0], batch['speaker_ids'][i][0], max_len_sentences, args.max_num_speakers)
         padded_input_ids, padded_mask, padded_speaker_ids = pad_input_ids_and_mask_to_max_sentences(\
-            torch.tensor(batch['input_ids'][i]).to(args.device), 
-            torch.tensor(batch['input_mask'][i]).to(args.device), 
-            torch.tensor(batch['speaker_ids'][i]).to(args.device),
+            torch.tensor(padded_input_ids).to(args.device), 
+            torch.tensor(padded_mask).to(args.device), 
+            torch.tensor(padded_speaker_ids).to(args.device),
             input_ids_pads, mask_pads, speaker_ids_pads, max_sentences)
         input_ids.append(padded_input_ids)
         input_mask.append(padded_mask)
@@ -400,5 +418,5 @@ def tensor_and_remove_empty(batch, gold_mentions, args, input_ids_pads, mask_pad
             torch.cat(sum_text_len).reshape(num_examples), \
                 torch.cat(new_gold_mentions).reshape(num_examples, max_mentions, 2),\
                     torch.cat(num_mentions).reshape(num_examples),\
-                        torch.cat(speaker_ids).reshape(num_examples, max_sentences, args.max_segment_len, -1),\
+                        torch.cat(speaker_ids).reshape(num_examples, max_sentences, -1, args.max_num_speakers),\
                     torch.cat(genre).reshape(num_examples, -1)

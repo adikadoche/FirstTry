@@ -125,7 +125,7 @@ def parse_args():
 
     parser.add_argument('--max_training_sentences', default=3, type=int)
     parser.add_argument('--max_num_speakers', default=20, type=int)
-    parser.add_argument('--max_segment_len', default=512, type=int)
+    parser.add_argument('--max_segment_len', default=5000, type=int)
     parser.add_argument('--limit_trainset', default=-1, type=int)
     parser.add_argument('--use_gold_mentions', action='store_true')
     parser.add_argument('--softmax_coref', action='store_true')
@@ -137,10 +137,6 @@ def parse_args():
     parser.add_argument('--attn_softmax_clusters', action='store_true')
 
     # Batch
-    parser.add_argument("--per_gpu_train_batch_size", default=1, type=int,
-                        help="Batch size per GPU/CPU for training.")
-    parser.add_argument("--per_gpu_eval_batch_size", default=1, type=int,
-                        help="Batch size per GPU/CPU for evaluation.")
     parser.add_argument('--gradient_accumulation_steps', type=int, default=1,
                         help="Number of updates steps to accumulate before performing a backward/update pass.")
     parser.add_argument('--num_workers', type=int, default=0)
