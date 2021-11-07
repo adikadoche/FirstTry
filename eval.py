@@ -10,7 +10,7 @@ from scipy.optimize import linear_sum_assignment as linear_assignment
 import torch
 from tqdm import tqdm
 from coref_bucket_batch_sampler import BucketBatchSampler
-from coref_analysis import print_predictions, print_per_batch
+from coref_analysis import print_predictions, error_analysis
 from data import get_dataset
 from utils import tensor_and_remove_empty, calc_best_avg_f1, create_gold_matrix, try_measure_len, load_from_checkpoint, create_junk_gold_mentions
 from conll import evaluate_conll
@@ -182,19 +182,33 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
     losses_parts = {key:np.average(losses_parts[key]) for key in losses_parts.keys()}
 
     p, r, f1, threshold, metrics = calc_best_avg_f1(all_cluster_logits_cpu, all_coref_logits_cpu, all_mention_logits_cpu, all_gold_clusters, all_gold_mentions)
+
+    print_predictions(all_cluster_logits_cuda, all_coref_logits_cuda, all_mention_logits_cuda, all_gold_clusters, all_gold_mentions, all_input_ids, threshold, args, eval_dataset.tokenizer)
+    prec_gold_to_one_pred, prec_pred_to_one_gold, avg_gold_split_without_perfect, avg_gold_split_with_perfect, \
+        avg_pred_split_without_perfect, avg_pred_split_with_perfect, prec_biggest_gold_in_pred_without_perfect, \
+            prec_biggest_gold_in_pred_with_perfect, prec_biggest_pred_in_gold_without_perfect, prec_biggest_pred_in_gold_with_perfect = \
+                error_analysis(all_cluster_logits_cuda, all_coref_logits_cuda, all_mention_logits_cuda, all_gold_clusters, all_gold_mentions, all_input_ids, threshold)
+
     results = {'loss': eval_loss,
                'avg_f1': f1,
                'threshold': threshold,
                'precision': p,
                'recall': r,  
+               'prec_gold_to_one_pred': prec_gold_to_one_pred,  
+               'prec_pred_to_one_gold': prec_pred_to_one_gold,  
+               'avg_gold_split_without_perfect': avg_gold_split_without_perfect,  
+               'avg_gold_split_with_perfect': avg_gold_split_with_perfect,  
+               'avg_pred_split_without_perfect': avg_pred_split_without_perfect,  
+               'avg_pred_split_with_perfect': avg_pred_split_with_perfect,  
+               'prec_biggest_gold_in_pred_without_perfect': prec_biggest_gold_in_pred_without_perfect, 
+               'prec_biggest_gold_in_pred_with_perfect': prec_biggest_gold_in_pred_with_perfect,  
+               'prec_biggest_pred_in_gold_without_perfect': prec_biggest_pred_in_gold_without_perfect,  
+               'prec_biggest_pred_in_gold_with_perfect': prec_biggest_pred_in_gold_with_perfect,  
                'prec_correct_mentions': metrics[0],
                'prec_gold': metrics[1],
                'prec_junk': metrics[2],
                'prec_correct_gold_clusters': metrics[3],
                'prec_correct_predict_clusters': metrics[4]} | losses_parts
-
-
-    print_predictions(all_cluster_logits_cuda, all_coref_logits_cuda, all_mention_logits_cuda, all_gold_clusters, all_gold_mentions, all_input_ids, threshold, args, eval_dataset.tokenizer)
 
     output_eval_file = os.path.join(args.output_dir, "eval_results.txt")
     with open(output_eval_file, "a") as writer:
