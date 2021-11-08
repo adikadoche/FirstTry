@@ -102,13 +102,15 @@ class DETR(nn.Module):
         bs = input_ids.shape[0]
         input_ids_r = input_ids.reshape(input_ids.shape[0], -1)
         mask_r = mask.reshape(mask.shape[0], -1)
-        speaker_ids_r = speaker_ids.reshape(speaker_ids.shape[0], -1, speaker_ids.shape[-1])
+        if self.args.speaker != 'text':
+            speaker_ids_r = speaker_ids.reshape(speaker_ids.shape[0], -1, speaker_ids.shape[-1])
         longfomer_no_pad_list = []
         speaker_ids_no_pad_list = []
         for i in range(input_ids_r.shape[0]):
             masked_ids = input_ids_r[i][mask_r[i]==1]
             longfomer_no_pad_list.append(self.backbone(masked_ids.unsqueeze(0), attention_mask=torch.ones_like(masked_ids).unsqueeze(0))[0].squeeze(0))
-            speaker_ids_no_pad_list.append(speaker_ids_r[i][mask_r[i]==1])
+            if self.args.speaker != 'text':
+                speaker_ids_no_pad_list.append(speaker_ids_r[i][mask_r[i]==1])
         # input_ids_r = input_ids_r.narrow(-1, 0, max(sum_text_len))
         # mask_r = mask_r.narrow(-1, 0, max(sum_text_len))
         # longformer_emb = self.backbone(input_ids.reshape(-1, input_ids.shape[-1]), attention_mask=mask.reshape(-1, mask.shape[-1]))[0]  # Getting representation for each token in the text

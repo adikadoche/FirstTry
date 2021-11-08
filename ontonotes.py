@@ -95,11 +95,15 @@ class OntonotesDataset(Dataset):
         while sent_idx < len(sentences):
             concat_sentence = []
             concat_speaker = []
+            unique_speaker = []
             sentence = sentences[sent_idx]
             speaker = speakers[sent_idx]
-            while len(self.tokenizer.encode(' '.join(concat_sentence + sentence))) < max_sentence_length and sent_idx < len(sentences):
+            while len(self.tokenizer.encode(' '.join(concat_sentence + sentence))) + len(self.tokenizer.encode(' '.join(unique_speaker+list(set(speaker))))) + \
+                4 * len(set(concat_speaker+speaker)) \
+                < max_sentence_length and sent_idx < len(sentences):
                 concat_sentence += sentence
                 concat_speaker += speaker
+                unique_speaker += set(speaker)
                 sent_idx += 1
                 if sent_idx >= len(sentences):
                     break
@@ -159,7 +163,7 @@ class OntonotesDataset(Dataset):
         input_ids = np.array(input_ids)
         input_mask = np.array(input_mask)
         speaker_ids = np.array(speaker_ids)
-        assert total_tokens == np.sum(input_mask), (total_tokens, np.sum(input_mask))
+        # assert total_tokens == np.sum(input_mask), (total_tokens, np.sum(input_mask))
 
         doc_key = example["doc_key"][:2]
         genre = GENRES.get(doc_key, 0)

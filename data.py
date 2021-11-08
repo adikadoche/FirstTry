@@ -58,8 +58,8 @@ class CorefDataset(Dataset):
             last_speaker = None
             for idx, (word, speaker) in enumerate(zip(words, speakers)):
                 if last_speaker != speaker:
-                    speaker_prefix = [SPEAKER_START] + self.tokenizer.encode(" " + speaker,
-                                                                             add_special_tokens=False) + [SPEAKER_END]
+                    speaker_prefix = [SPEAKER_START_ID] + self.tokenizer.encode(" " + speaker,
+                                                                             add_special_tokens=False) + [SPEAKER_END_ID]
                     last_speaker = speaker
                 else:
                     speaker_prefix = []
