@@ -98,18 +98,29 @@ class DETR(nn.Module):
         # mask_cat = torch.cat(mask, dim=1).squeeze(0)
 
         bs = input_ids.shape[0]
-        longformer_emb = self.backbone(input_ids.reshape(-1, input_ids.shape[-1]), attention_mask=mask.reshape(-1, mask.shape[-1]))[0]  # Getting representation for each token in the text
-
-        longformer_emb_size = longformer_emb.shape[-1]
-        # # filter out masked tokens
-        start_ind = 0
+        input_ids_r = input_ids.reshape(input_ids.shape[0], -1)
+        mask_r = mask.reshape(mask.shape[0], -1)
+        speaker_ids_r = speaker_ids.reshape(speaker_ids.shape[0], -1, speaker_ids.shape[-1])
         longfomer_no_pad_list = []
         speaker_ids_no_pad_list = []
-        for i in range(bs):
-            end_ind = start_ind + input_ids.shape[1]
-            longfomer_no_pad_list.append(torch.masked_select(longformer_emb[start_ind:end_ind], mask[i].unsqueeze(-1)==1).reshape(-1, longformer_emb_size))
-            speaker_ids_no_pad_list.append(torch.masked_select(speaker_ids[i], mask[i].unsqueeze(-1)==1).reshape(-1, speaker_ids[0].shape[-1]))
-            start_ind = end_ind
+        for i in range(input_ids_r.shape[0]):
+            masked_ids = input_ids_r[i][mask_r[i]==1]
+            longfomer_no_pad_list.append(self.backbone(masked_ids.unsqueeze(0), attention_mask=torch.ones_like(masked_ids).unsqueeze(0))[0])
+            speaker_ids_no_pad_list.append(speaker_ids_r[i][mask_r[i]==1])
+        # input_ids_r = input_ids_r.narrow(-1, 0, max(sum_text_len))
+        # mask_r = mask_r.narrow(-1, 0, max(sum_text_len))
+        # longformer_emb = self.backbone(input_ids.reshape(-1, input_ids.shape[-1]), attention_mask=mask.reshape(-1, mask.shape[-1]))[0]  # Getting representation for each token in the text
+
+        # longformer_emb_size = longformer_emb.shape[-1]
+        # # # filter out masked tokens
+        # start_ind = 0
+        # longfomer_no_pad_list = []
+        # speaker_ids_no_pad_list = []
+        # for i in range(bs):
+        #     end_ind = start_ind + input_ids.shape[1]
+        #     longfomer_no_pad_list.append(torch.masked_select(longformer_emb[start_ind:end_ind], mask[i].unsqueeze(-1)==1).reshape(-1, longformer_emb_size))
+        #     speaker_ids_no_pad_list.append(torch.masked_select(speaker_ids[i], mask[i].unsqueeze(-1)==1).reshape(-1, speaker_ids[0].shape[-1]))
+        #     start_ind = end_ind
 
         if self.args.random_queries:
             raw_query_embed = torch.normal(torch.zeros_like(self.query_embed.weight), 1) * self.query_sigma + self.query_mu #raw_query_embed = torch.normal(torch.zeros_like(self.query_embed.weight), 0.5)
@@ -117,7 +128,7 @@ class DETR(nn.Module):
             raw_query_embed = self.query_embed.weight
 
         if not self.args.use_gold_mentions:
-            hs, memory = self.transformer(self.input_proj(longformer_emb), mask, raw_query_embed) # [dec_layers, 1, num_queries, emb], [1, seg*seq, emb]
+            hs, memory = self.transformer(self.input_proj(longfomer_no_pad_list), mask, raw_query_embed) # [dec_layers, 1, num_queries, emb], [1, seg*seq, emb]
         else:
             span_starts = [torch.tensor([m[0] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
             span_ends = [torch.tensor([m[1] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
