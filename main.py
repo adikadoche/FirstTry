@@ -4,7 +4,7 @@
 # Press Double Shift to search everywhere for classes, files, tool windows, actions, and settings.
 import os
 # os.environ["CUDA_VISIBLE_DEVICES"] = "2, 3"
-# os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 import cProfile, pstats
 import pandas as pd
 import io
@@ -47,7 +47,7 @@ def main():
         torch.distributed.init_process_group(backend='nccl')
         args.n_gpu = 1
     args.device = device
-    # args.n_gpu = 2   #TODO:REMOVEEEEEEEe
+    # args.n_gpu = 1   #TODO:REMOVEEEEEEEe
 
     # Setup logging
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',

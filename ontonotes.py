@@ -52,16 +52,22 @@ class OntonotesDataset(Dataset):
                 print(ind)
         tensorized_examples = sorted(tensorized_examples, key=lambda x: x['text_len'])
 
+        max_sentence_length = min(self.args.max_segment_len, self.args.max_seq_length)
         tensorized_batched_examples = []
         ind = 0
         while ind < len(tensorized_examples):
             batch = []
             total_len = 0
-            while ind < len(tensorized_examples) and total_len + sum(tensorized_examples[ind]['text_len']) < self.args.max_total_seq_len:
-                total_len += sum(tensorized_examples[ind]['text_len'])
+            if sum(tensorized_examples[ind]['text_len']) >= max_sentence_length:
                 print(sum(tensorized_examples[ind]['text_len']))
                 batch.append(tensorized_examples[ind])
-                ind += 1
+                ind += 1                
+            else:
+                while ind < len(tensorized_examples) and total_len + sum(tensorized_examples[ind]['text_len']) < max_sentence_length:
+                    total_len += sum(tensorized_examples[ind]['text_len'])
+                    print(sum(tensorized_examples[ind]['text_len']))
+                    batch.append(tensorized_examples[ind])
+                    ind += 1
             tensorized_batched_examples.append(batch)
 
         return tensorized_batched_examples
@@ -94,7 +100,7 @@ class OntonotesDataset(Dataset):
         speaker_dict = self.get_speaker_dict(self.flatten(speakers))
         sentence_map = [] #example['sentence_map']
 
-        max_sentence_length = self.args.max_segment_len
+        max_sentence_length = min(self.args.max_segment_len, self.args.max_seq_length)
 
         input_ids, input_mask, speaker_ids, text_len = [], [], [], []
         word_idx = 0
@@ -119,7 +125,7 @@ class OntonotesDataset(Dataset):
             current_len_encoded = len(current_encoded)+2
             sent_idx += 1
 
-            while current_len_encoded < max_sentence_length and sent_idx < len(sentences):
+            while sent_idx < len(sentences):
                 if not is_first:
                     concat_tokens += current_encoded
                     word_idx = tmp_word_idx
@@ -172,7 +178,7 @@ class OntonotesDataset(Dataset):
         # input_ids = np.array(input_ids)
         # input_mask = np.array(input_mask)
         # speaker_ids = np.array(speaker_ids)
-        assert total_tokens == np.sum(input_mask), (total_tokens, np.sum(input_mask))
+        # assert total_tokens == np.sum(input_mask), (total_tokens, np.sum(input_mask))
 
         doc_key = example["doc_key"][:2]
         genre = GENRES.get(doc_key, 0)

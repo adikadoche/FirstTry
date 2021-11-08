@@ -178,25 +178,6 @@ class DETR(nn.Module):
             new_span_emb.append(cur_span_emb.unsqueeze(0))
         return torch.cat(new_span_emb), torch.cat(mask_cat)
 
-    def make_batch_same_len(self, input_ids, mask, sum_text_len):
-        input_ids_pads = torch.ones(1, self.args.max_segment_len, dtype=torch.int, device=input_ids[0].device) * TOKENS_PAD
-        mask_pads = torch.zeros(1, self.args.max_segment_len, dtype=torch.int, device=input_ids[0].device)
-
-        max_seq_num = np.argmax(sum_text_len)
-        seq_num = input_ids[max_seq_num].shape[0]
-
-        new_input_ids = []
-        new_maks = []
-        for i in range(len(input_ids)):
-            if input_ids[i].shape[0] < seq_num:
-                input_ids[i] = torch.cat([input_ids[i], input_ids_pads.detach().clone().repeat([seq_num - input_ids[i].shape[0], 1])])
-                mask[i] = torch.cat([mask[i], mask_pads.detach().clone().repeat([seq_num - mask[i].shape[0], 1])])
-            new_input_ids.append(input_ids[i].reshape([1, seq_num*self.args.max_segment_len]))
-            new_maks.append(mask[i].reshape([1, seq_num*self.args.max_segment_len]))
-        input_ids = torch.cat(new_input_ids)
-        mask = torch.cat(new_maks)
-        return input_ids, mask
-
     def calc_cluster_and_coref_logits(self, last_hs, memory, is_gold_mention, span_mask, max_num_mentions):
         # last_hs [bs, num_queries, emb]
         # memory [bs, tokens, emb]
@@ -255,6 +236,11 @@ class DETR(nn.Module):
         for i in range(len(num_mentions)):
             span_emb_construct = []
             # print(f'span_starts max {span_starts[i].max()} min {span_starts[i].min()}')
+            print(len(context_outputs_list))
+            print(context_outputs_list[i].shape)
+            print(span_starts[i][:num_mentions[i]])
+            print(span_starts[i].shape)
+            print(num_mentions[i])
             span_start_emb = context_outputs_list[i][span_starts[i][:num_mentions[i]]] # [k, emb]
             span_emb_construct.append(span_start_emb)
 

@@ -61,7 +61,7 @@ def parse_args():
                         default=None,
                         type=str,
                         help="Where do you want to store the pre-trained models downloaded from s3")
-    parser.add_argument("--max_seq_length", default=-1, type=int)
+    parser.add_argument("--max_seq_length", default=4096, type=int)
 
     parser.add_argument("--do_profile", action="store_true", help="Whether to run profiling.")
     parser.add_argument("--verbose", action="store_true", help="Whether to print debug prints.")
@@ -88,9 +88,6 @@ def parse_args():
         action="store_true",
         help="Whether to use automatic mixed precision instead of 32-bit",
     )
-
-    parser.add_argument("--max_total_seq_len", type=int, default=3500)
-
 
     # * Transformer
     parser.add_argument('--enc_layers', default=6, type=int,

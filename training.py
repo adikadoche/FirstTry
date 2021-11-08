@@ -84,7 +84,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
         # TODO handle NaNs and +-infs
 
-        if args.n_gpu > 1 or args.train_batch_size > 1:
+        if len(loss) > 1:
             loss = loss.mean()  # mean() to average on multi-gpu parallel training
         if args.gradient_accumulation_steps > 1:
             loss = loss / args.gradient_accumulation_steps
