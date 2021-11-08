@@ -105,7 +105,7 @@ class DETR(nn.Module):
         speaker_ids_no_pad_list = []
         for i in range(input_ids_r.shape[0]):
             masked_ids = input_ids_r[i][mask_r[i]==1]
-            longfomer_no_pad_list.append(self.backbone(masked_ids.unsqueeze(0), attention_mask=torch.ones_like(masked_ids).unsqueeze(0))[0])
+            longfomer_no_pad_list.append(self.backbone(masked_ids.unsqueeze(0), attention_mask=torch.ones_like(masked_ids).unsqueeze(0))[0].squeeze(0))
             speaker_ids_no_pad_list.append(speaker_ids_r[i][mask_r[i]==1])
         # input_ids_r = input_ids_r.narrow(-1, 0, max(sum_text_len))
         # mask_r = mask_r.narrow(-1, 0, max(sum_text_len))
