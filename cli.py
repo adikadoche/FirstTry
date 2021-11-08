@@ -65,7 +65,7 @@ def parse_args():
 
     parser.add_argument("--do_profile", action="store_true", help="Whether to run profiling.")
     parser.add_argument("--verbose", action="store_true", help="Whether to print debug prints.")
-    parser.add_argument("--speaker_before_emb", action="store_true", help="Whether to add speaker before embedding.")
+    parser.add_argument("--speaker", type=str, choices=['before', 'after', 'text'], default='after', help="Whether to add speaker before/after embedding or as text.")
     parser.add_argument("--do_train", action="store_true", help="Whether to run training.")
     parser.add_argument("--add_junk", action="store_true", help="whether to use junk spans")
     parser.add_argument("--eval", type=str, choices=['no', 'specific', 'all', 'vanilla'], default='no')

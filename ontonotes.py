@@ -5,7 +5,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 from transformers import AutoTokenizer
-from consts import TOKENS_PAD, SPEAKER_PAD, GENRES
+from consts import TOKENS_PAD, SPEAKER_PAD, GENRES, SPEAKER_END_TOKEN, SPEAKER_START_TOKEN
 
 
 class OntonotesDataset(Dataset):
@@ -106,16 +106,20 @@ class OntonotesDataset(Dataset):
                 sentence = sentences[sent_idx]
                 speaker = speakers[sent_idx]
             sent_input_ids = self.tokenizer.encode(' '.join(concat_sentence))
-            cur_text_len = len(sent_input_ids)
-            text_len.append(cur_text_len)
 
             speaker_per_token = ['[SPL]']
+            new_sentence = ''
             for i in range(len(concat_sentence)):
                 word = concat_sentence[i]
-                if i > 0:
+                if self.args.speaker == 'text' or i > 0:
                     word = ' ' + word
                 speaker = concat_speaker[i]
                 token_ids = self.tokenizer.tokenize(word)
+                if self.args.speaker == 'text' and speaker != speaker_per_token[-1]:
+                    speaker_prefix = [SPEAKER_START_TOKEN] + self.tokenizer.tokenize(" " + speaker, add_special_tokens=False) + [SPEAKER_END_TOKEN]
+                    token_ids = speaker_prefix + token_ids
+                    new_sentence = new_sentence + f'{SPEAKER_START_TOKEN} {speaker}{SPEAKER_END_TOKEN}'
+                new_sentence += word
                 word_idx_to_start_token_idx[word_idx] = total_tokens + 1  # +1 for <s>
                 total_tokens += len(token_ids)
                 word_idx_to_end_token_idx[word_idx] = total_tokens  # old_seq_len + 1 (for <s>) + len(tokenized_word) - 1 (we start counting from zero) = len(token_ids)
@@ -123,7 +127,13 @@ class OntonotesDataset(Dataset):
                 word_idx += 1
             speaker_per_token += ['[SPL]']
 
+            if self.args.speaker == 'text':
+                sent_input_ids = self.tokenizer.encode(new_sentence)
+
             total_tokens += 2
+
+            cur_text_len = len(sent_input_ids)
+            text_len.append(cur_text_len)
             
             sent_input_mask = [1] * cur_text_len
             sent_speaker_ids = [speaker_dict.get(s, 3) for s in speaker_per_token]

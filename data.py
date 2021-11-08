@@ -7,7 +7,7 @@ import numpy as np
 
 import torch
 
-from consts import SPEAKER_START, SPEAKER_END, NULL_ID_FOR_COREF
+from consts import SPEAKER_START_ID, SPEAKER_END_ID, NULL_ID_FOR_COREF
 from torch.utils.data import Dataset, RandomSampler, DistributedSampler, SequentialSampler, DataLoader
 from ontonotes import OntonotesDataset
 
