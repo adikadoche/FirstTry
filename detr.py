@@ -107,8 +107,20 @@ class DETR(nn.Module):
         longfomer_no_pad_list = []
         speaker_ids_no_pad_list = []
         for i in range(input_ids_r.shape[0]):
-            masked_ids = input_ids_r[i][mask_r[i]==1]
-            longfomer_no_pad_list.append(self.backbone(masked_ids.unsqueeze(0), attention_mask=torch.ones_like(masked_ids).unsqueeze(0))[0].squeeze(0))
+            masked_ids = input_ids_r[i][mask_r[i]==1].unsqueeze(0)
+            masked_mask = torch.ones_like(masked_ids).unsqueeze(0)
+            if masked_ids.shape[-1] > self.args.max_seq_length:
+                masked_ids = torch.zeros([2, math.ceil(input_ids.shape[1]/2) * input_ids.shape[-1]], dtype=torch.long)
+                masked_mask = torch.zeros([2, math.ceil(mask.shape[1]/2) * mask.shape[-1]], dtype=torch.long)
+                masked_ids[0] = input_ids[i][:math.ceil(input_ids.shape[1]/2)].reshape(1, math.ceil(input_ids.shape[1]/2) * input_ids.shape[-1])
+                masked_mask[0] = mask[i][:math.ceil(mask.shape[1]/2)].reshape(1, math.ceil(mask.shape[1]/2) * mask.shape[-1])
+                masked_ids[1][:(input_ids.shape[1]-math.ceil(input_ids.shape[1]/2)) * input_ids.shape[-1]] = \
+                    input_ids[i][math.ceil(input_ids.shape[1]/2):].reshape(1, (input_ids.shape[1]-math.ceil(input_ids.shape[1]/2)) * input_ids.shape[-1])
+                masked_mask[1][:(mask.shape[1]-math.ceil(mask.shape[1]/2)) * mask.shape[-1]] = \
+                    mask[i][math.ceil(mask.shape[1]/2):].reshape(1, (mask.shape[1]-math.ceil(mask.shape[1]/2)) * mask.shape[-1])
+
+            longformer_emb = self.backbone(masked_ids, attention_mask=masked_mask)[0]
+            longfomer_no_pad_list.append(longformer_emb.reshape(-1, longformer_emb.shape[-1]))
             if self.args.speaker != 'text':
                 speaker_ids_no_pad_list.append(speaker_ids_r[i][mask_r[i]==1])
         # input_ids_r = input_ids_r.narrow(-1, 0, max(sum_text_len))
