@@ -139,7 +139,7 @@ def muc(clusters, mention_to_gold):
 
 
 def phi4(c1, c2):
-    return 2 * len(set(c1).intersection(c2)) / float(len(c1) + len(c2))
+    return 2 * len([m for m in c1 if m in c2]) / float(len(c1) + len(c2))
 
 
 def ceafe(clusters, gold_clusters):

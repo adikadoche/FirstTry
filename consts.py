@@ -5,6 +5,7 @@ TOKENS_PAD = 1
 SPEAKER_PAD = 0
 TOKENS_END = 2
 TOKENS_START = 0
+MASK_PAD = 0
 
 OUT_KEYS = ['pred_logits', 'pred_clusters', 'pred_is_cluster', 'aux_outputs']
 
@@ -16,3 +17,5 @@ PRONOUNS = {'i', 'me', 'my', 'mine', 'myself',
             'it', 'its', 'itself',
             'they', 'them', 'their', 'theirs', 'themself', 'themselves',
             'this', 'these', 'that', 'those'}
+            
+GENRES =  {g: i+1 for i, g in enumerate(["bc", "bn", "mz", "nw", "pt", "tc", "wb"])}
