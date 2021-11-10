@@ -12,7 +12,7 @@ import numpy as np
 from colorama import Back, Style
 from pip._vendor.colorama import Fore
 
-from utils import calc_predicted_clusters
+from utils import calc_predicted_clusters, calc_predicted_clusters_argmax
 from consts import PRONOUNS
 
 FORES = [Fore.BLUE,
@@ -215,10 +215,10 @@ def print_per_batch(example_ind, is_print, cluster_logits, coref_logits, mention
 count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, count_missed_mentions,
 count_missed_pronouns, count_excess_pronous, count_excess_mentions, tokenizer):
     if len(mention_logits) > 0:
-        predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach().unsqueeze(0), coref_logits.cpu().detach().unsqueeze(0), mention_logits.cpu().detach().unsqueeze(0),
+        predicted_clusters = calc_predicted_clusters_argmax(cluster_logits.cpu().detach().unsqueeze(0), coref_logits.cpu().detach().unsqueeze(0), mention_logits.cpu().detach().unsqueeze(0),
                                                         threshold, [gold_mentions])
     else:
-        predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach().unsqueeze(0), coref_logits.cpu().detach().unsqueeze(0), [],
+        predicted_clusters = calc_predicted_clusters_argmax(cluster_logits.cpu().detach().unsqueeze(0), coref_logits.cpu().detach().unsqueeze(0), [],
                                                         threshold, [gold_mentions])
 
     gold, gold_correct, pred, pred_correct, pred_to_most_similar_gold, pred_to_most_similar_golds_list, gold_is_completely_missed, gold_to_most_similar_pred = match_clusters(
@@ -394,10 +394,10 @@ def error_analysis(all_cluster_logits, all_coref_logits, all_mention_logits, all
         cluster_logits, coref_logits, mention_logits = all_cluster_logits[i], all_coref_logits[i], []
         if len(all_mention_logits) > 0:
             mention_logits = all_mention_logits[i]
-            predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach().unsqueeze(0), coref_logits.cpu().detach().unsqueeze(0), mention_logits.cpu().detach().unsqueeze(0),
+            predicted_clusters = calc_predicted_clusters_argmax(cluster_logits.cpu().detach().unsqueeze(0), coref_logits.cpu().detach().unsqueeze(0), mention_logits.cpu().detach().unsqueeze(0),
                                                             threshold, [gold_mentions])
         else:
-            predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach().unsqueeze(0), coref_logits.cpu().detach().unsqueeze(0), [],
+            predicted_clusters = calc_predicted_clusters_argmax(cluster_logits.cpu().detach().unsqueeze(0), coref_logits.cpu().detach().unsqueeze(0), [],
                                                             threshold, [gold_mentions])
 
         num_gold_clusters_in_one_pred_cluster, num_pred_clusters_in_one_gold_cluster, \
