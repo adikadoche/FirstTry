@@ -7,7 +7,7 @@ import numpy as np
 
 import torch
 
-from consts import SPEAKER_START, SPEAKER_END, NULL_ID_FOR_COREF
+from consts import SPEAKER_START_ID, SPEAKER_END_ID, NULL_ID_FOR_COREF
 from torch.utils.data import Dataset, RandomSampler, DistributedSampler, SequentialSampler, DataLoader
 from ontonotes import OntonotesDataset
 
@@ -58,8 +58,8 @@ class CorefDataset(Dataset):
             last_speaker = None
             for idx, (word, speaker) in enumerate(zip(words, speakers)):
                 if last_speaker != speaker:
-                    speaker_prefix = [SPEAKER_START] + self.tokenizer.encode(" " + speaker,
-                                                                             add_special_tokens=False) + [SPEAKER_END]
+                    speaker_prefix = [SPEAKER_START_ID] + self.tokenizer.encode(" " + speaker,
+                                                                             add_special_tokens=False) + [SPEAKER_END_ID]
                     last_speaker = speaker
                 else:
                     speaker_prefix = []

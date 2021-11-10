@@ -18,42 +18,36 @@ logger = logging.getLogger(__name__)
 
 
 
-def save_checkpoint(args, global_step, threshold, model, optimizer, amp=None):
+def save_checkpoint(args, global_step, threshold, model, optimizer, output_dir, amp=None):
     # Save model checkpoint
-    output_dir = os.path.join(args.output_dir, 'threshold-{}_checkpoint-{}'.format(threshold, global_step))
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
     model_to_save = model.module if hasattr(model, 'module') else model  # Take care of distributed/parallel training
     # model_to_save.save_pretrained(output_dir)
-    torch.save(model_to_save.state_dict(), os.path.join(output_dir, 'model.step-{}.pt'.format(global_step)))
-    torch.save(optimizer.state_dict(), os.path.join(output_dir, 'optimizer.pt'))
-    if amp is not None:
-        torch.save(amp.state_dict(), os.path.join(output_dir, 'amp.pt'))
-    torch.save(args, os.path.join(output_dir, 'training_args.bin'))
+    torch.save({
+        'model': model_to_save.state_dict(),
+        'threshold': threshold,
+        'optimizer': optimizer.state_dict(),
+        'args': args
+        }, os.path.join(output_dir, 'model.step-{}.pt'.format(global_step)))
     logger.info("Saved model checkpoint to %s", output_dir)
 
 
-def load_from_checkpoint(model, checkpoint_path, device=None, optimizer=None, amp=None):
+def load_from_checkpoint(model, checkpoint_path, args=None, device=None, optimizer=None, amp=None):
     global_step = checkpoint_path.rstrip('/').split('-')[-1]
-    threshold = float(checkpoint_path.rstrip('/').split('-')[-2].split('_')[0])
+    checkpoint = torch.load(checkpoint_path, map_location=device)
     model_to_load = model.module if hasattr(model, 'module') else model  # Take care of distributed/parallel training
-    try:
-        model_to_load.load_state_dict(torch.load(checkpoint_path + '/model.step-' + global_step + '.pt', map_location=device))
-    except Exception as e:
-        logger.error(e)
-        model_to_load.load_state_dict(
-            torch.load(checkpoint_path + '/model.step-' + global_step + '.pt', map_location=device), strict=False)
+    model_to_load.load_state_dict(checkpoint['model'])
     if optimizer is not None:
-        opt_path = os.path.join(checkpoint_path, 'optimizer.pt')
-        if os.path.exists(opt_path):
-            optimizer.load_state_dict(torch.load(opt_path, map_location=device))
-            # TODO make this more robust for different trees of states
-            for state in optimizer.state.values():
-                for k, v in state.items():
-                    if torch.is_tensor(v):
-                        state[k] = v.to(device)
-    if amp is not None:
-        amp.load_state_dict(torch.load(os.path.join(checkpoint_path, 'amp.pt')))
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        # TODO make this more robust for different trees of states
+        for state in optimizer.state.values():
+            for k, v in state.items():
+                if torch.is_tensor(v):
+                    state[k] = v.to(device)
+    if args is not None:
+        args = checkpoint['args']
+    threshold = checkpoint['threshold']
     return {'global_step':global_step, 'threshold':threshold}
 
 

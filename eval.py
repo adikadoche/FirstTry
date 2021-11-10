@@ -32,7 +32,7 @@ def make_evaluation(model, criterion, eval_loader, eval_dataset, args):
     # Evaluation 'no', 'specific', 'all', 'vanilla'
     if args.eval == 'specific':
         checkpoint = args.output_dir
-        loaded_args = load_from_checkpoint(model, checkpoint)
+        loaded_args = load_from_checkpoint(model, checkpoint, args)
         global_step = loaded_args['global_step']
         evaluate(args, eval_loader, model, criterion, global_step)
     elif args.eval == 'vanilla':
@@ -68,7 +68,7 @@ def make_evaluation(model, criterion, eval_loader, eval_dataset, args):
 
                 try:
                     for checkpoint in checkpoints:
-                        loaded_args = load_from_checkpoint(model, checkpoint)
+                        loaded_args = load_from_checkpoint(model, checkpoint, args)
                         global_step = int(loaded_args['global_step'])
                         threshold = loaded_args['threshold']
                         results = report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, threshold)
