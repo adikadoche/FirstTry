@@ -1,4 +1,4 @@
-import json
+import shutil
 import os
 import logging
 import random
@@ -126,8 +126,8 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                 results = report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, threshold)
                 threshold = results['threshold']
 
-            if args.local_rank in [-1, 0] and args.save_steps > 0 and global_step % args.save_steps == 0:
-                save_checkpoint(args, global_step, threshold, model, optimizer)
+            # if args.local_rank in [-1, 0] and args.save_steps > 0 and global_step % args.save_steps == 0:
+            #     save_checkpoint(args, global_step, threshold, model, optimizer)
 
             if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
                 # logits = np.concatenate(recent_cluster_logits)
@@ -177,7 +177,7 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
     
     if args.resume_from:
         logger.info("Loading from checkpoint {}".format(args.resume_from))
-        loaded_args = load_from_checkpoint(model, args.resume_from, args.device, optimizer)
+        loaded_args = load_from_checkpoint(model, args.resume_from, args, args.device, optimizer)
         args.resume_global_step = int(loaded_args['global_step'])
         if not args.do_train:
             return args.resume_global_step
@@ -257,6 +257,8 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
     skip_steps = args.skip_steps
     threshold = 0.5 # starting threshold, later fixed by eval
 
+    best_f1 = 0
+    best_f1_global_step = -1
     start_time = time.time()
     for epoch in train_iterator:
         # if epoch > len(train_iterator) / 2:
@@ -279,12 +281,20 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
             lr_scheduler.step()  # Update learning rate schedule
 
         if args.local_rank in [-1, 0]:
-            if args.save_epochs > 0 and (epoch + 1) % args.save_epochs == 0 or epoch + 1 == args.num_train_epochs:
-                save_checkpoint(args, global_step, threshold, model, optimizer)
-
             if args.eval_epochs > 0 and (epoch + 1) % args.eval_epochs == 0 or \
                     epoch + 1 == args.num_train_epochs and (args.eval_epochs > 0 or args.eval_steps > 0):
-                report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, threshold)
+                results = report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, threshold)
+                threshold = results['threshold']
+
+            if args.save_epochs > 0 and (epoch + 1) % args.save_epochs == 0 or epoch + 1 == args.num_train_epochs:
+                if f1 > best_f1:
+                    output_dir = os.path.join(args.output_dir, 'checkpoint-{}'.format(global_step))
+                    save_checkpoint(args, global_step, threshold, model, optimizer, output_dir)
+                    if best_f1_global_step > -1:
+                        shutil.rmtree(output_dir)
+                        best_f1 = f1
+                        best_f1_global_step = global_step
+
 
         if 0 < args.max_steps < global_step:
             train_iterator.close()
