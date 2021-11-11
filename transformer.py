@@ -8,6 +8,7 @@ Copy-paste from torch.nn.Transformer with modifications:
     * decoder returns a stack of activations from all decoding layers
 """
 import copy
+import numpy as np
 from typing import Optional, List
 
 import torch
@@ -44,7 +45,7 @@ class Transformer(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def forward(self, src, mask, query_embed, gold_matrix, pos_embed=None):
+    def forward(self, src, mask, query_embed, gold_matrix, cluster_number, pos_embed=None):
         # flatten NxMxE to ExNxM
         bs, m, e = src.shape
         src = src.permute(1,0,2)
@@ -56,14 +57,26 @@ class Transformer(nn.Module):
         tgt = query_embed
         memory = self.encoder(src, src_key_padding_mask=binary_mask, pos=pos_embed)
 
-        new_tgt = self.create_new_tgt_and_mask(tgt, src, memory, gold_matrix)
+        gold_mask = self.create_new_mask_mask_mentions(gold_matrix, cluster_number)
 
-        hs = self.decoder(tgt, memory, memory_key_padding_mask=binary_mask,
+        hs = self.decoder(tgt, memory, memory_key_padding_mask=binary_mask, memory_mask=gold_mask,
                           pos=pos_embed, query_pos=query_embed)
 
         return hs.transpose(1, 2), memory.transpose(0, 1)
 
-    def create_new_tgt_and_mask(self, tgt, src, memory, gold_matrix):
+    def create_new_mask_mask_mentions(self, gold_matrix, cluster_number):
+        idx = torch.arange(gold_matrix[0].shape[1], 0, -1)
+        tmp2 = gold_matrix[0] * idx
+        indices = torch.argmax(tmp2, 1, keepdim=True).squeeze()
+        indices = indices[:cluster_number]
+        gold_matrix_sorted = torch.index_select(gold_matrix[0], 0, torch.tensor(np.argsort(indices)))
+        gold_mask = torch.cat([torch.zeros(1, gold_matrix_sorted.shape[1]), \
+                            torch.index_select(np.cumsum(gold_matrix_sorted, axis=0), 0, torch.arange(gold_matrix_sorted.shape[0]-1)), \
+                            torch.ones(gold_matrix[0].shape[0] - gold_matrix_sorted.shape[0], gold_matrix_sorted.shape[1])], 0) == 1 
+        return gold_mask
+
+    def create_new_tgt_and_mask_concat_text_querys(self, tgt, src, memory, gold_matrix):
+        # concat text and querys one after another. UNFINISHED
         text = src
         gold_matrix_cumsum = gold_matrix.cumsum()
         #TODO: sort goldmatrix by first mention

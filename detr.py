@@ -81,7 +81,7 @@ class DETR(nn.Module):
         self.query_token_IO_score = nn.Linear(150, 1)  #TODO: change to 3 so it would be BIO instead of IO
  
 
-    def forward(self, input_ids, sum_text_len, mask, gold_mentions, num_mentions, speaker_ids, genre):
+    def forward(self, input_ids, sum_text_len, mask, gold_mentions, num_mentions, speaker_ids, genre, gold_matrix, cluster_number):
         """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
@@ -152,7 +152,7 @@ class DETR(nn.Module):
             span_emb = self.span_proj(span_emb) # [mentions, emb]
             if self.args.speaker == 'after':
                 span_emb = torch.cat([span_emb, avg_speaker_onehot], 2)
-            hs, memory = self.transformer(span_emb, span_mask, raw_query_embed)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
+            hs, memory = self.transformer(span_emb, span_mask, raw_query_embed, gold_matrix, cluster_number)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
 
 
         last_hs = hs[-1] # [1, num_queries, emb]
