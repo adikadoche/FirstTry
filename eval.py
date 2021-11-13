@@ -113,6 +113,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
     all_mention_logits_cuda = []
     all_gold_clusters = []
     all_gold_mentions = []
+    all_predicted_clusters = []
 
     count_clusters = 0
     count_mentions = 0
@@ -158,10 +159,12 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
             # orig_input_dim = input_ids.shape
             # input_ids = torch.reshape(input_ids, (1, -1))
             # input_mask = torch.reshape(input_mask, (1, -1))
-            cluster_logits, coref_logits, predicted_clusters = model.generate(input_ids, sum_text_len, input_mask, gold_mentions, num_mentions, speaker_ids, genre)
-            cluster_logits, coref_logits, mention_logits = outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits']
+            cluster_logits, coref_logits, predicted_clusters = model.generate(input_ids, sum_text_len, input_mask, gold_mentions, num_mentions, speaker_ids, genre, threshold, gold_mentions_list)
+            mention_logits = []
+            all_predicted_clusters.append(predicted_clusters)
 
-            loss, loss_parts = criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
+            loss, loss_parts = criterion({'cluster_logits':cluster_logits, 'coref_logits': coref_logits, 'mention_logits':mention_logits}, 
+                                        {'clusters':gold_matrix, 'mentions':gold_mentions_vector}, False)
             losses.append(loss.mean().detach().cpu())
             for key in loss_parts.keys():
                 if key in losses_parts.keys() and len(losses_parts[key]) > 0:
@@ -181,7 +184,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
     eval_loss = np.average(losses, weights=batch_sizes)
     losses_parts = {key:np.average(losses_parts[key]) for key in losses_parts.keys()}
 
-    p, r, f1, threshold, metrics = calc_best_avg_f1(all_cluster_logits_cpu, all_coref_logits_cpu, all_mention_logits_cpu, all_gold_clusters, all_gold_mentions)
+    p, r, f1, metrics = calc_best_avg_f1(all_cluster_logits_cpu, all_coref_logits_cpu, all_mention_logits_cpu, all_gold_clusters, all_gold_mentions, all_predicted_clusters, threshold)
 
     print_predictions(all_cluster_logits_cuda, all_coref_logits_cuda, all_mention_logits_cuda, all_gold_clusters, all_gold_mentions, all_input_ids, threshold, args, eval_dataset.tokenizer)
     prec_gold_to_one_pred, prec_pred_to_one_gold, avg_gold_split_without_perfect, avg_gold_split_with_perfect, \

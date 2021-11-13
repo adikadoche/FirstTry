@@ -212,6 +212,7 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, thresh
     else:
         cluster_bools = cluster_logits.squeeze(-1).numpy() >= threshold #TODO: should the cluster and coref share the same threshold?
         clusters = []
+        index_clusters = []
         for i in range(bs):
             cur_cluster_bool = cluster_bools[i]
             cur_coref_logits = coref_logits[i]
@@ -233,45 +234,45 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, thresh
             cluster_id_to_tokens = {k: list(v) for k, v in itertools.groupby(sorted(list(zip(true_coref_indices, max_coref_cluster_ind_filtered.numpy())), key=lambda x: x[-1]), lambda x: x[-1])}
 
             b_clusters = []
+            i_clusters = []
 
             for gold_mentions_inds in cluster_id_to_tokens.values():
                 current_cluster = []
+                current_index_clusters = []
                 for mention_id in gold_mentions_inds:
                     try:
                         current_cluster.append(gold_mentions[i][mention_id[0]])
+                        current_index_clusters.append(mention_id[0])
                     except:
                         print('here')
                 b_clusters.append(current_cluster)
+                i_clusters.append(current_index_clusters)
             clusters.append(b_clusters)
+            index_clusters.append(i_clusters)
 
-    return clusters
+    return clusters, index_clusters
 
-def calc_best_avg_f1(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, all_gold_mentions):
+def calc_best_avg_f1(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, all_gold_mentions, all_predicted_clusters, threshold):
     best = [-1, -1, -1]
     best_metrics = []
     best_threshold = None
     thres_start = 0.05
     thres_stop = 1
     thres_step = 0.05
-    for threshold in tqdm(np.arange(thres_start, thres_stop, thres_step), desc='Searching for best threshold'):
-        p, r, f1, metrics = evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, threshold, all_gold_mentions)
-        if f1 > best[-1]:
-            best = p,r,f1
-            best_metrics = metrics
-            best_threshold = threshold
+    # for threshold in tqdm(np.arange(thres_start, thres_stop, thres_step), desc='Searching for best threshold'):
+    p, r, f1, metrics = evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, all_gold_mentions, all_predicted_clusters, threshold)
+    if f1 > best[-1]:
+        best = p,r,f1
+        best_metrics = metrics
+        best_threshold = threshold
 
-    return best + (best_threshold,) + (best_metrics,)
+    return best + (best_metrics,)
 
-def evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, threshold, all_gold_mentions):
+def evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, all_gold_mentions, all_predicted_clusters, threshold):
     evaluator = CorefEvaluator()
     metrics = [0] * 5
-    for i, (cluster_logits, coref_logits, gold_clusters, gold_mentions) in enumerate(
-            zip(all_cluster_logits, all_coref_logits, all_gold_clusters, all_gold_mentions)):
-        if len(all_mention_logits) > 0:
-            mention_logits = all_mention_logits[i]
-            predicted_clusters = calc_predicted_clusters(cluster_logits.unsqueeze(0), coref_logits.unsqueeze(0), mention_logits.unsqueeze(0), threshold, [gold_mentions])
-        else:
-            predicted_clusters = calc_predicted_clusters(cluster_logits.unsqueeze(0), coref_logits.unsqueeze(0), [], threshold, [gold_mentions])
+    for i, (cluster_logits, coref_logits, gold_clusters, gold_mentions, predicted_clusters) in enumerate(
+            zip(all_cluster_logits, all_coref_logits, all_gold_clusters, all_gold_mentions, all_predicted_clusters)):
         # prec_correct_mentions, prec_gold, prec_junk, prec_correct_gold_clusters, prec_correct_predict_clusters = \
         #     get_more_metrics(predicted_clusters, gold_clusters, gold_mentions)  #TODO: predicted_clusters[0]?
         # metrics[0] += prec_correct_mentions / len(all_cluster_logits)

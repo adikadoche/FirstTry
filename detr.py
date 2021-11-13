@@ -156,6 +156,7 @@ class DETR(nn.Module):
 
 
         last_hs = hs[-1] # [1, num_queries, emb]
+        memory = memory[0][:-1].unsqueeze(0)
         cluster_logits, coref_logits, mention_logits = self.calc_cluster_and_coref_logits(last_hs, memory, gold_mentions is not None, span_mask, gold_mentions.shape[1])
 
         # aux_coref_logits = [self.calc_cluster_and_coref_logits(curr_hs, memory)[1] for curr_hs in hs[:-1]]
@@ -173,7 +174,7 @@ class DETR(nn.Module):
                 # "aux_coref_logits": aux_coref_logits}
         return out
 
-    def generate(self, input_ids, sum_text_len, mask, gold_mentions, num_mentions, speaker_ids, genre, gold_matrix, cluster_number):
+    def generate(self, input_ids, sum_text_len, mask, gold_mentions, num_mentions, speaker_ids, genre, threshold, gold_mentions_list):
         """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
@@ -244,7 +245,7 @@ class DETR(nn.Module):
             span_emb = self.span_proj(span_emb) # [mentions, emb]
             if self.args.speaker == 'after':
                 span_emb = torch.cat([span_emb, avg_speaker_onehot], 2)
-            cluster_logits, coref_logits, predicted_clusters  = self.transformer.generate(span_emb, span_mask, raw_query_embed, is_cluster, span_mask, IO_score, threshold, gold_mentions_list)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
+            cluster_logits, coref_logits, predicted_clusters  = self.transformer.generate(span_emb, span_mask, raw_query_embed, self.is_cluster, span_mask, self.IO_score, threshold, gold_mentions_list)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
 
 
         # last_hs = hs[-1] # [1, num_queries, emb]
@@ -447,234 +448,13 @@ class DETR(nn.Module):
                 for a, b, c in zip(output_logits[:-1], outputs_clusters[:-1], outputs_is_cluster[:-1])]
 
 
-# class SetCriterion(nn.Module):
-#     """ This class computes the loss for DETR.
-#     The process happens in two steps:
-#         1) we compute hungarian assignment between ground truth boxes and the outputs of the model
-#         2) we supervise each pair of matched ground-truth / prediction (supervise class and box)
-#     """
-#     def __init__(self, matcher, eos_coef, losses):
-#         """ Create the criterion.
-#         Parameters:
-#             matcher: module able to compute a matching between targets and proposals
-#             weight_dict: dict containing as key the names of the losses and as values their relative weight.
-#             eos_coef: relative classification weight applied to the no-object category
-#             losses: list of all the losses to be applied. See get_loss for list of available losses.
-#         """
-#         super().__init__()
-#         self.matcher = matcher
-#         self.eos_coef = eos_coef
-#         self.losses = losses
-
-
-#     def loss_labels(self, outputs, targets, indices, num_boxes, log=True):
-#         """Classification loss (NLL)
-#         targets dicts must contain the key "labels" containing a tensor of dim [nb_target_boxes]
-#         """
-#         assert OUT_KEYS[0] in outputs
-#         src_logits = outputs[OUT_KEYS[0]]
-
-#         idx = self._get_src_permutation_idx(indices)
-#         target_classes_o = torch.cat([t["labels"][J] for t, (_, J) in zip(targets, indices)])
-#         target_classes = torch.full(src_logits.shape[:2], self.num_classes,
-#                                     dtype=torch.int64, device=src_logits.device)
-#         target_classes[idx] = target_classes_o
-
-#         loss_ce = F.cross_entropy(src_logits.transpose(1, 2), target_classes, self.empty_weight)
-#         losses = {'loss_ce': loss_ce}
-
-#         if log:
-#             # TODO this should probably be a separate loss, not hacked in this one here
-#             losses['class_error'] = 100 - accuracy(src_logits[idx], target_classes_o)[0]
-#         return losses
-
-#     @torch.no_grad()
-#     def loss_cardinality(self, outputs, targets, indices, num_boxes):
-#         """ Compute the cardinality error, ie the absolute error in the number of predicted non-empty boxes
-#         This is not really a loss, it is intended for logging purposes only. It doesn't propagate gradients
-#         """
-#         pred_is_cluster = outputs[OUT_KEYS[2]]
-#         device = pred_is_cluster.device
-#         tgt_lengths = torch.as_tensor([len(v["is_cluster"]) for v in targets], device=device)
-#         # Count the number of predictions that are NOT "no-object" (which is the last class)
-#         card_pred = (pred_is_cluster != 0).sum(1)
-#         card_err = F.l1_loss(card_pred.float(), tgt_lengths.float())
-#         losses = {'cardinality_error': card_err}
-#         return losses
-
-
-#     def _get_src_permutation_idx(self, indices):
-#         # permute predictions following indices
-#         batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])
-#         src_idx = torch.cat([src for (src, _) in indices])
-#         return batch_idx, src_idx
-
-#     def _get_tgt_permutation_idx(self, indices):
-#         # permute targets following indices
-#         batch_idx = torch.cat([torch.full_like(tgt, i) for i, (_, tgt) in enumerate(indices)])
-#         tgt_idx = torch.cat([tgt for (_, tgt) in indices])
-#         return batch_idx, tgt_idx
-
-#     def get_loss(self, loss, outputs, targets, indices, num_boxes, **kwargs):
-#         loss_map = {
-#             'labels': self.loss_labels,
-#             'cardinality': self.loss_cardinality,
-#             'boxes': self.loss_boxes
-#         }
-#         assert loss in loss_map, f'do you really want to compute {loss} loss?'
-#         return loss_map[loss](outputs, targets, indices, num_boxes, **kwargs)
-
-#     def forward(self, outputs, targets):
-#         """ This performs the loss computation.
-#         Parameters:
-#              outputs: dict of tensors, see the output specification of the model for the format
-#              targets: list of dicts, such that len(targets) == batch_size.
-#                       The expected keys in each dict depends on the losses applied, see each loss' doc
-#         """
-#         outputs_without_aux = {k: v for k, v in outputs.items() if k != OUT_KEYS[3]}
-
-#         # Retrieve the matching between the outputs of the last layer and the targets
-#         indices = self.matcher(outputs_without_aux, targets)
-
-#         # Compute the average number of target boxes accross all nodes, for normalization purposes
-#         num_boxes = sum(len(t["labels"]) for t in targets)
-#         num_boxes = torch.as_tensor([num_boxes], dtype=torch.float, device=next(iter(outputs.values())).device)
-#         if is_dist_avail_and_initialized():
-#             torch.distributed.all_reduce(num_boxes)
-#         num_boxes = torch.clamp(num_boxes / get_world_size(), min=1).item()
-
-#         # Compute all the requested losses
-#         losses = {}
-#         for loss in self.losses:
-#             losses.update(self.get_loss(loss, outputs, targets, indices, num_boxes))
-
-#         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
-#         if OUT_KEYS[3] in outputs:
-#             for i, aux_outputs in enumerate(outputs[OUT_KEYS[3]]):
-#                 indices = self.matcher(aux_outputs, targets)
-#                 for loss in self.losses:
-#                     kwargs = {}
-#                     if loss == 'labels':
-#                         # Logging is enabled only for the last layer
-#                         kwargs = {'log': False}
-#                     l_dict = self.get_loss(loss, aux_outputs, targets, indices, num_boxes, **kwargs)
-#                     l_dict = {k + f'_{i}': v for k, v in l_dict.items()}
-#                     losses.update(l_dict)
-
-#         return losses
-
-
-# class PostProcess(nn.Module):
-#     """ This module converts the model's output into the format expected by the coco api"""
-#     @torch.no_grad()
-#     def forward(self, outputs, target_sizes):
-#         """ Perform the computation
-#         Parameters:
-#             outputs: raw outputs of the model
-#             target_sizes: tensor of dimension [batch_size x 2] containing the size of each images of the batch
-#                           For evaluation, this must be the original image size (before any data augmentation)
-#                           For visualization, this should be the image size after data augment, but before padding
-#         """
-#         out_logits, out_bbox = outputs[OUT_KEYS[0]], outputs[OUT_KEYS[1]]
-#
-#         assert len(out_logits) == len(target_sizes)
-#         assert target_sizes.shape[1] == 2
-#
-#         prob = F.softmax(out_logits, -1)
-#         scores, labels = prob[..., :-1].max(-1)
-#
-#         # convert to [x0, y0, x1, y1] format
-#         boxes = box_ops.box_cxcywh_to_xyxy(out_bbox)
-#         # and from relative [0, 1] to absolute [0, height] coordinates
-#         img_h, img_w = target_sizes.unbind(1)
-#         scale_fct = torch.stack([img_w, img_h, img_w, img_h], dim=1)
-#         boxes = boxes * scale_fct[:, None, :]
-#
-#         results = [{'scores': s, 'labels': l, 'boxes': b} for s, l, b in zip(scores, labels, boxes)]
-#
-#         return results
-
-
-class MLP(nn.Module):
-    """ Very simple multi-layer perceptron (also called FFN)"""
-
-    def __init__(self, input_dim, hidden_dim, output_dim, num_layers):
-        super().__init__()
-        self.num_layers = num_layers
-        h = [hidden_dim] * (num_layers - 1)
-        self.layers = nn.ModuleList(nn.Linear(n, k) for n, k in zip([input_dim] + h, h + [output_dim]))
-
-    def forward(self, x):
-        for i, layer in enumerate(self.layers):
-            x = F.relu(layer(x)) if i < self.num_layers - 1 else layer(x)
-        return x
-
-
-def get_angles(pos, i, d_model):
-    angle_rates = 1 / np.power(10000, (2 * (i//2)) / d_model) #TODO: make sure returns float
-    return pos * angle_rates
-
-
-def build_positional_encoding(position, d_model):
-    angle_rads = get_angles(np.arange(position)[:, np.newaxis],
-                          np.arange(d_model)[np.newaxis, :],
-                          d_model)
-    # apply sin to even indices in the array; 2i
-    angle_rads[:, 0::2] = np.sin(angle_rads[:, 0::2])
-    # apply cos to odd indices in the array; 2i+1
-    angle_rads[:, 1::2] = np.cos(angle_rads[:, 1::2])
-
-    pos_encoding = angle_rads[np.newaxis, ...]
-
-    return pos_encoding
-
-class PositionalEncoding(nn.Module):
-
-    def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 5000): #TODO: replace magic number with text length?
-        super().__init__()
-        self.dropout = nn.Dropout(p=dropout)
-
-        position = torch.arange(max_len).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
-        pe = torch.zeros(max_len, 1, d_model)
-        pe[:, 0, 0::2] = torch.sin(position * div_term)
-        pe[:, 0, 1::2] = torch.cos(position * div_term)
-        self.register_buffer('pe', pe)
-
-    def forward(self, x: Tensor) -> Tensor:
-        """
-        Args:
-            x: Tensor, shape [seq_len, batch_size, embedding_dim]
-        """
-        x = x + self.pe[:x.size(0)]
-        return self.dropout(x)
-
-
-class Joiner(nn.Sequential):
-    def __init__(self, backbone, position_embedding):
-        super().__init__(backbone, position_embedding)
-
-    def forward(self, tensor: NestedTensor):
-        xs = self[0](tensor.tensors, tensor.mask)
-        out = xs[0]  # [batch_size, seq_len, dim]
-        pos = self[1](out)
-        # out: List[NestedTensor] = []
-        # pos = []
-        # for name, x in xs.items():
-        #     out.append(x)
-        #     # position encoding
-        #     pos.append(self[1](x).to(x.tensors.dtype))
-
-        return out, pos
-
-
 class MatchingLoss(nn.Module):
     """ This class computes the loss for DETR.
     The process happens in two steps:
         1) we compute hungarian assignment between ground truth boxes and the outputs of the model
         2) we supervise each pair of matched ground-truth / prediction (supervise class and box)
     """
-    def __init__(self, matcher, eos_coef, cost_is_cluster, cost_coref, cost_is_mention, args):
+    def __init__(self, training_matcher, eval_matcher, eos_coef, cost_is_cluster, cost_coref, cost_is_mention, args):
         """ Create the criterion.
         Parameters:
             matcher: module able to compute a matching between targets and proposals
@@ -683,7 +463,8 @@ class MatchingLoss(nn.Module):
             losses: list of all the losses to be applied. See get_loss for list of available losses.
         """
         super().__init__()
-        self.matcher = matcher
+        self.training_matcher = training_matcher
+        self.eval_matcher = eval_matcher
         self.cost_is_cluster = cost_is_cluster
         self.cost_coref = cost_coref
         self.cost_is_mention = cost_is_mention
@@ -691,7 +472,7 @@ class MatchingLoss(nn.Module):
         self.eos_coef = eos_coef
 
 
-    def forward(self, outputs, targets):
+    def forward(self, outputs, targets, is_training=True):
         """ This performs the loss computation.
         Parameters:
              outputs: dict of tensors, see the output specification of the model for the format
@@ -701,7 +482,10 @@ class MatchingLoss(nn.Module):
         # outputs_without_aux = {k: v for k, v in outputs.items() if k != 'aux_outputs'}
 
         # Retrieve the matching between the outputs of the last layer and the targets
-        matched_predicted_cluster_id, matched_gold_cluster_id = self.matcher(outputs, targets)
+        if is_training:
+            matched_predicted_cluster_id, matched_gold_cluster_id = self.training_matcher(outputs, targets)
+        else:
+            matched_predicted_cluster_id, matched_gold_cluster_id = self.eval_matcher(outputs, targets)
 
         targets_clusters = targets['clusters']
         targets_mentions = targets['mentions']
@@ -710,8 +494,12 @@ class MatchingLoss(nn.Module):
         costs_parts = {'loss_is_cluster':[], 'loss_is_mention':[], 'loss_coref':[]}
         for i in range(bs):
             # Compute the average number of target boxes accross all nodes, for normalization purposes
-            coref_logits = outputs["coref_logits"][i].squeeze(0)  # [num_queries, tokens]
+            coref_logits = outputs["coref_logits"][i]
+            if coref_logits.shape[0] > 1:
+                coref_logits = coref_logits.squeeze(0)  # [num_queries, tokens]
             cluster_logits = outputs["cluster_logits"][i].squeeze() # [num_queries]
+            if sum(cluster_logits.shape) == 0:
+                cluster_logits = torch.tensor([cluster_logits])
             if self.args.add_junk:
                 mention_logits = outputs["mention_logits"][i].squeeze() # [tokens]
             num_queries, doc_len = coref_logits.shape
@@ -845,10 +633,11 @@ def build_DETR(args):
         aux_loss=args.aux_loss
     )
 
-    matcher = build_matcher(args)
+    training_matcher = build_matcher(args, "Ordered")
+    eval_matcher = build_matcher(args, "Hungarian")
     # TODO maybe return consideration of aux loss
 
-    criterion = MatchingLoss(matcher=matcher, eos_coef=args.eos_coef, cost_is_cluster=args.cost_is_cluster, cost_is_mention=args.cost_is_mention,
+    criterion = MatchingLoss(training_matcher=training_matcher, eval_matcher=eval_matcher, eos_coef=args.eos_coef, cost_is_cluster=args.cost_is_cluster, cost_is_mention=args.cost_is_mention,
                              cost_coref=args.cost_coref, args=args)
 
     # if args.loss == 'match':
