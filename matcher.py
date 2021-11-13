@@ -69,9 +69,9 @@ class HungarianMatcher(nn.Module):
             coref_logits = outputs["coref_logits"][i]
             if coref_logits.shape[0] > 1:
                 coref_logits = coref_logits.squeeze(0)  # [num_queries, tokens]
-            cluster_logits = outputs["cluster_logits"][i].squeeze() # [num_queries]
-            if sum(cluster_logits.shape) == 0:
-                cluster_logits = torch.tensor([cluster_logits])
+            cluster_logits = outputs["cluster_logits"][i].squeeze(0) # [num_queries]
+            if len(cluster_logits.shape) > 1:
+                cluster_logits = cluster_logits.squeeze(0)
             if self.args.add_junk:
                 mention_logits = outputs["mention_logits"][i].squeeze(-1).unsqueeze(0) # [1, tokens]
 

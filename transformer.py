@@ -67,18 +67,18 @@ class Transformer(nn.Module):
         return hs.transpose(1, 2), memory.transpose(0, 1)
 
     def create_new_mask_mask_mentions(self, gold_matrix, cluster_number, memory, binary_mask):
-        idx = torch.arange(gold_matrix[0].shape[1], 0, -1)
+        idx = torch.arange(gold_matrix[0].shape[1], 0, -1, device = gold_matrix[0].device)
         tmp2 = gold_matrix[0] * idx
         indices = torch.argmax(tmp2, 1, keepdim=True).squeeze()
         indices = indices[:cluster_number]
-        gold_matrix_sorted = torch.index_select(gold_matrix[0], 0, torch.tensor(np.argsort(indices)))
-        gold_matrix_sorted = torch.cat([gold_matrix_sorted, torch.zeros(gold_matrix_sorted.shape[0],1)], 1)
-        gold_matrix_sumed = np.cumsum(gold_matrix_sorted, axis=0)
-        gold_mask = torch.cat([torch.zeros(1, gold_matrix_sorted.shape[1]), \
-                            torch.index_select(gold_matrix_sumed, 0, torch.arange(gold_matrix_sorted.shape[0]-1)), \
-                            gold_matrix_sumed[-1] * torch.ones(gold_matrix[0].shape[0] - gold_matrix_sorted.shape[0], gold_matrix_sorted.shape[1])], 0) == 1 
-        memory = torch.cat([memory, torch.ones(1, memory.shape[1], memory.shape[2]) * 0.001])
-        binary_mask = torch.cat([binary_mask, torch.zeros(binary_mask.shape[0], 1) == 1], 1)
+        gold_matrix_sorted = torch.index_select(gold_matrix[0], 0, torch.argsort(indices))
+        gold_matrix_sorted = torch.cat([gold_matrix_sorted, torch.zeros(gold_matrix_sorted.shape[0],1, device = gold_matrix[0].device)], 1)
+        gold_matrix_sumed = torch.cumsum(gold_matrix_sorted, axis=0)
+        gold_mask = torch.cat([torch.zeros(1, gold_matrix_sorted.shape[1], device = gold_matrix[0].device), \
+                            torch.index_select(gold_matrix_sumed, 0, torch.arange(gold_matrix_sorted.shape[0]-1, device = gold_matrix[0].device)), \
+                            gold_matrix_sumed[-1] * torch.ones(gold_matrix[0].shape[0] - gold_matrix_sorted.shape[0], gold_matrix_sorted.shape[1], device = gold_matrix[0].device)], 0) == 1 
+        memory = torch.cat([memory, torch.ones(1, memory.shape[1], memory.shape[2], device = gold_matrix[0].device) * 0.001])
+        binary_mask = torch.cat([binary_mask, torch.zeros(binary_mask.shape[0], 1, device = gold_matrix[0].device) == 1], 1)
         return gold_mask, memory, binary_mask
 
     def create_new_tgt_and_mask_concat_text_querys(self, tgt, src, memory, gold_matrix):
@@ -199,7 +199,7 @@ class TransformerDecoder(nn.Module):
             cluster_logits, coref_logits = self.create_logits(is_cluster, memory, span_mask, output, IO_score, i+1)
             predicted_clusters, indexed_predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
                                                                         threshold, gold_mentions_list)
-            memory_mask = self.create_new_mask_mask_mentions(indexed_predicted_clusters, memory_mask, [output.shape[0], memory.shape[0]])
+            memory_mask = self.create_new_mask_mask_mentions(indexed_predicted_clusters, memory_mask, [output.shape[0], memory.shape[0]], output.device)
 
             if i >= tgt.shape[0] or sum(memory_mask[-1]) == memory_mask.shape[-1]:
                 return cluster_logits, coref_logits, predicted_clusters 
@@ -222,8 +222,8 @@ class TransformerDecoder(nn.Module):
         cur_coref_logits = coref_logits_unnorm.sigmoid()
         return cluster_logits, cur_coref_logits
 
-    def create_new_mask_mask_mentions(self, predicted_clusters, memory_mask, needed_shape_memory_mask):
-        memory_mask = torch.zeros(needed_shape_memory_mask)   #TODO: first version: recreating the whole mask and not only the new cluster row.
+    def create_new_mask_mask_mentions(self, predicted_clusters, memory_mask, needed_shape_memory_mask, device):
+        memory_mask = torch.zeros(needed_shape_memory_mask, device=device)   #TODO: first version: recreating the whole mask and not only the new cluster row.
         for i in range(len(predicted_clusters[0])):
             memory_mask[i][predicted_clusters[0][i]] = 1
         return memory_mask == 1
