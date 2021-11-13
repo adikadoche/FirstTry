@@ -15,6 +15,8 @@ import torch
 import torch.nn.functional as F
 from torch import nn, Tensor
 
+from utils import calc_predicted_clusters
+
 
 class Transformer(nn.Module):
 
@@ -85,6 +87,23 @@ class Transformer(nn.Module):
             new_tgt.append(tgt[:,:,i])
             new_tgt.append(text[:,:,gold_matrix[i].ind])
 
+    @torch.no_grad()
+    def generate(self, src, mask, query_embed, is_cluster, span_mask, IO_score, threshold, gold_mentions_list, pos_embed=None):
+        # flatten NxMxE to ExNxM
+        bs, m, e = src.shape
+        src = src.permute(1,0,2)
+        if pos_embed is not None:
+            pos_embed = pos_embed.transpose(0,1)
+        binary_mask = mask == 0
+        query_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)
+
+        tgt = query_embed
+        memory = self.encoder(src, src_key_padding_mask=binary_mask, pos=pos_embed)
+        cluster_logits, coref_logits, predicted_clusters  = self.decoder.mask_mention_decoder(tgt, memory, is_cluster, span_mask, IO_score, threshold, gold_mentions_list, memory_key_padding_mask=binary_mask,
+                                        pos=pos_embed, query_pos=query_embed)
+        return cluster_logits, coref_logits, predicted_clusters 
+
+
 
 class TransformerEncoder(nn.Module):
 
@@ -150,6 +169,59 @@ class TransformerDecoder(nn.Module):
 
         return output.unsqueeze(0)
 
+    def mask_mention_decoder(self, tgt, memory, is_cluster, span_mask, IO_score, threshold, gold_mentions_list,
+                tgt_mask: Optional[Tensor] = None,
+                memory_mask: Optional[Tensor] = None,
+                tgt_key_padding_mask: Optional[Tensor] = None,
+                memory_key_padding_mask: Optional[Tensor] = None,
+                pos: Optional[Tensor] = None,
+                query_pos: Optional[Tensor] = None):
+
+        intermediate = []
+        output = tgt[0]
+        i = 0
+
+        while True:   #TODO i<100? mask not empty?
+            for layer in self.layers:
+                output = layer(output, memory, tgt_mask=tgt_mask, #TODO: will it work when output is not in query size?
+                            memory_mask=memory_mask,
+                            tgt_key_padding_mask=tgt_key_padding_mask,
+                            memory_key_padding_mask=memory_key_padding_mask,
+                            pos=pos, query_pos=query_pos)
+                if self.return_intermediate:
+                    intermediate.append(self.norm(output))
+
+            if self.norm is not None:
+                output = self.norm(output)
+                if self.return_intermediate:
+                    intermediate.pop()
+                    intermediate.append(output)
+
+            if self.return_intermediate:
+                return torch.stack(intermediate)
+
+            cluster_logits, coref_logits = self.create_logits(memory_mask, is_cluster, memory, span_mask, output, IO_score, threshold, gold_mentions_list)
+            predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
+                                                                        threshold, gold_mentions_list)
+            memory_mask = create_new_mask_mask_mentions()
+
+            i += 1
+            output = tgt[:i]   #TODO: using the generated querys? the trained querys? different decisions for prediction and decoder's inputs? For now I think using the trained, because we wouldnt know the generated vectors in training
+
+        return cluster_logits, coref_logits, predicted_clusters 
+
+    def create_new_mask(self, memory_mask, is_cluster, memory, span_mask, output, IO_score, threshold, gold_mentions_list):
+        last_hs = output[-1]
+        cluster_logits = is_cluster(last_hs).sigmoid()  # [bs, num_queries, 1]
+        cur_memory = memory[0][span_mask[0]==1].unsqueeze(0)
+        cur_last_hs = last_hs[0].unsqueeze(0)
+        num_tokens_or_mentions = cur_memory.shape[1]
+        last_hs_tiled = cur_last_hs.unsqueeze(2).repeat(1, 1, num_tokens_or_mentions, 1) # [bs, num_queries, tokens/mentions, emb]
+        memory_tiled = cur_memory.unsqueeze(1).repeat(1, self.num_queries, 1, 1) # [bs, num_queries, tokens/mentions, emb]
+        coref_features = torch.cat([last_hs_tiled, memory_tiled], -1) # [bs, num_queries, tokens/mentions, 2 * emb]
+        coref_logits_unnorm = IO_score(coref_features).squeeze(-1) # [bs, num_queries, tokens/mentions, 1]
+        cur_coref_logits = coref_logits_unnorm.sigmoid()
+        return cluster_logits, coref_logits
 
 class TransformerEncoderLayer(nn.Module):
 

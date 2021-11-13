@@ -173,6 +173,98 @@ class DETR(nn.Module):
                 # "aux_coref_logits": aux_coref_logits}
         return out
 
+    def generate(self, input_ids, sum_text_len, mask, gold_mentions, num_mentions, speaker_ids, genre, gold_matrix, cluster_number):
+        """ The forward expects a NestedTensor, which consists of:
+               - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
+               - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
+
+            It returns a dict with the following elements:
+               - "pred_logits": the classification logits (including no-object) for all queries.
+                                Shape= [batch_size x num_queries x (num_classes + 1)]
+               - "pred_boxes": The normalized boxes coordinates for all queries, represented as
+                               (center_x, center_y, height, width). These values are normalized in [0, 1],
+                               relative to the size of each individual image (disregarding possible padding).
+                               See PostProcess for information on how to retrieve the unnormalized bounding box.
+               - "aux_outputs": Optional, only returned when auxilary losses are activated. It is a list of
+                                dictionnaries containing the two above keys for each decoder layer.
+        """
+        # input_ids_cat = torch.cat(input_ids, dim=1).squeeze(0)
+        # mask_cat = torch.cat(mask, dim=1).squeeze(0)
+
+        bs = input_ids.shape[0]
+        input_ids_r = input_ids.reshape(input_ids.shape[0], -1)
+        mask_r = mask.reshape(mask.shape[0], -1)
+        if self.args.speaker != 'text':
+            speaker_ids_r = speaker_ids.reshape(speaker_ids.shape[0], -1, speaker_ids.shape[-1])
+        longfomer_no_pad_list = []
+        speaker_ids_no_pad_list = []
+        for i in range(input_ids_r.shape[0]):
+            masked_ids = input_ids_r[i][mask_r[i]==1].unsqueeze(0)
+            masked_mask = torch.ones_like(masked_ids).unsqueeze(0)
+            if masked_ids.shape[-1] > self.args.max_seq_length:
+                masked_ids = torch.zeros([2, math.ceil(input_ids.shape[1]/2) * input_ids.shape[-1]], dtype=torch.long)
+                masked_mask = torch.zeros([2, math.ceil(mask.shape[1]/2) * mask.shape[-1]], dtype=torch.long)
+                masked_ids[0] = input_ids[i][:math.ceil(input_ids.shape[1]/2)].reshape(1, math.ceil(input_ids.shape[1]/2) * input_ids.shape[-1])
+                masked_mask[0] = mask[i][:math.ceil(mask.shape[1]/2)].reshape(1, math.ceil(mask.shape[1]/2) * mask.shape[-1])
+                masked_ids[1][:(input_ids.shape[1]-math.ceil(input_ids.shape[1]/2)) * input_ids.shape[-1]] = \
+                    input_ids[i][math.ceil(input_ids.shape[1]/2):].reshape(1, (input_ids.shape[1]-math.ceil(input_ids.shape[1]/2)) * input_ids.shape[-1])
+                masked_mask[1][:(mask.shape[1]-math.ceil(mask.shape[1]/2)) * mask.shape[-1]] = \
+                    mask[i][math.ceil(mask.shape[1]/2):].reshape(1, (mask.shape[1]-math.ceil(mask.shape[1]/2)) * mask.shape[-1])
+
+            longformer_emb = self.backbone(masked_ids, attention_mask=masked_mask)[0]
+            longfomer_no_pad_list.append(longformer_emb.reshape(-1, longformer_emb.shape[-1]))
+            if self.args.speaker != 'text':
+                speaker_ids_no_pad_list.append(speaker_ids_r[i][mask_r[i]==1])
+        # input_ids_r = input_ids_r.narrow(-1, 0, max(sum_text_len))
+        # mask_r = mask_r.narrow(-1, 0, max(sum_text_len))
+        # longformer_emb = self.backbone(input_ids.reshape(-1, input_ids.shape[-1]), attention_mask=mask.reshape(-1, mask.shape[-1]))[0]  # Getting representation for each token in the text
+
+        # longformer_emb_size = longformer_emb.shape[-1]
+        # # # filter out masked tokens
+        # start_ind = 0
+        # longfomer_no_pad_list = []
+        # speaker_ids_no_pad_list = []
+        # for i in range(bs):
+        #     end_ind = start_ind + input_ids.shape[1]
+        #     longfomer_no_pad_list.append(torch.masked_select(longformer_emb[start_ind:end_ind], mask[i].unsqueeze(-1)==1).reshape(-1, longformer_emb_size))
+        #     speaker_ids_no_pad_list.append(torch.masked_select(speaker_ids[i], mask[i].unsqueeze(-1)==1).reshape(-1, speaker_ids[0].shape[-1]))
+        #     start_ind = end_ind
+
+        if self.args.random_queries:
+            raw_query_embed = torch.normal(torch.zeros_like(self.query_embed.weight), 1) * self.query_sigma + self.query_mu #raw_query_embed = torch.normal(torch.zeros_like(self.query_embed.weight), 0.5)
+        else:
+            raw_query_embed = self.query_embed.weight
+
+        if not self.args.use_gold_mentions:
+            hs, memory = self.transformer(self.input_proj(longfomer_no_pad_list), mask, raw_query_embed) # [dec_layers, 1, num_queries, emb], [1, seg*seq, emb]
+        else:
+            span_starts = [torch.tensor([m[0] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
+            span_ends = [torch.tensor([m[1] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
+            span_emb, span_mask, avg_speaker_onehot = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends, num_mentions, speaker_ids_no_pad_list, genre)  # [mentions, emb']
+            span_emb = self.span_proj(span_emb) # [mentions, emb]
+            if self.args.speaker == 'after':
+                span_emb = torch.cat([span_emb, avg_speaker_onehot], 2)
+            cluster_logits, coref_logits, predicted_clusters  = self.transformer.generate(span_emb, span_mask, raw_query_embed, is_cluster, span_mask, IO_score, threshold, gold_mentions_list)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
+
+
+        # last_hs = hs[-1] # [1, num_queries, emb]
+        # cluster_logits, coref_logits, mention_logits = self.calc_cluster_and_coref_logits(last_hs, memory, gold_mentions is not None, span_mask, gold_mentions.shape[1])
+
+        # # aux_coref_logits = [self.calc_cluster_and_coref_logits(curr_hs, memory)[1] for curr_hs in hs[:-1]]
+
+        # # coref_logits = self.temp_embed.weight[:, :doc_len].unsqueeze(0).sigmoid()
+        # # cluster_logits = self.temp_cluster_embed.weight.unsqueeze(0).sigmoid()
+        # # coref_logits = coref_logits * cluster_logits
+
+        # # if self.aux_loss:
+        # #     out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
+
+        # out = {"coref_logits": coref_logits,
+        #         "cluster_logits": cluster_logits,
+        #         "mention_logits": mention_logits}
+        #         # "aux_coref_logits": aux_coref_logits}
+        return cluster_logits, coref_logits, predicted_clusters
+
     def make_batch_same_len(self, input_ids, mask, sum_text_len):
         input_ids_pads = torch.ones(1, self.args.max_segment_len, dtype=torch.int, device=input_ids[0].device) * TOKENS_PAD
         mask_pads = torch.zeros(1, self.args.max_segment_len, dtype=torch.int, device=input_ids[0].device)
