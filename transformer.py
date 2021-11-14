@@ -183,7 +183,7 @@ class TransformerDecoder(nn.Module):
 
         output = tgt[0].unsqueeze(0)
         query_pos = query_pos[0].unsqueeze(0)
-        i = 0
+        i = 1
 
         while True:   #TODO i<100? mask not empty?
             for layer in self.layers:
@@ -196,12 +196,12 @@ class TransformerDecoder(nn.Module):
             if self.norm is not None:
                 output = self.norm(output)
 
-            cluster_logits, coref_logits = self.create_logits(is_cluster, memory, span_mask, output, IO_score, i+1)
+            cluster_logits, coref_logits = self.create_logits(is_cluster, memory, span_mask, output, IO_score, i)
             predicted_clusters, indexed_predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
                                                                         threshold, gold_mentions_list)
             memory_mask = self.create_new_mask_mask_mentions(indexed_predicted_clusters, memory_mask, [output.shape[0], memory.shape[0]], output.device)
 
-            if i >= tgt.shape[0] or sum(memory_mask[-1]) == memory_mask.shape[-1]:
+            if i > tgt.shape[0] or sum(memory_mask[-1]) == memory_mask.shape[-1]:
                 return cluster_logits, coref_logits, predicted_clusters 
 
             i += 1
@@ -217,6 +217,19 @@ class TransformerDecoder(nn.Module):
         num_tokens_or_mentions = cur_memory.shape[1]
         last_hs_tiled = cur_last_hs.unsqueeze(2).repeat(1, 1, num_tokens_or_mentions, 1) # [bs, num_queries, tokens/mentions, emb]
         memory_tiled = cur_memory.unsqueeze(1).repeat(1, num_queries, 1, 1) # [bs, num_queries, tokens/mentions, emb]
+        # if last_hs_tiled.shape != memory_tiled.shape:
+        #     print(f'num_queries {num_queries}')
+        #     print(f'memory {memory}')
+        #     print(f'span_mask {span_mask}')
+        #     print(f'output {output}')
+        #     print(f'last_hs_tiled {last_hs_tiled}')
+        #     print(f'memory_tiled {memory_tiled}')
+        #     print(f'last_hs_tiled.shape {last_hs_tiled.shape}')
+        #     print(f'memory_tiled.shape {memory_tiled.shape}')
+        #     print(f'cur_last_hs {cur_last_hs}')
+        #     print(f'cur_memory {cur_memory}')
+        #     print(f'cur_last_hs.shape {cur_last_hs.shape}')
+        #     print(f'cur_memory.shape {cur_memory.shape}')
         coref_features = torch.cat([last_hs_tiled, memory_tiled], -1) # [bs, num_queries, tokens/mentions, 2 * emb]
         coref_logits_unnorm = IO_score(coref_features).squeeze(-1) # [bs, num_queries, tokens/mentions, 1]
         cur_coref_logits = coref_logits_unnorm.sigmoid()
