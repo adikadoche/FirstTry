@@ -290,8 +290,12 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
                 if f1 > best_f1:
                     output_dir = os.path.join(args.output_dir, 'checkpoint-{}'.format(global_step))
                     save_checkpoint(args, global_step, threshold, model, optimizer, output_dir)
+                    print(f'previous checkpoint with f1 {best_f1} was {best_f1_global_step}')
+                    print(f'saved checkpoint with f1 {f1} in step {global_step} to {output_dir}')
                     if best_f1_global_step > -1:
-                        shutil.rmtree(output_dir)
+                        path_to_remove = os.path.join(args.output_dir, 'checkpoint-{}'.format(best_f1_global_step))
+                        shutil.rmtree(path_to_remove)
+                        print(f'removed checkpoint with f1 {best_f1} from {path_to_remove}')
                         best_f1 = f1
                         best_f1_global_step = global_step
 
