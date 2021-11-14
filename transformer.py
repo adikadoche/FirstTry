@@ -195,11 +195,14 @@ class TransformerDecoder(nn.Module):
 
             if self.norm is not None:
                 output = self.norm(output)
+            
+            output = output.unsqueeze(0).transpose(1, 2)
+            tmp_memory = memory.transpose(0, 1)
 
-            cluster_logits, coref_logits = self.create_logits(is_cluster, memory, span_mask, output, IO_score, i)
+            cluster_logits, coref_logits = self.create_logits(is_cluster, tmp_memory, span_mask, output, IO_score, i)
             predicted_clusters, indexed_predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
                                                                         threshold, gold_mentions_list)
-            memory_mask = self.create_new_mask_mask_mentions(indexed_predicted_clusters, memory_mask, [output.shape[0]+1, memory.shape[0]], output.device)
+            memory_mask = self.create_new_mask_mask_mentions(indexed_predicted_clusters, memory_mask, [output.shape[2]+1, memory.shape[0]], output.device)
 
             if i >= tgt.shape[0] or sum(memory_mask[-1]) == memory_mask.shape[-1]:   #TODO: maybe it need to be i >= tgt.shape[0] but then there is a bug
                 return cluster_logits, coref_logits, predicted_clusters 
@@ -210,9 +213,9 @@ class TransformerDecoder(nn.Module):
 
 
     def create_logits(self, is_cluster, memory, span_mask, output, IO_score, num_queries):
-        last_hs = output.transpose(0, 1)
+        last_hs = output[-1]
         cluster_logits = is_cluster(last_hs).sigmoid()  # [bs, num_queries, 1]
-        cur_memory = memory.transpose(0, 1)[0][span_mask[0]==1].unsqueeze(0)
+        cur_memory = memory[0][span_mask[0]==1].unsqueeze(0)
         cur_last_hs = last_hs
         num_tokens_or_mentions = cur_memory.shape[1]
         last_hs_tiled = cur_last_hs.unsqueeze(2).repeat(1, 1, num_tokens_or_mentions, 1) # [bs, num_queries, tokens/mentions, emb]
