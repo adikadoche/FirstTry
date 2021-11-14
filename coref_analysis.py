@@ -413,20 +413,26 @@ def error_analysis(all_cluster_logits, all_coref_logits, all_mention_logits, all
         total_sum_biggest_prec_gold_cluster_in_pred_cluster += sum_biggest_prec_gold_cluster_in_pred_cluster
         total_sum_biggest_prec_pred_cluster_in_gold_cluster += sum_biggest_prec_pred_cluster_in_gold_cluster
 
-    num1 = total_num_gold_clusters_in_one_pred_cluster * 100.0 / total_sub_clusters_gold
-    num2 = total_num_pred_clusters_in_one_gold_cluster * 100.0 / total_sub_clusters_pred
+    num1 = total_num_gold_clusters_in_one_pred_cluster * 100.0 / total_sub_clusters_gold if \
+        total_sub_clusters_gold > 0 else 0
+    num2 = total_num_pred_clusters_in_one_gold_cluster * 100.0 / total_sub_clusters_pred if \
+        total_sub_clusters_pred > 0 else 0
     num3 = total_sum_num_split_gold_clusters * 1.0 / (total_sub_clusters_gold-total_num_gold_clusters_in_one_pred_cluster) if \
         total_sub_clusters_gold > total_num_gold_clusters_in_one_pred_cluster else 0
-    num4 = (total_sum_num_split_gold_clusters+total_num_gold_clusters_in_one_pred_cluster) * 1.0 / total_sub_clusters_gold
+    num4 = (total_sum_num_split_gold_clusters+total_num_gold_clusters_in_one_pred_cluster) * 1.0 / total_sub_clusters_gold if \
+        total_sub_clusters_gold > 0 else 0
     num5 = total_sum_num_split_pred_clusters * 1.0 / (total_sub_clusters_pred-total_num_pred_clusters_in_one_gold_cluster) if \
         total_sub_clusters_pred > total_num_pred_clusters_in_one_gold_cluster else 0
-    num6 = (total_sum_num_split_pred_clusters+total_num_pred_clusters_in_one_gold_cluster) * 1.0 / total_sub_clusters_pred
+    num6 = (total_sum_num_split_pred_clusters+total_num_pred_clusters_in_one_gold_cluster) * 1.0 / total_sub_clusters_pred if \
+        total_sub_clusters_pred > 0 else 0
     num7 = total_sum_biggest_prec_gold_cluster_in_pred_cluster * 100.0 / (total_sub_clusters_gold-total_num_gold_clusters_in_one_pred_cluster) if \
         total_sub_clusters_gold > total_num_gold_clusters_in_one_pred_cluster else 0
-    num8 = (total_sum_biggest_prec_gold_cluster_in_pred_cluster+total_num_gold_clusters_in_one_pred_cluster) * 100.0 / total_sub_clusters_gold
+    num8 = (total_sum_biggest_prec_gold_cluster_in_pred_cluster+total_num_gold_clusters_in_one_pred_cluster) * 100.0 / total_sub_clusters_gold if \
+        total_sub_clusters_gold > 0 else 0
     num9 = total_sum_biggest_prec_pred_cluster_in_gold_cluster * 100.0 / (total_sub_clusters_pred-total_num_pred_clusters_in_one_gold_cluster) if \
         total_sub_clusters_pred > total_num_pred_clusters_in_one_gold_cluster else 0
-    num10 = (total_sum_biggest_prec_pred_cluster_in_gold_cluster+total_num_pred_clusters_in_one_gold_cluster) * 100.0 / total_sub_clusters_pred
+    num10 = (total_sum_biggest_prec_pred_cluster_in_gold_cluster+total_num_pred_clusters_in_one_gold_cluster) * 100.0 / total_sub_clusters_pred if \
+        total_sub_clusters_pred > 0 else 0
 
     print("{}% gold clusters who went to one pred cluster".format(num1))
     print("{}% pred clusters who containes one gold cluster".format(num2))
