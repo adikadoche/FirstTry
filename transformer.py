@@ -199,9 +199,9 @@ class TransformerDecoder(nn.Module):
             cluster_logits, coref_logits = self.create_logits(is_cluster, memory, span_mask, output, IO_score, i)
             predicted_clusters, indexed_predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
                                                                         threshold, gold_mentions_list)
-            memory_mask = self.create_new_mask_mask_mentions(indexed_predicted_clusters, memory_mask, [output.shape[0], memory.shape[0]], output.device)
+            memory_mask = self.create_new_mask_mask_mentions(indexed_predicted_clusters, memory_mask, [output.shape[0]+1, memory.shape[0]], output.device)
 
-            if i > tgt.shape[0] or sum(memory_mask[-1]) == memory_mask.shape[-1]:
+            if i >= tgt.shape[0] or sum(memory_mask[-1]) == memory_mask.shape[-1]:   #TODO: maybe it need to be i >= tgt.shape[0] but then there is a bug
                 return cluster_logits, coref_logits, predicted_clusters 
 
             i += 1
@@ -210,26 +210,28 @@ class TransformerDecoder(nn.Module):
 
 
     def create_logits(self, is_cluster, memory, span_mask, output, IO_score, num_queries):
-        last_hs = output
+        last_hs = output.transpose(0, 1)
         cluster_logits = is_cluster(last_hs).sigmoid()  # [bs, num_queries, 1]
         cur_memory = memory.transpose(0, 1)[0][span_mask[0]==1].unsqueeze(0)
-        cur_last_hs = last_hs[0].unsqueeze(0)
+        cur_last_hs = last_hs
         num_tokens_or_mentions = cur_memory.shape[1]
         last_hs_tiled = cur_last_hs.unsqueeze(2).repeat(1, 1, num_tokens_or_mentions, 1) # [bs, num_queries, tokens/mentions, emb]
         memory_tiled = cur_memory.unsqueeze(1).repeat(1, num_queries, 1, 1) # [bs, num_queries, tokens/mentions, emb]
-        # if last_hs_tiled.shape != memory_tiled.shape:
-        #     print(f'num_queries {num_queries}')
-        #     print(f'memory {memory}')
-        #     print(f'span_mask {span_mask}')
-        #     print(f'output {output}')
-        #     print(f'last_hs_tiled {last_hs_tiled}')
-        #     print(f'memory_tiled {memory_tiled}')
-        #     print(f'last_hs_tiled.shape {last_hs_tiled.shape}')
-        #     print(f'memory_tiled.shape {memory_tiled.shape}')
-        #     print(f'cur_last_hs {cur_last_hs}')
-        #     print(f'cur_memory {cur_memory}')
-        #     print(f'cur_last_hs.shape {cur_last_hs.shape}')
-        #     print(f'cur_memory.shape {cur_memory.shape}')
+        if last_hs_tiled.shape != memory_tiled.shape:
+            print(f'num_queries {num_queries}')
+            print(f'memory {memory}')
+            print(f'span_mask {span_mask}')
+            print(f'output {output}')
+            print(f'last_hs_tiled {last_hs_tiled}')
+            print(f'memory_tiled {memory_tiled}')
+            print(f'output.shape {output.shape}')
+            print(f'last_hs.shape {last_hs.shape}')
+            print(f'last_hs_tiled.shape {last_hs_tiled.shape}')
+            print(f'memory_tiled.shape {memory_tiled.shape}')
+            print(f'cur_last_hs {cur_last_hs}')
+            print(f'cur_memory {cur_memory}')
+            print(f'cur_last_hs.shape {cur_last_hs.shape}')
+            print(f'cur_memory.shape {cur_memory.shape}')
         coref_features = torch.cat([last_hs_tiled, memory_tiled], -1) # [bs, num_queries, tokens/mentions, 2 * emb]
         coref_logits_unnorm = IO_score(coref_features).squeeze(-1) # [bs, num_queries, tokens/mentions, 1]
         cur_coref_logits = coref_logits_unnorm.sigmoid()
@@ -238,7 +240,7 @@ class TransformerDecoder(nn.Module):
     def create_new_mask_mask_mentions(self, predicted_clusters, memory_mask, needed_shape_memory_mask, device):
         memory_mask = torch.zeros(needed_shape_memory_mask, device=device)   #TODO: first version: recreating the whole mask and not only the new cluster row.
         for i in range(len(predicted_clusters[0])):
-            memory_mask[i][predicted_clusters[0][i]] = 1
+            memory_mask[i+1][predicted_clusters[0][i]] = 1
         return memory_mask == 1
 
 
