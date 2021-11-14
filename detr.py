@@ -81,7 +81,13 @@ class DETR(nn.Module):
         self.query_token_IO_score = nn.Linear(150, 1)  #TODO: change to 3 so it would be BIO instead of IO
  
 
-    def forward(self, input_ids, sum_text_len, mask, gold_mentions, num_mentions, speaker_ids, genre, gold_matrix, cluster_number):
+    # def forward(self, is_training, *args):
+    #     if is_training:
+    #         return self.forward_train(*args)
+    #     else:
+    #         return self.forward_eval(*args)
+
+    def forward(self, is_training, input_ids, sum_text_len, mask, gold_mentions, num_mentions, speaker_ids, genre, gold_matrix):
         """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
@@ -99,6 +105,7 @@ class DETR(nn.Module):
         # input_ids_cat = torch.cat(input_ids, dim=1).squeeze(0)
         # mask_cat = torch.cat(mask, dim=1).squeeze(0)
 
+        print(f"here with device {input_ids.device}")
         bs = input_ids.shape[0]
         input_ids_r = input_ids.reshape(input_ids.shape[0], -1)
         mask_r = mask.reshape(mask.shape[0], -1)
@@ -152,7 +159,9 @@ class DETR(nn.Module):
             span_emb = self.span_proj(span_emb) # [mentions, emb]
             if self.args.speaker == 'after':
                 span_emb = torch.cat([span_emb, avg_speaker_onehot], 2)
-            hs, memory = self.transformer(span_emb, span_mask, raw_query_embed, gold_matrix, cluster_number)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
+            gold_matrix = gold_matrix.squeeze(0)
+            cluster_number = sum(torch.sum(gold_matrix, -1) > 0)
+            hs, memory = self.transformer(True, span_emb, span_mask, raw_query_embed, gold_matrix, cluster_number)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
 
 
         last_hs = hs[-1] # [1, num_queries, emb]
@@ -174,7 +183,8 @@ class DETR(nn.Module):
                 # "aux_coref_logits": aux_coref_logits}
         return out
 
-    def generate(self, input_ids, sum_text_len, mask, gold_mentions, num_mentions, speaker_ids, genre, threshold, gold_mentions_list):
+    @torch.no_grad()
+    def forward_eval(self, input_ids, sum_text_len, mask, gold_mentions, num_mentions, speaker_ids, genre, threshold):
         """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
@@ -245,7 +255,7 @@ class DETR(nn.Module):
             span_emb = self.span_proj(span_emb) # [mentions, emb]
             if self.args.speaker == 'after':
                 span_emb = torch.cat([span_emb, avg_speaker_onehot], 2)
-            cluster_logits, coref_logits, predicted_clusters  = self.transformer.generate(span_emb, span_mask, raw_query_embed, self.is_cluster, span_mask, self.IO_score, threshold, gold_mentions_list)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
+            cluster_logits, coref_logits = self.transformer(False, span_emb, span_mask, raw_query_embed, self.is_cluster, span_mask, self.IO_score, threshold, gold_mentions)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
 
 
         # last_hs = hs[-1] # [1, num_queries, emb]
@@ -260,11 +270,10 @@ class DETR(nn.Module):
         # # if self.aux_loss:
         # #     out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
 
-        # out = {"coref_logits": coref_logits,
-        #         "cluster_logits": cluster_logits,
-        #         "mention_logits": mention_logits}
+        out = {"coref_logits": torch.cat([coref_logits, torch.zeros([1, 1, gold_mentions.shape[1] - coref_logits.shape[-1]], device=coref_logits.device)], dim=-1),
+                "cluster_logits": torch.cat([cluster_logits, torch.zeros([1, 1, self.num_queries - cluster_logits.shape[-1]], device=cluster_logits.device)], dim=-1)}
         #         # "aux_coref_logits": aux_coref_logits}
-        return cluster_logits, coref_logits, predicted_clusters
+        return out
 
     def make_batch_same_len(self, input_ids, mask, sum_text_len):
         input_ids_pads = torch.ones(1, self.args.max_segment_len, dtype=torch.int, device=input_ids[0].device) * TOKENS_PAD
@@ -528,12 +537,13 @@ class MatchingLoss(nn.Module):
                 weight_mention = targets_mentions[i] + self.eos_coef * (1 - targets_mentions[i])
                 cost_is_mention = F.binary_cross_entropy(mention_logits, targets_mentions[i], weight=weight_mention)
 
-            coref_logits = torch.index_select(coref_logits, 1, torch.arange(0, targets_clusters[i].shape[1]).to(coref_logits.device))
+            real_targets_clusters = torch.index_select(targets_clusters[i], 1, torch.arange(torch.sum(torch.sum(targets_clusters[i], 0) > 0), device = targets_clusters[i].device))
+            coref_logits = torch.index_select(coref_logits, 1, torch.arange(0, real_targets_clusters.shape[1]).to(coref_logits.device))
 
             cost_coref = 0
             if matched_predicted_cluster_id[i] is not False:
                 permuted_coref_logits = coref_logits[matched_predicted_cluster_id[i].numpy()]
-                permuted_gold = targets_clusters[i][matched_gold_cluster_id[i].numpy()]
+                permuted_gold = real_targets_clusters[matched_gold_cluster_id[i].numpy()]
 
                 if self.args.multiclass_ce:
                     logits = permuted_coref_logits.transpose(0, 1)  # [mentions, num_queries]

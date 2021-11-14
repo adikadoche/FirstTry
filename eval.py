@@ -12,7 +12,7 @@ from tqdm import tqdm
 from coref_bucket_batch_sampler import BucketBatchSampler
 from coref_analysis import print_predictions, error_analysis
 from data import get_dataset
-from utils import tensor_and_remove_empty, calc_best_avg_f1, create_gold_matrix, try_measure_len, load_from_checkpoint, create_junk_gold_mentions
+from utils import tensor_and_remove_empty, calc_predicted_clusters, create_gold_matrix, try_measure_len, load_from_checkpoint, create_junk_gold_mentions
 from conll import evaluate_conll
 from consts import TOKENS_PAD, SPEAKER_PAD
 from metrics import CorefEvaluator
@@ -119,7 +119,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
     best_threshold = None
     thres_start = 0.05
     thres_stop = 1
-    thres_step = 0.05
+    thres_step = 0.15
 
     print('Searching for best threshold')
     for threshold in np.arange(thres_start, thres_stop, thres_step):
@@ -160,7 +160,10 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
 
             with torch.no_grad():
                 mention_logits = []
-                cluster_logits, coref_logits, predicted_clusters = model.generate(input_ids, sum_text_len, input_mask, gold_mentions, num_mentions, speaker_ids, genre, threshold, gold_mentions_list)
+                outputs = model(False, input_ids, sum_text_len, input_mask, gold_mentions, num_mentions, speaker_ids, genre, threshold)
+                cluster_logits, coref_logits = outputs['cluster_logits'], outputs['coref_logits']
+                predicted_clusters, _ = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
+                                                                        threshold, gold_mentions_list)
                 evaluator.update(predicted_clusters, gold_clusters)
                 loss, loss_parts = criterion({'cluster_logits':cluster_logits, 'coref_logits': coref_logits, 'mention_logits':mention_logits}, 
                                             {'clusters':gold_matrix, 'mentions':gold_mentions_vector}, False)

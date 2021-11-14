@@ -47,7 +47,14 @@ class Transformer(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def forward(self, src, mask, query_embed, gold_matrix, cluster_number, pos_embed=None):
+    # def forward(self, is_training, *args):
+    #     if is_training:
+    #         return self.forward_train(*args)
+    #     else:
+    #         return self.forward_eval(*args)
+
+
+    def forward(self, is_training, src, mask, query_embed, gold_matrix, cluster_number, pos_embed = None):
         # flatten NxMxE to ExNxM
         bs, m, e = src.shape
         src = src.permute(1,0,2)
@@ -67,18 +74,19 @@ class Transformer(nn.Module):
         return hs.transpose(1, 2), memory.transpose(0, 1)
 
     def create_new_mask_mask_mentions(self, gold_matrix, cluster_number, memory, binary_mask):
-        idx = torch.arange(gold_matrix[0].shape[1], 0, -1, device = gold_matrix[0].device)
-        tmp2 = gold_matrix[0] * idx
+        real_gold_matrix = torch.index_select(gold_matrix, 1, torch.arange(torch.sum(torch.sum(gold_matrix, 0) > 0), device = gold_matrix.device))
+        idx = torch.arange(real_gold_matrix.shape[1], 0, -1, device = gold_matrix.device)
+        tmp2 = real_gold_matrix * idx
         indices = torch.argmax(tmp2, 1, keepdim=True).squeeze()
         indices = indices[:cluster_number]
-        gold_matrix_sorted = torch.index_select(gold_matrix[0], 0, torch.argsort(indices))
-        gold_matrix_sorted = torch.cat([gold_matrix_sorted, torch.zeros(gold_matrix_sorted.shape[0],1, device = gold_matrix[0].device)], 1)
+        gold_matrix_sorted = torch.index_select(real_gold_matrix, 0, torch.argsort(indices))
+        gold_matrix_sorted = torch.cat([gold_matrix_sorted, torch.zeros(gold_matrix_sorted.shape[0],1, device = real_gold_matrix.device)], 1)
         gold_matrix_sumed = torch.cumsum(gold_matrix_sorted, axis=0)
-        gold_mask = torch.cat([torch.zeros(1, gold_matrix_sorted.shape[1], device = gold_matrix[0].device), \
-                            torch.index_select(gold_matrix_sumed, 0, torch.arange(gold_matrix_sorted.shape[0]-1, device = gold_matrix[0].device)), \
-                            gold_matrix_sumed[-1] * torch.ones(gold_matrix[0].shape[0] - gold_matrix_sorted.shape[0], gold_matrix_sorted.shape[1], device = gold_matrix[0].device)], 0) == 1 
-        memory = torch.cat([memory, torch.ones(1, memory.shape[1], memory.shape[2], device = gold_matrix[0].device) * 0.001])
-        binary_mask = torch.cat([binary_mask, torch.zeros(binary_mask.shape[0], 1, device = gold_matrix[0].device) == 1], 1)
+        gold_mask = torch.cat([torch.zeros(1, gold_matrix_sorted.shape[1], device = real_gold_matrix.device), \
+                            torch.index_select(gold_matrix_sumed, 0, torch.arange(gold_matrix_sorted.shape[0]-1, device = real_gold_matrix.device)), \
+                            gold_matrix_sumed[-1] * torch.ones(real_gold_matrix.shape[0] - gold_matrix_sorted.shape[0], gold_matrix_sorted.shape[1], device = real_gold_matrix.device)], 0) == 1 
+        memory = torch.cat([memory, torch.ones(1, memory.shape[1], memory.shape[2], device = real_gold_matrix.device) * 0.001])
+        binary_mask = torch.cat([binary_mask, torch.zeros(binary_mask.shape[0], 1, device = real_gold_matrix.device) == 1], 1)
         return gold_mask, memory, binary_mask
 
     def create_new_tgt_and_mask_concat_text_querys(self, tgt, src, memory, gold_matrix):
@@ -92,7 +100,7 @@ class Transformer(nn.Module):
             new_tgt.append(text[:,:,gold_matrix[i].ind])
 
     @torch.no_grad()
-    def generate(self, src, mask, query_embed, is_cluster, span_mask, IO_score, threshold, gold_mentions_list, pos_embed=None):
+    def forward_eval(self, src, mask, query_embed, is_cluster, span_mask, IO_score, threshold, gold_mentions, pos_embed=None):
         # flatten NxMxE to ExNxM
         bs, m, e = src.shape
         src = src.permute(1,0,2)
@@ -103,9 +111,9 @@ class Transformer(nn.Module):
 
         tgt = query_embed
         memory = self.encoder(src, src_key_padding_mask=binary_mask, pos=pos_embed)
-        cluster_logits, coref_logits, predicted_clusters  = self.decoder.mask_mention_decoder(tgt, memory, is_cluster, span_mask, IO_score, threshold, gold_mentions_list, memory_key_padding_mask=binary_mask,
+        cluster_logits, coref_logits = self.decoder.mask_mention_decoder(tgt, memory, is_cluster, span_mask, IO_score, threshold, gold_mentions, memory_key_padding_mask=binary_mask,
                                         pos=pos_embed, query_pos=query_embed)
-        return cluster_logits, coref_logits, predicted_clusters 
+        return cluster_logits, coref_logits 
 
 
 
@@ -173,7 +181,7 @@ class TransformerDecoder(nn.Module):
 
         return output.unsqueeze(0)
 
-    def mask_mention_decoder(self, tgt, memory, is_cluster, span_mask, IO_score, threshold, gold_mentions_list,
+    def mask_mention_decoder(self, tgt, memory, is_cluster, span_mask, IO_score, threshold, gold_mentions,
                 tgt_mask: Optional[Tensor] = None,
                 memory_mask: Optional[Tensor] = None,
                 tgt_key_padding_mask: Optional[Tensor] = None,
@@ -200,12 +208,13 @@ class TransformerDecoder(nn.Module):
             tmp_memory = memory.transpose(0, 1)
 
             cluster_logits, coref_logits = self.create_logits(is_cluster, tmp_memory, span_mask, output, IO_score, i)
-            predicted_clusters, indexed_predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
+            gold_mentions_list = gold_mentions[0][:memory.shape[0]].unsqueeze(0).detach().cpu().tolist()
+            _, indexed_predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
                                                                         threshold, gold_mentions_list)
             memory_mask = self.create_new_mask_mask_mentions(indexed_predicted_clusters, memory_mask, [output.shape[2]+1, memory.shape[0]], output.device)
 
             if i >= tgt.shape[0] or sum(memory_mask[-1]) == memory_mask.shape[-1]:   #TODO: maybe it need to be i >= tgt.shape[0] but then there is a bug
-                return cluster_logits, coref_logits, predicted_clusters 
+                return cluster_logits, coref_logits 
 
             i += 1
             output = tgt[:i]   #TODO: using the generated querys? the trained querys? different decisions for prediction and decoder's inputs? For now I think using the trained, because we wouldnt know the generated vectors in training
@@ -219,7 +228,7 @@ class TransformerDecoder(nn.Module):
         cur_last_hs = last_hs
         num_tokens_or_mentions = cur_memory.shape[1]
         last_hs_tiled = cur_last_hs.unsqueeze(2).repeat(1, 1, num_tokens_or_mentions, 1) # [bs, num_queries, tokens/mentions, emb]
-        memory_tiled = cur_memory.unsqueeze(1).repeat(1, num_queries, 1, 1) # [bs, num_queries, tokens/mentions, emb]
+        memory_tiled = memory.unsqueeze(1).repeat(1, num_queries, 1, 1) # [bs, num_queries, tokens/mentions, emb]
         if last_hs_tiled.shape != memory_tiled.shape:
             print(f'num_queries {num_queries}')
             print(f'memory {memory}')
