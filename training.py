@@ -285,6 +285,7 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
                     epoch + 1 == args.num_train_epochs and (args.eval_epochs > 0 or args.eval_steps > 0):
                 results = report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, threshold)
                 threshold = results['threshold']
+                f1 = results['avg_f1']
 
             if args.save_epochs > 0 and (epoch + 1) % args.save_epochs == 0 or epoch + 1 == args.num_train_epochs:
                 if f1 > best_f1:
