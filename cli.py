@@ -68,6 +68,7 @@ def parse_args():
     parser.add_argument("--speaker", type=str, choices=['before', 'after', 'text'], default='after', help="Whether to add speaker before/after embedding or as text.")
     parser.add_argument("--do_train", action="store_true", help="Whether to run training.")
     parser.add_argument("--add_junk", action="store_true", help="whether to use junk spans")
+    parser.add_argument("--refeed_queries", action="store_true", help="whether to use already predicted queries")
     parser.add_argument("--eval", type=str, choices=['no', 'specific', 'all', 'vanilla'], default='no')
 
     parser.add_argument("--weight_decay", default=0.01, type=float, help="Weight deay if we apply some.")

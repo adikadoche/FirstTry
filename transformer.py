@@ -64,7 +64,7 @@ class Transformer(nn.Module):
         hs = self.decoder(tgt, memory, memory_key_padding_mask=binary_mask, memory_mask=gold_mask,
                           pos=pos_embed, query_pos=query_embed)
 
-        return hs.transpose(1, 2), memory.transpose(0, 1), gold_matrix_permute
+        return hs.transpose(1, 2), memory.transpose(0, 1), gold_matrix_permute, gold_mask
 
     def create_new_mask_mask_mentions(self, gold_matrix, cluster_number, memory, binary_mask):
         idx = torch.arange(gold_matrix[0].shape[1], 0, -1, device = gold_matrix[0].device)
@@ -92,7 +92,7 @@ class Transformer(nn.Module):
             new_tgt.append(text[:,:,gold_matrix[i].ind])
 
     @torch.no_grad()
-    def generate(self, src, mask, query_embed, is_cluster, span_mask, IO_score, threshold, gold_mentions_list, pos_embed=None):
+    def generate(self, src, mask, query_embed, is_cluster, span_mask, IO_score, threshold, gold_mentions_list, refeed_queries, pos_embed=None):
         # flatten NxMxE to ExNxM
         bs, m, e = src.shape
         src = src.permute(1,0,2)
@@ -103,7 +103,8 @@ class Transformer(nn.Module):
 
         tgt = query_embed
         memory = self.encoder(src, src_key_padding_mask=binary_mask, pos=pos_embed)
-        cluster_logits, coref_logits, predicted_clusters  = self.decoder.mask_mention_decoder(tgt, memory, is_cluster, span_mask, IO_score, threshold, gold_mentions_list, memory_key_padding_mask=binary_mask,
+        cluster_logits, coref_logits, predicted_clusters  = self.decoder.mask_mention_decoder(tgt, memory, is_cluster, span_mask, IO_score, 
+                                        threshold, gold_mentions_list, refeed_queries, memory_key_padding_mask=binary_mask,
                                         pos=pos_embed, query_pos=query_embed)
         return cluster_logits, coref_logits, predicted_clusters 
 
@@ -173,7 +174,7 @@ class TransformerDecoder(nn.Module):
 
         return output.unsqueeze(0)
 
-    def mask_mention_decoder(self, tgt, memory, is_cluster, span_mask, IO_score, threshold, gold_mentions_list,
+    def mask_mention_decoder(self, tgt, memory, is_cluster, span_mask, IO_score, threshold, gold_mentions_list, refeed_queries,
                 tgt_mask: Optional[Tensor] = None,
                 memory_mask: Optional[Tensor] = None,
                 tgt_key_padding_mask: Optional[Tensor] = None,
@@ -181,8 +182,11 @@ class TransformerDecoder(nn.Module):
                 pos: Optional[Tensor] = None,
                 query_pos: Optional[Tensor] = None):
 
+        predicted_clusters = [[]]
+        cluster_logits = []
+        coref_logits = []
         output = tgt[0].unsqueeze(0)
-        query_pos = query_pos[0].unsqueeze(0)
+        cur_query_pos = query_pos[0].unsqueeze(0)
         i = 1
 
         while True:   #TODO i<100? mask not empty?
@@ -191,7 +195,7 @@ class TransformerDecoder(nn.Module):
                             memory_mask=memory_mask,
                             tgt_key_padding_mask=tgt_key_padding_mask,
                             memory_key_padding_mask=memory_key_padding_mask,
-                            pos=pos, query_pos=query_pos)
+                            pos=pos, query_pos=cur_query_pos)
 
             if self.norm is not None:
                 output = self.norm(output)
@@ -199,18 +203,28 @@ class TransformerDecoder(nn.Module):
             output = output.unsqueeze(0).transpose(1, 2)
             tmp_memory = memory.transpose(0, 1)
 
-            cluster_logits, coref_logits = self.create_logits(is_cluster, tmp_memory, span_mask, output, IO_score, i)
-            predicted_clusters, indexed_predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
-                                                                        threshold, gold_mentions_list, num_clusters=i)
-            memory_mask = self.create_new_mask_mask_mentions(indexed_predicted_clusters, memory_mask, [output.shape[2]+1, memory.shape[0]], output.device)
+            cur_cluster_logits, cur_coref_logits = self.create_logits(is_cluster, tmp_memory, span_mask, output[-1].unsqueeze(0), IO_score, 1)
+            cluster_logits.append(cur_cluster_logits)
+            coref_logits.append(cur_coref_logits)
+            cur_predicted_clusters, cur_indexed_predicted_clusters = calc_predicted_clusters(cur_cluster_logits.cpu().detach(), cur_coref_logits.cpu().detach(), [],
+                                                                        threshold, gold_mentions_list, num_clusters=1, mention_mask=memory_mask[-1] if memory_mask is not None else None)
+
+            predicted_clusters[0] += cur_predicted_clusters[0]
+            memory_mask = self.create_new_mask_mask_mentions(cur_indexed_predicted_clusters[0], memory_mask, memory.shape[0], output.device, refeed_queries)
 
             if i >= tgt.shape[0] or sum(memory_mask[-1]) == memory_mask.shape[-1]:   #TODO: maybe it need to be i >= tgt.shape[0] but then there is a bug
-                return cluster_logits, coref_logits, predicted_clusters 
+                num_of_empty_clusters = i - len(predicted_clusters[0])
+                if num_of_empty_clusters > 0:
+                    print(f'total of {num_of_empty_clusters} emptys out of {i}')
+                return torch.cat(cluster_logits, 1), torch.cat(coref_logits, 1), predicted_clusters 
 
             i += 1
-            output = tgt[:i]   #TODO: using the generated querys? the trained querys? different decisions for prediction and decoder's inputs? For now I think using the trained, because we wouldnt know the generated vectors in training
-            query_pos = query_pos[:i]
-
+            if refeed_queries:
+                output = tgt[:i]   #TODO: using the generated querys? the trained querys? different decisions for prediction and decoder's inputs? For now I think using the trained, because we wouldnt know the generated vectors in training
+                cur_query_pos = query_pos[:i]
+            else:
+                output = tgt[i-1].unsqueeze(0)
+                cur_query_pos = query_pos[i-1].unsqueeze(0)
 
     def create_logits(self, is_cluster, memory, span_mask, output, IO_score, num_queries):
         last_hs = output[-1]
@@ -240,11 +254,22 @@ class TransformerDecoder(nn.Module):
         cur_coref_logits = coref_logits_unnorm.sigmoid()
         return cluster_logits, cur_coref_logits
 
-    def create_new_mask_mask_mentions(self, predicted_clusters, memory_mask, needed_shape_memory_mask, device):
-        memory_mask = torch.zeros(needed_shape_memory_mask, device=device)   #TODO: first version: recreating the whole mask and not only the new cluster row.
-        for i in range(len(predicted_clusters[0])):
-            memory_mask[i+1][predicted_clusters[0][i]] = 1
-        return memory_mask == 1
+    def create_new_mask_mask_mentions(self, predicted_clusters, memory_mask, num_mentions, device, refeed_queries):
+        if memory_mask is None:
+            memory_mask = torch.zeros([1, num_mentions], device=device)
+            if len(predicted_clusters) > 0:
+                memory_mask[0][predicted_clusters[0]] = 1
+            return memory_mask == 1
+
+        added_mask = memory_mask[-1]
+        if len(predicted_clusters) > 0:
+            added_mask[predicted_clusters[0]] = True
+        added_mask = added_mask.unsqueeze(0)
+        if refeed_queries:
+            new_memory_mask = torch.cat([memory_mask, added_mask], 0)   #TODO: first version: recreating the whole mask and not only the new cluster row.
+        else:
+            new_memory_mask = added_mask
+        return new_memory_mask
 
 
 class TransformerEncoderLayer(nn.Module):

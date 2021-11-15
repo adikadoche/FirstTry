@@ -152,7 +152,7 @@ class DETR(nn.Module):
             span_emb = self.span_proj(span_emb) # [mentions, emb]
             if self.args.speaker == 'after':
                 span_emb = torch.cat([span_emb, avg_speaker_onehot], 2)
-            hs, memory, gold_matrix_permute = self.transformer(span_emb, span_mask, raw_query_embed, gold_matrix, cluster_number)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
+            hs, memory, gold_matrix_permute, gold_mask = self.transformer(span_emb, span_mask, raw_query_embed, gold_matrix, cluster_number)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
 
 
         last_hs = hs[-1] # [1, num_queries, emb]
@@ -172,7 +172,7 @@ class DETR(nn.Module):
                 "cluster_logits": cluster_logits,
                 "mention_logits": mention_logits}
                 # "aux_coref_logits": aux_coref_logits}
-        return out, gold_matrix_permute
+        return out, gold_matrix_permute, gold_mask
 
     def generate(self, input_ids, sum_text_len, mask, gold_mentions, num_mentions, speaker_ids, genre, threshold, gold_mentions_list):
         """ The forward expects a NestedTensor, which consists of:
@@ -245,7 +245,7 @@ class DETR(nn.Module):
             span_emb = self.span_proj(span_emb) # [mentions, emb]
             if self.args.speaker == 'after':
                 span_emb = torch.cat([span_emb, avg_speaker_onehot], 2)
-            cluster_logits, coref_logits, predicted_clusters  = self.transformer.generate(span_emb, span_mask, raw_query_embed, self.is_cluster, span_mask, self.IO_score, threshold, gold_mentions_list)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
+            cluster_logits, coref_logits, predicted_clusters  = self.transformer.generate(span_emb, span_mask, raw_query_embed, self.is_cluster, span_mask, self.IO_score, threshold, gold_mentions_list, self.args.refeed_queries)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
 
 
         # last_hs = hs[-1] # [1, num_queries, emb]
