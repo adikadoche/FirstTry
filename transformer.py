@@ -176,7 +176,6 @@ class TransformerDecoder(nn.Module):
 
     def mask_mention_decoder(self, tgt, memory, is_cluster, span_mask, IO_score, threshold, gold_mentions_list, refeed_queries,
                 tgt_mask: Optional[Tensor] = None,
-                memory_mask: Optional[Tensor] = None,
                 tgt_key_padding_mask: Optional[Tensor] = None,
                 memory_key_padding_mask: Optional[Tensor] = None,
                 pos: Optional[Tensor] = None,
@@ -187,6 +186,7 @@ class TransformerDecoder(nn.Module):
         coref_logits = []
         output = tgt[0].unsqueeze(0)
         cur_query_pos = query_pos[0].unsqueeze(0)
+        memory_mask = torch.zeros([1, memory.shape[0]], device=output.device) == 1
         i = 1
 
         while True:   #TODO i<100? mask not empty?
@@ -200,17 +200,17 @@ class TransformerDecoder(nn.Module):
             if self.norm is not None:
                 output = self.norm(output)
             
-            output = output.unsqueeze(0).transpose(1, 2)
+            cur_output = output[-1].unsqueeze(1)
             tmp_memory = memory.transpose(0, 1)
 
-            cur_cluster_logits, cur_coref_logits = self.create_logits(is_cluster, tmp_memory, span_mask, output[-1].unsqueeze(0), IO_score, 1)
+            cur_cluster_logits, cur_coref_logits = self.create_logits(is_cluster, tmp_memory, span_mask, cur_output, IO_score, 1)
             cluster_logits.append(cur_cluster_logits)
             coref_logits.append(cur_coref_logits)
             cur_predicted_clusters, cur_indexed_predicted_clusters = calc_predicted_clusters(cur_cluster_logits.cpu().detach(), cur_coref_logits.cpu().detach(), [],
                                                                         threshold, gold_mentions_list, num_clusters=1, mention_mask=memory_mask[-1] if memory_mask is not None else None)
 
             predicted_clusters[0] += cur_predicted_clusters[0]
-            memory_mask = self.create_new_mask_mask_mentions(cur_indexed_predicted_clusters[0], memory_mask, memory.shape[0], output.device, refeed_queries)
+            memory_mask = self.create_new_mask_mask_mentions(cur_indexed_predicted_clusters[0], memory_mask, refeed_queries)
 
             if i >= tgt.shape[0] or sum(memory_mask[-1]) == memory_mask.shape[-1]:   #TODO: maybe it need to be i >= tgt.shape[0] but then there is a bug
                 num_of_empty_clusters = i - len(predicted_clusters[0])
@@ -227,10 +227,9 @@ class TransformerDecoder(nn.Module):
                 cur_query_pos = query_pos[i-1].unsqueeze(0)
 
     def create_logits(self, is_cluster, memory, span_mask, output, IO_score, num_queries):
-        last_hs = output[-1]
-        cluster_logits = is_cluster(last_hs).sigmoid()  # [bs, num_queries, 1]
+        cluster_logits = is_cluster(output).sigmoid()  # [bs, num_queries, 1]
         cur_memory = memory[0][span_mask[0]==1].unsqueeze(0)
-        cur_last_hs = last_hs
+        cur_last_hs = output
         num_tokens_or_mentions = cur_memory.shape[1]
         last_hs_tiled = cur_last_hs.unsqueeze(2).repeat(1, 1, num_tokens_or_mentions, 1) # [bs, num_queries, tokens/mentions, emb]
         memory_tiled = cur_memory.unsqueeze(1).repeat(1, num_queries, 1, 1) # [bs, num_queries, tokens/mentions, emb]
@@ -254,14 +253,8 @@ class TransformerDecoder(nn.Module):
         cur_coref_logits = coref_logits_unnorm.sigmoid()
         return cluster_logits, cur_coref_logits
 
-    def create_new_mask_mask_mentions(self, predicted_clusters, memory_mask, num_mentions, device, refeed_queries):
-        if memory_mask is None:
-            memory_mask = torch.zeros([1, num_mentions], device=device)
-            if len(predicted_clusters) > 0:
-                memory_mask[0][predicted_clusters[0]] = 1
-            return memory_mask == 1
-
-        added_mask = memory_mask[-1]
+    def create_new_mask_mask_mentions(self, predicted_clusters, memory_mask, refeed_queries):
+        added_mask = memory_mask[-1].clone()
         if len(predicted_clusters) > 0:
             added_mask[predicted_clusters[0]] = True
         added_mask = added_mask.unsqueeze(0)
