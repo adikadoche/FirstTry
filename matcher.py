@@ -156,7 +156,7 @@ class OrderedMatcher(nn.Module):
         self.args = args
 
     @torch.no_grad()
-    def forward(self, outputs, targets):
+    def forward(self, outputs, targets, gold_matrix_permute):
         """ Performs the matching
 
         Params:
@@ -183,7 +183,7 @@ class OrderedMatcher(nn.Module):
 
         for i in range(bs):
             matched_predicted_cluster_id.append(torch.arange(0, sum(torch.sum(targets_clusters[i], -1) > 0)))
-            matched_gold_cluster_id.append(torch.arange(0, sum(torch.sum(targets_clusters[i], -1) > 0)))
+            matched_gold_cluster_id.append(gold_matrix_permute[i])
 
         return matched_predicted_cluster_id, matched_gold_cluster_id
 

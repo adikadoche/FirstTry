@@ -152,7 +152,7 @@ class DETR(nn.Module):
             span_emb = self.span_proj(span_emb) # [mentions, emb]
             if self.args.speaker == 'after':
                 span_emb = torch.cat([span_emb, avg_speaker_onehot], 2)
-            hs, memory = self.transformer(span_emb, span_mask, raw_query_embed, gold_matrix, cluster_number)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
+            hs, memory, gold_matrix_permute = self.transformer(span_emb, span_mask, raw_query_embed, gold_matrix, cluster_number)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
 
 
         last_hs = hs[-1] # [1, num_queries, emb]
@@ -172,7 +172,7 @@ class DETR(nn.Module):
                 "cluster_logits": cluster_logits,
                 "mention_logits": mention_logits}
                 # "aux_coref_logits": aux_coref_logits}
-        return out
+        return out, gold_matrix_permute
 
     def generate(self, input_ids, sum_text_len, mask, gold_mentions, num_mentions, speaker_ids, genre, threshold, gold_mentions_list):
         """ The forward expects a NestedTensor, which consists of:
@@ -472,7 +472,7 @@ class MatchingLoss(nn.Module):
         self.eos_coef = eos_coef
 
 
-    def forward(self, outputs, targets, is_training=True):
+    def forward(self, outputs, targets, gold_matrix_permute=None, is_training=True):
         """ This performs the loss computation.
         Parameters:
              outputs: dict of tensors, see the output specification of the model for the format
@@ -483,7 +483,7 @@ class MatchingLoss(nn.Module):
 
         # Retrieve the matching between the outputs of the last layer and the targets
         if is_training:
-            matched_predicted_cluster_id, matched_gold_cluster_id = self.training_matcher(outputs, targets)
+            matched_predicted_cluster_id, matched_gold_cluster_id = self.training_matcher(outputs, targets, gold_matrix_permute)
         else:
             matched_predicted_cluster_id, matched_gold_cluster_id = self.eval_matcher(outputs, targets)
 
@@ -499,7 +499,7 @@ class MatchingLoss(nn.Module):
                 coref_logits = coref_logits.squeeze(0)  # [num_queries, tokens]
             cluster_logits = outputs["cluster_logits"][i].squeeze(0) # [num_queries]
             if len(cluster_logits.shape) > 1:
-                cluster_logits = cluster_logits.squeeze(0)
+                cluster_logits = cluster_logits.squeeze()
             if self.args.add_junk:
                 mention_logits = outputs["mention_logits"][i].squeeze() # [tokens]
             num_queries, doc_len = coref_logits.shape
@@ -511,12 +511,9 @@ class MatchingLoss(nn.Module):
             #     torch.distributed.all_reduce(num_of_gold_clusters)
             # num_of_gold_clusters = torch.clamp(num_of_gold_clusters / get_world_size(), min=1).item()
 
-            gold_is_cluster = torch.zeros_like(cluster_logits)
-            weight_cluster = self.eos_coef * torch.ones_like(cluster_logits)
-            if matched_predicted_cluster_id[i] is not False:
-                gold_is_cluster[matched_predicted_cluster_id[i]] = 1
-                weight_cluster[matched_predicted_cluster_id[i]] = 1
-            cost_is_cluster = F.binary_cross_entropy(cluster_logits, gold_is_cluster, weight=weight_cluster)
+            gold_is_cluster = torch.ones(len(matched_predicted_cluster_id[i]), device=cluster_logits.device)
+            weight_cluster = torch.ones_like(gold_is_cluster, device=cluster_logits.device)
+            cost_is_cluster = F.binary_cross_entropy(cluster_logits[matched_predicted_cluster_id[i].numpy()], gold_is_cluster, weight=weight_cluster) ## remove zeros from cost?
                 
             if not self.args.add_junk or sum(targets_mentions[i].shape) == 0:
                 cost_is_mention = torch.tensor(0)

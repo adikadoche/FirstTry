@@ -216,10 +216,10 @@ count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pro
 count_missed_pronouns, count_excess_pronous, count_excess_mentions, tokenizer):
     if len(mention_logits) > 0:
         predicted_clusters, _ = calc_predicted_clusters(cluster_logits.cpu().detach().unsqueeze(0), coref_logits.cpu().detach().unsqueeze(0), mention_logits.cpu().detach().unsqueeze(0),
-                                                        threshold, [gold_mentions])
+                                                        threshold, [gold_mentions], num_clusters=len(gold_clusters[0]))
     else:
         predicted_clusters, _ = calc_predicted_clusters(cluster_logits.cpu().detach().unsqueeze(0), coref_logits.cpu().detach().unsqueeze(0), [],
-                                                        threshold, [gold_mentions])
+                                                        threshold, [gold_mentions], num_clusters=len(gold_clusters[0]))
 
     gold, gold_correct, pred, pred_correct, pred_to_most_similar_gold, pred_to_most_similar_golds_list, gold_is_completely_missed, gold_to_most_similar_pred = match_clusters(
         gold_clusters, predicted_clusters[0])
@@ -395,10 +395,10 @@ def error_analysis(all_cluster_logits, all_coref_logits, all_mention_logits, all
         if len(all_mention_logits) > 0:
             mention_logits = all_mention_logits[i]
             predicted_clusters, _ = calc_predicted_clusters(cluster_logits.cpu().detach().unsqueeze(0), coref_logits.cpu().detach().unsqueeze(0), mention_logits.cpu().detach().unsqueeze(0),
-                                                            threshold, [gold_mentions])
+                                                            threshold, [gold_mentions], num_clusters=len(gold_clusters[0]))
         else:
             predicted_clusters, _ = calc_predicted_clusters(cluster_logits.cpu().detach().unsqueeze(0), coref_logits.cpu().detach().unsqueeze(0), [],
-                                                            threshold, [gold_mentions])
+                                                            threshold, [gold_mentions], num_clusters=len(gold_clusters[0]))
 
         num_gold_clusters_in_one_pred_cluster, num_pred_clusters_in_one_gold_cluster, \
         sum_num_split_gold_clusters, sum_num_split_pred_clusters, sum_biggest_prec_gold_cluster_in_pred_cluster, \

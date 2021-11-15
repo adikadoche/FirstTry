@@ -119,10 +119,12 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
     best_threshold = None
     thres_start = 0.05
     thres_stop = 1
-    thres_step = 0.05
+    thres_step = 0.2
+    thress = [0.05, 0.1, 0.3, 0.5, 0.7, 0.9]
 
     print('Searching for best threshold')
-    for threshold in np.arange(thres_start, thres_stop, thres_step):
+    # for threshold in np.arange(thres_start, thres_stop, thres_step):
+    for threshold in thress:
         print(f'Checking threshold {threshold}')
         all_cluster_logits_cuda = []
         all_coref_logits_cuda = []
@@ -163,7 +165,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
                 cluster_logits, coref_logits, predicted_clusters = model.generate(input_ids, sum_text_len, input_mask, gold_mentions, num_mentions, speaker_ids, genre, threshold, gold_mentions_list)
                 evaluator.update(predicted_clusters, gold_clusters)
                 loss, loss_parts = criterion({'cluster_logits':cluster_logits, 'coref_logits': coref_logits, 'mention_logits':mention_logits}, 
-                                            {'clusters':gold_matrix, 'mentions':gold_mentions_vector}, False)
+                                            {'clusters':gold_matrix, 'mentions':gold_mentions_vector}, is_training=False)
                 losses.append(loss.mean().detach().cpu())
                 for key in loss_parts.keys():
                     if key in losses_parts.keys() and len(losses_parts[key]) > 0:
@@ -192,6 +194,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
     losses_parts = {key:np.average(losses_parts[key]) for key in losses_parts.keys()}
     threshold = best_threshold
     metrics = best_metrics
+    p, r, f1 = best
 
 
     print_predictions(best_all_cluster_logits_cuda, best_all_coref_logits_cuda, best_all_mention_logits_cuda, all_gold_clusters, all_gold_mentions, all_input_ids, threshold, args, eval_dataset.tokenizer)

@@ -59,12 +59,12 @@ class Transformer(nn.Module):
         tgt = query_embed
         memory = self.encoder(src, src_key_padding_mask=binary_mask, pos=pos_embed)
 
-        gold_mask, memory, binary_mask = self.create_new_mask_mask_mentions(gold_matrix, cluster_number, memory, binary_mask)
+        gold_mask, memory, binary_mask, gold_matrix_permute = self.create_new_mask_mask_mentions(gold_matrix, cluster_number, memory, binary_mask)
 
         hs = self.decoder(tgt, memory, memory_key_padding_mask=binary_mask, memory_mask=gold_mask,
                           pos=pos_embed, query_pos=query_embed)
 
-        return hs.transpose(1, 2), memory.transpose(0, 1)
+        return hs.transpose(1, 2), memory.transpose(0, 1), gold_matrix_permute
 
     def create_new_mask_mask_mentions(self, gold_matrix, cluster_number, memory, binary_mask):
         idx = torch.arange(gold_matrix[0].shape[1], 0, -1, device = gold_matrix[0].device)
@@ -79,7 +79,7 @@ class Transformer(nn.Module):
                             gold_matrix_sumed[-1] * torch.ones(gold_matrix[0].shape[0] - gold_matrix_sorted.shape[0], gold_matrix_sorted.shape[1], device = gold_matrix[0].device)], 0) == 1 
         memory = torch.cat([memory, torch.ones(1, memory.shape[1], memory.shape[2], device = gold_matrix[0].device) * 0.001])
         binary_mask = torch.cat([binary_mask, torch.zeros(binary_mask.shape[0], 1, device = gold_matrix[0].device) == 1], 1)
-        return gold_mask, memory, binary_mask
+        return gold_mask, memory, binary_mask, torch.argsort(indices).unsqueeze(0)
 
     def create_new_tgt_and_mask_concat_text_querys(self, tgt, src, memory, gold_matrix):
         # concat text and querys one after another. UNFINISHED
@@ -201,7 +201,7 @@ class TransformerDecoder(nn.Module):
 
             cluster_logits, coref_logits = self.create_logits(is_cluster, tmp_memory, span_mask, output, IO_score, i)
             predicted_clusters, indexed_predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
-                                                                        threshold, gold_mentions_list)
+                                                                        threshold, gold_mentions_list, num_clusters=i)
             memory_mask = self.create_new_mask_mask_mentions(indexed_predicted_clusters, memory_mask, [output.shape[2]+1, memory.shape[0]], output.device)
 
             if i >= tgt.shape[0] or sum(memory_mask[-1]) == memory_mask.shape[-1]:   #TODO: maybe it need to be i >= tgt.shape[0] but then there is a bug

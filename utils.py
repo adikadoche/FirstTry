@@ -178,7 +178,7 @@ def create_gold_matrix(device, doc_len, num_queries, gold_clusters, gold_mention
 def make_mentions_from_clustered_tokens(self, coref_logits):
     pass
 
-def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, threshold, gold_mentions: List):
+def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, threshold, gold_mentions: List, num_clusters):
     # when we are using gold mentions, we get coref_logits at the size of the gold mentions ([bs, clusters, gold_mentions]) (because we know they are mentions, what we are predicting is the clustering)
     
     bs = cluster_logits.shape[0]
@@ -210,12 +210,11 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, thresh
             if len(current_cluster) > 0:
                 clusters.append(current_cluster)
     else:
-        cluster_bools = cluster_logits.squeeze(-1).numpy() >= threshold #TODO: should the cluster and coref share the same threshold?
         clusters = []
         index_clusters = []
         for i in range(bs):
-            cur_cluster_bool = cluster_bools[i]
-            cur_coref_logits = coref_logits[i]
+            cur_cluster_bool = cluster_logits[i].squeeze(-1)[:num_clusters].numpy() >= threshold #TODO: should the cluster and coref share the same threshold?
+            cur_coref_logits = coref_logits[i][:num_clusters]
             cur_cluster_bool = np.tile(cur_cluster_bool.reshape([1, -1, 1]), (1, 1, cur_coref_logits.shape[-1]))
             cluster_mention_mask = cur_cluster_bool
             if len(mention_logits) > 0:
