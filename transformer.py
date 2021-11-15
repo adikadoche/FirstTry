@@ -207,7 +207,7 @@ class TransformerDecoder(nn.Module):
             cluster_logits.append(cur_cluster_logits)
             coref_logits.append(cur_coref_logits)
             cur_predicted_clusters, cur_indexed_predicted_clusters = calc_predicted_clusters(cur_cluster_logits.cpu().detach(), cur_coref_logits.cpu().detach(), [],
-                                                                        threshold, gold_mentions_list, num_clusters=1, mention_mask=memory_mask[-1] if memory_mask is not None else None)
+                                                                        threshold, gold_mentions_list, num_clusters=1, mention_mask=memory_mask[-1])
 
             predicted_clusters[0] += cur_predicted_clusters[0]
             memory_mask = self.create_new_mask_mask_mentions(cur_indexed_predicted_clusters[0], memory_mask, refeed_queries)
@@ -233,21 +233,6 @@ class TransformerDecoder(nn.Module):
         num_tokens_or_mentions = cur_memory.shape[1]
         last_hs_tiled = cur_last_hs.unsqueeze(2).repeat(1, 1, num_tokens_or_mentions, 1) # [bs, num_queries, tokens/mentions, emb]
         memory_tiled = cur_memory.unsqueeze(1).repeat(1, num_queries, 1, 1) # [bs, num_queries, tokens/mentions, emb]
-        if last_hs_tiled.shape != memory_tiled.shape:
-            print(f'num_queries {num_queries}')
-            print(f'memory {memory}')
-            print(f'span_mask {span_mask}')
-            print(f'output {output}')
-            print(f'last_hs_tiled {last_hs_tiled}')
-            print(f'memory_tiled {memory_tiled}')
-            print(f'output.shape {output.shape}')
-            print(f'last_hs.shape {last_hs.shape}')
-            print(f'last_hs_tiled.shape {last_hs_tiled.shape}')
-            print(f'memory_tiled.shape {memory_tiled.shape}')
-            print(f'cur_last_hs {cur_last_hs}')
-            print(f'cur_memory {cur_memory}')
-            print(f'cur_last_hs.shape {cur_last_hs.shape}')
-            print(f'cur_memory.shape {cur_memory.shape}')
         coref_features = torch.cat([last_hs_tiled, memory_tiled], -1) # [bs, num_queries, tokens/mentions, 2 * emb]
         coref_logits_unnorm = IO_score(coref_features).squeeze(-1) # [bs, num_queries, tokens/mentions, 1]
         cur_coref_logits = coref_logits_unnorm.sigmoid()
