@@ -188,7 +188,6 @@ class TransformerDecoder(nn.Module):
 
         if predict_at_end:
             refeed_queries = True
-        predicted_clusters = [[]]
         cluster_logits = []
         coref_logits = []
         output = tgt[0].unsqueeze(0)
@@ -223,7 +222,6 @@ class TransformerDecoder(nn.Module):
                 cur_predicted_clusters, _ = calc_predicted_clusters(cur_cluster_logits.cpu().detach(), cur_coref_logits.cpu().detach(), [],
                                                                             threshold, gold_mentions_list, num_clusters=num_clusters)
 
-                predicted_clusters[0] += cur_predicted_clusters[0]
             memory_mask = self.create_new_mask_mask_mentions(cur_coref_logits, memory_mask, refeed_queries, predict_at_end)
 
             if i >= tgt.shape[0] or sum(memory_mask[-1]) == memory_mask.shape[-1]:   #TODO: maybe it need to be i >= tgt.shape[0] but then there is a bug
@@ -237,6 +235,8 @@ class TransformerDecoder(nn.Module):
                 else:
                     cluster_logits = torch.cat(cluster_logits, 1)
                     coref_logits = torch.cat(coref_logits, 1)
+                    predicted_clusters, _ = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
+                                                                            threshold, gold_mentions_list, num_clusters=num_clusters)
                 return cluster_logits, coref_logits, predicted_clusters 
 
             i += 1
