@@ -213,9 +213,9 @@ class TransformerDecoder(nn.Module):
             memory_mask = self.create_new_mask_mask_mentions(cur_indexed_predicted_clusters[0], memory_mask, refeed_queries)
 
             if i >= tgt.shape[0] or sum(memory_mask[-1]) == memory_mask.shape[-1]:   #TODO: maybe it need to be i >= tgt.shape[0] but then there is a bug
-                num_of_empty_clusters = i - len(predicted_clusters[0])
-                if num_of_empty_clusters > 0:
-                    print(f'total of {num_of_empty_clusters} emptys out of {i}')
+                # num_of_empty_clusters = i - len(predicted_clusters[0])
+                # if num_of_empty_clusters > 0:
+                #     print(f'total of {num_of_empty_clusters} emptys out of {i}')
                 return torch.cat(cluster_logits, 1), torch.cat(coref_logits, 1), predicted_clusters 
 
             i += 1
