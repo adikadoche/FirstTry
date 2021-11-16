@@ -219,8 +219,6 @@ class TransformerDecoder(nn.Module):
             if not predict_at_end:
                 cluster_logits.append(cur_cluster_logits)
                 coref_logits.append(cur_coref_logits)
-                cur_predicted_clusters, _ = calc_predicted_clusters(cur_cluster_logits.cpu().detach(), cur_coref_logits.cpu().detach(), [],
-                                                                            threshold, gold_mentions_list, num_clusters=num_clusters)
 
             memory_mask = self.create_new_mask_mask_mentions(cur_coref_logits, memory_mask, refeed_queries, predict_at_end)
 
