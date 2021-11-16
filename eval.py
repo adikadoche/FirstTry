@@ -120,7 +120,8 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
     thres_start = 0.05
     thres_stop = 1
     thres_step = 0.2
-    thress = [0.05, 0.1, 0.3, 0.5, 0.7, 0.9]
+    # thress = [0.05, 0.1, 0.3, 0.5, 0.7, 0.9]
+    thress = [0.05]
 
     print('Searching for best threshold')
     # for threshold in np.arange(thres_start, thres_stop, thres_step):

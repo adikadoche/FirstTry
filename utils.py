@@ -33,9 +33,9 @@ def save_checkpoint(args, global_step, threshold, model, optimizer, output_dir, 
     logger.info("Saved model checkpoint to %s", output_dir)
 
 
-def load_from_checkpoint(model, checkpoint_path, args=None, device=None, optimizer=None, amp=None):
+def load_from_checkpoint(model, checkpoint_path, args=None, optimizer=None, amp=None):
     global_step = checkpoint_path.rstrip('/').split('-')[-1]
-    checkpoint = torch.load(checkpoint_path + '/model.step-' + global_step + '.pt', map_location=device)
+    checkpoint = torch.load(checkpoint_path + '/model.step-' + global_step + '.pt', map_location=args.device)
     # if args is not None:
     #     args = checkpoint['args']
     model_to_load = model.module if hasattr(model, 'module') else model  # Take care of distributed/parallel training
@@ -46,7 +46,7 @@ def load_from_checkpoint(model, checkpoint_path, args=None, device=None, optimiz
         for state in optimizer.state.values():
             for k, v in state.items():
                 if torch.is_tensor(v):
-                    state[k] = v.to(device)
+                    state[k] = v.to(args.device)
     threshold = checkpoint['threshold']
     return {'global_step':global_step, 'threshold':threshold}
 

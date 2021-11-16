@@ -177,7 +177,7 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
     
     if args.resume_from:
         logger.info("Loading from checkpoint {}".format(args.resume_from))
-        loaded_args = load_from_checkpoint(model, args.resume_from, args, args.device, optimizer)
+        loaded_args = load_from_checkpoint(model, args.resume_from, args, optimizer)
         args.resume_global_step = int(loaded_args['global_step'])
         if not args.do_train:
             return args.resume_global_step
