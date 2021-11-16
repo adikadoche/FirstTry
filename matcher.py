@@ -69,9 +69,10 @@ class HungarianMatcher(nn.Module):
             coref_logits = outputs["coref_logits"][i]
             if coref_logits.shape[0] > 1:
                 coref_logits = coref_logits.squeeze(0)  # [num_queries, tokens]
-            cluster_logits = outputs["cluster_logits"][i].squeeze(0) # [num_queries]
-            if len(cluster_logits.shape) > 1:
-                cluster_logits = cluster_logits.squeeze(0)
+            if self.args.is_cluster:
+                cluster_logits = outputs["cluster_logits"][i].squeeze(0) # [num_queries]
+                if len(cluster_logits.shape) > 1:
+                    cluster_logits = cluster_logits.squeeze(0)
             if self.args.add_junk:
                 mention_logits = outputs["mention_logits"][i].squeeze(-1).unsqueeze(0) # [1, tokens]
 
@@ -97,8 +98,11 @@ class HungarianMatcher(nn.Module):
                 num_of_gold_clusters = int(real_cluster_target.shape[0])
                 num_queries, doc_len = coref_logits.shape
 
-                cost_is_cluster = F.binary_cross_entropy(cluster_logits, torch.ones_like(cluster_logits), reduction='none') # [num_queries, 1]
-                cost_is_cluster = cost_is_cluster.repeat(1, num_of_gold_clusters) # [num_queries, gold_clusters]
+                if self.args.is_cluster:
+                    cost_is_cluster = F.binary_cross_entropy(cluster_logits, torch.ones_like(cluster_logits), reduction='none') # [num_queries, 1]
+                    cost_is_cluster = cost_is_cluster.repeat(1, num_of_gold_clusters) # [num_queries, gold_clusters]
+                else:
+                    cost_is_cluster = torch.tensor(0)
 
                 if self.args.add_junk:
                     mention_logits = mention_logits.repeat(num_queries, 1) # [num_queries, tokens]

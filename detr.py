@@ -45,7 +45,10 @@ class DETR(nn.Module):
         hidden_dim = transformer.d_model
         self.input_proj = nn.Linear(backbone.config.hidden_size, hidden_dim)
         self.query_embed = nn.Embedding(num_queries, hidden_dim)
-        self.is_cluster = nn.Linear(hidden_dim, 1)
+        if args.is_cluster:
+            self.is_cluster = nn.Linear(hidden_dim, 1)
+        else:
+            self.is_cluster = None
         self.backbone = backbone
         self.aux_loss = aux_loss
         self.args = args
@@ -322,7 +325,10 @@ class DETR(nn.Module):
         # last_hs [bs, num_queries, emb]
         # memory [bs, tokens, emb]
 
-        cluster_logits = self.is_cluster(last_hs).sigmoid()  # [bs, num_queries, 1]
+        if self.args.is_cluster:
+            cluster_logits = self.is_cluster(last_hs).sigmoid()  # [bs, num_queries, 1]
+        else:
+            cluster_logits = []
         if self.args.add_junk:
             mention_logits = self.mention_classifier(memory).sigmoid()  # [bs, tokens, 1]
 
@@ -498,9 +504,10 @@ class MatchingLoss(nn.Module):
             coref_logits = outputs["coref_logits"][i]
             if coref_logits.shape[0] > 1:
                 coref_logits = coref_logits.squeeze(0)  # [num_queries, tokens]
-            cluster_logits = outputs["cluster_logits"][i].squeeze(0) # [num_queries]
-            if len(cluster_logits.shape) > 1:
-                cluster_logits = cluster_logits.squeeze()
+            if self.args.is_cluster:
+                cluster_logits = outputs["cluster_logits"][i].squeeze(0) # [num_queries]
+                if len(cluster_logits.shape) > 1:
+                    cluster_logits = cluster_logits.squeeze()
             if self.args.add_junk:
                 mention_logits = outputs["mention_logits"][i].squeeze() # [tokens]
             num_queries, doc_len = coref_logits.shape
@@ -512,13 +519,16 @@ class MatchingLoss(nn.Module):
             #     torch.distributed.all_reduce(num_of_gold_clusters)
             # num_of_gold_clusters = torch.clamp(num_of_gold_clusters / get_world_size(), min=1).item()
 
-            gold_is_cluster = torch.zeros_like(cluster_logits)
-            weight_cluster = self.eos_coef * torch.ones_like(cluster_logits)
-            if matched_predicted_cluster_id[i] is not False:
-                gold_is_cluster[matched_predicted_cluster_id[i]] = 1
-                weight_cluster[matched_predicted_cluster_id[i]] = 1
-            cost_is_cluster = F.binary_cross_entropy(cluster_logits, gold_is_cluster, weight=weight_cluster) ## remove zeros from cost?
-                
+            if self.args.is_cluster:
+                gold_is_cluster = torch.zeros_like(cluster_logits)
+                weight_cluster = self.eos_coef * torch.ones_like(cluster_logits)
+                if matched_predicted_cluster_id[i] is not False:
+                    gold_is_cluster[matched_predicted_cluster_id[i]] = 1
+                    weight_cluster[matched_predicted_cluster_id[i]] = 1
+                cost_is_cluster = F.binary_cross_entropy(cluster_logits, gold_is_cluster, weight=weight_cluster) ## remove zeros from cost?
+            else:
+                cost_is_cluster = torch.tensor(0)
+
             if not self.args.add_junk or sum(targets_mentions[i].shape) == 0:
                 cost_is_mention = torch.tensor(0)
             else:
@@ -529,7 +539,7 @@ class MatchingLoss(nn.Module):
                 weight_mention = targets_mentions[i] + self.eos_coef * (1 - targets_mentions[i])
                 cost_is_mention = F.binary_cross_entropy(mention_logits, targets_mentions[i], weight=weight_mention)
 
-            # coref_logits = torch.index_select(coref_logits, 1, torch.arange(0, targets_clusters[i].shape[1]).to(coref_logits.device))
+            coref_logits = torch.index_select(coref_logits, 1, torch.arange(0, targets_clusters[i].shape[1]).to(coref_logits.device))
 
             cost_coref = 0
             if matched_predicted_cluster_id[i] is not False:

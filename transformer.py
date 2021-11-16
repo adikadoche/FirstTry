@@ -217,8 +217,9 @@ class TransformerDecoder(nn.Module):
             cur_cluster_logits, cur_coref_logits = self.create_logits(is_cluster, tmp_memory, span_mask, cur_output, IO_score, num_clusters)
 
             if not predict_at_end:
-                cluster_logits.append(cur_cluster_logits)
                 coref_logits.append(cur_coref_logits)
+                if is_cluster is not None:
+                    cluster_logits.append(cur_cluster_logits)
 
             memory_mask = self.create_new_mask_mask_mentions(cur_coref_logits, memory_mask, refeed_queries, predict_at_end)
 
@@ -228,13 +229,22 @@ class TransformerDecoder(nn.Module):
                 #     print(f'total of {num_of_empty_clusters} emptys out of {i}')
                 if predict_at_end:
                     cluster_logits, coref_logits = self.create_logits(is_cluster, tmp_memory, span_mask, cur_output, IO_score, num_clusters)
-                    predicted_clusters, _ = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
-                                                                            threshold, gold_mentions_list, num_clusters=num_clusters)
+                    if is_cluster is None:
+                        predicted_clusters, _ = calc_predicted_clusters(None, coref_logits.cpu().detach(), [],
+                                                                                threshold, gold_mentions_list, num_clusters=num_clusters)
+                    else:
+                        predicted_clusters, _ = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
+                                                                                threshold, gold_mentions_list, num_clusters=num_clusters)
                 else:
-                    cluster_logits = torch.cat(cluster_logits, 1)
                     coref_logits = torch.cat(coref_logits, 1)
-                    predicted_clusters, _ = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
-                                                                            threshold, gold_mentions_list, num_clusters=num_clusters)
+                    if is_cluster is None:
+                        cluster_logits = []
+                        predicted_clusters, _ = calc_predicted_clusters(None, coref_logits.cpu().detach(), [],
+                                                                                threshold, gold_mentions_list, num_clusters=num_clusters)
+                    else:
+                        cluster_logits = torch.cat(cluster_logits, 1)
+                        predicted_clusters, _ = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
+                                                                                threshold, gold_mentions_list, num_clusters=num_clusters)
                 return cluster_logits, coref_logits, predicted_clusters 
 
             i += 1
@@ -246,7 +256,10 @@ class TransformerDecoder(nn.Module):
                 cur_query_pos = query_pos[i-1].unsqueeze(0)
 
     def create_logits(self, is_cluster, memory, span_mask, output, IO_score, num_queries):
-        cluster_logits = is_cluster(output).sigmoid()  # [bs, num_queries, 1]
+        if is_cluster is None:
+            cluster_logits = None
+        else:
+            cluster_logits = is_cluster(output).sigmoid()  # [bs, num_queries, 1]
         cur_memory = memory[0][span_mask[0]==1].unsqueeze(0)
         cur_last_hs = output
         num_tokens_or_mentions = cur_memory.shape[1]
