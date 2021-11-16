@@ -69,6 +69,8 @@ def parse_args():
     parser.add_argument("--do_train", action="store_true", help="Whether to run training.")
     parser.add_argument("--add_junk", action="store_true", help="whether to use junk spans")
     parser.add_argument("--refeed_queries", action="store_true", help="whether to use already predicted queries")
+    parser.add_argument("--tgt_mask", action="store_true", help="whether to use tgt_mask when training")
+    parser.add_argument("--predict_at_end", action="store_true", help="whether to predict eval at the end of the auto regression")
     parser.add_argument("--eval", type=str, choices=['no', 'specific', 'all', 'vanilla'], default='no')
 
     parser.add_argument("--weight_decay", default=0.01, type=float, help="Weight deay if we apply some.")
