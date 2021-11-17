@@ -520,7 +520,7 @@ class MatchingLoss(nn.Module):
             # num_of_gold_clusters = torch.clamp(num_of_gold_clusters / get_world_size(), min=1).item()
 
             if self.args.is_cluster:
-                if self.args.is_new_loss:
+                if self.args.only_matched_loss:
                     gold_is_cluster = torch.zeros_like(cluster_logits)
                     weight_cluster = self.eos_coef * torch.ones_like(cluster_logits)
                     if matched_predicted_cluster_id[i] is not False:
@@ -548,7 +548,7 @@ class MatchingLoss(nn.Module):
 
             cost_coref = 0
             if matched_predicted_cluster_id[i] is not False:
-                if self.args.is_new_loss:
+                if self.args.only_matched_loss:
                     id_predicted_not_clusters = [j for j in range(coref_logits.shape[0]) if j not in matched_predicted_cluster_id[i].numpy()]
                     permuted_coref_logits = torch.zeros_like(coref_logits)
                     permuted_coref_logits[:len(matched_predicted_cluster_id[i])] = coref_logits[matched_predicted_cluster_id[i].numpy()]
