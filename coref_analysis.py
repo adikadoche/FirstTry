@@ -214,12 +214,14 @@ def is_cluster_contains_linked_entities(cluster, entities_per_sentence, sentence
 def print_per_batch(example_ind, is_print, cluster_logits, coref_logits, mention_logits, threshold, gold_clusters, gold_mentions, input_ids,
 count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, count_missed_mentions,
 count_missed_pronouns, count_excess_pronous, count_excess_mentions, tokenizer):
+    detached_mention_logits = []
     if len(mention_logits) > 0:
-        predicted_clusters, _ = calc_predicted_clusters(cluster_logits.cpu().detach().unsqueeze(0), coref_logits.cpu().detach().unsqueeze(0), mention_logits.cpu().detach().unsqueeze(0),
-                                                        threshold, [gold_mentions], num_clusters=len(gold_clusters[0]))
-    else:
-        predicted_clusters, _ = calc_predicted_clusters(cluster_logits.cpu().detach().unsqueeze(0), coref_logits.cpu().detach().unsqueeze(0), [],
-                                                        threshold, [gold_mentions], num_clusters=len(gold_clusters[0]))
+        detached_mention_logits = mention_logits.cpu().detach().unsqueeze(0)
+    detached_cluster_logits = None
+    if len(cluster_logits) > 0:
+        detached_cluster_logits = cluster_logits.cpu().detach().unsqueeze(0)
+    predicted_clusters, _ = calc_predicted_clusters(detached_cluster_logits, coref_logits.cpu().detach().unsqueeze(0), detached_mention_logits,
+                                                    threshold, [gold_mentions], num_clusters=len(gold_clusters[0]))
 
     gold, gold_correct, pred, pred_correct, pred_to_most_similar_gold, pred_to_most_similar_golds_list, gold_is_completely_missed, gold_to_most_similar_pred = match_clusters(
         gold_clusters, predicted_clusters[0])
@@ -341,9 +343,11 @@ def print_predictions(all_cluster_logits, all_coref_logits, all_mention_logits, 
     for i, input_ids in enumerate(all_input_ids):
         gold_clusters = all_gold_clusters[i]
         gold_mentions = all_gold_mentions[i]
-        cluster_logits, coref_logits, mention_logits = all_cluster_logits[i], all_coref_logits[i], []
+        cluster_logits, coref_logits, mention_logits = [], all_coref_logits[i], []
         if len(all_mention_logits) > 0:
             mention_logits = all_mention_logits[i]
+        if len(all_cluster_logits) > 0:
+            cluster_logits = all_cluster_logits[i]
 
 
         count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, \
@@ -391,14 +395,13 @@ def error_analysis(all_cluster_logits, all_coref_logits, all_mention_logits, all
     for i in range(len(all_input_ids)):
         gold_clusters = all_gold_clusters[i]
         gold_mentions = all_gold_mentions[i]
-        cluster_logits, coref_logits, mention_logits = all_cluster_logits[i], all_coref_logits[i], []
+        cluster_logits, coref_logits, mention_logits = None, all_coref_logits[i].cpu().detach().unsqueeze(0), []
         if len(all_mention_logits) > 0:
-            mention_logits = all_mention_logits[i]
-            predicted_clusters, _ = calc_predicted_clusters(cluster_logits.cpu().detach().unsqueeze(0), coref_logits.cpu().detach().unsqueeze(0), mention_logits.cpu().detach().unsqueeze(0),
-                                                            threshold, [gold_mentions], num_clusters=len(gold_clusters[0]))
-        else:
-            predicted_clusters, _ = calc_predicted_clusters(cluster_logits.cpu().detach().unsqueeze(0), coref_logits.cpu().detach().unsqueeze(0), [],
-                                                            threshold, [gold_mentions], num_clusters=len(gold_clusters[0]))
+            mention_logits = all_mention_logits[i].cpu().detach().unsqueeze(0)
+        if len(all_cluster_logits) > 0:
+            cluster_logits = all_cluster_logits[i].cpu().detach().unsqueeze(0)
+        predicted_clusters, _ = calc_predicted_clusters(cluster_logits, coref_logits, mention_logits,
+                                                        threshold, [gold_mentions], num_clusters=len(gold_clusters[0]))
 
         num_gold_clusters_in_one_pred_cluster, num_pred_clusters_in_one_gold_cluster, \
         sum_num_split_gold_clusters, sum_num_split_pred_clusters, sum_biggest_prec_gold_cluster_in_pred_cluster, \

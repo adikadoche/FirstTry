@@ -176,7 +176,8 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
                 batch_sizes.append(loss.shape[0]) 
             if args.add_junk:
                 all_mention_logits_cuda += [ml.detach().clone() for ml in mention_logits]
-            all_cluster_logits_cuda += [cl.detach().clone() for cl in cluster_logits]
+            if args.is_cluster:
+                all_cluster_logits_cuda += [cl.detach().clone() for cl in cluster_logits]
             all_coref_logits_cuda += [cl.detach().clone() for cl in coref_logits]
         p, r, f1 = evaluator.get_prf()
         if f1 > best[-1]:
