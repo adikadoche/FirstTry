@@ -186,8 +186,35 @@ class OrderedMatcher(nn.Module):
         targets_clusters = targets['clusters']
 
         for i in range(bs):
-            matched_predicted_cluster_id.append(torch.arange(0, sum(torch.sum(targets_clusters[i], -1) > 0)))
-            matched_gold_cluster_id.append(gold_matrix_permute[i])
+            if self.args.is_self_loss:
+                coref_logits = outputs["coref_logits"][i]
+                if coref_logits.shape[0] > 1:
+                    coref_logits = coref_logits.squeeze(0)  # [num_queries, tokens]
+                real_cluster_target_rows = torch.sum(targets_clusters[i], -1) > 0
+                real_cluster_target = targets_clusters[i][real_cluster_target_rows]
+                real_cluster_target = torch.cat([real_cluster_target, torch.zeros([1, real_cluster_target.shape[1]], device=real_cluster_target.device)], 0)
+                coref_logits = torch.index_select(coref_logits, 1, torch.arange(0, real_cluster_target.shape[1]).to(coref_logits.device))
+                num_queries, doc_len = coref_logits.shape
+                cost_coref = []
+                for cluster in real_cluster_target:
+                    gold_per_token_repeated = cluster.repeat(num_queries, 1) # [num_queries, tokens]
+                    if self.args.multiclass_ce:
+                        # logits = coref_logits.transpose(0, 1)  # [mentions, num_queries]
+                        # gold = gold_per_token_repeated.transpose(0, 1).nonzero()[:, 1]  # [mentions]
+                        # cost_coref = F.cross_entropy(logits, gold, reduction='sum')
+                        coref_logits = coref_logits.softmax(-2)
+                    if self.args.sum_attn:
+                        coref_logits = coref_logits.clamp(0, 1)
+                    losses_for_current_gold_cluster = F.binary_cross_entropy(coref_logits, gold_per_token_repeated, reduction='none').mean(1)
+
+                    cost_coref.append(losses_for_current_gold_cluster) # [num_queries]
+                cost_coref = torch.stack(cost_coref, 1) # [num_queries, gold_clusters]
+                matched_gold_cluster_id.append(torch.argmin(cost_coref, 1))   #PROBLEM - NON DIFFERENTIABLE
+                matched_predicted_cluster_id.append(torch.arange(len(matched_gold_cluster_id)))
+
+            else:
+                matched_predicted_cluster_id.append(torch.arange(0, sum(torch.sum(targets_clusters[i], -1) > 0)))
+                matched_gold_cluster_id.append(gold_matrix_permute[i])
 
         return matched_predicted_cluster_id, matched_gold_cluster_id
 
