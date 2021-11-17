@@ -209,8 +209,15 @@ class OrderedMatcher(nn.Module):
 
                     cost_coref.append(losses_for_current_gold_cluster) # [num_queries]
                 cost_coref = torch.stack(cost_coref, 1) # [num_queries, gold_clusters]
-                matched_gold_cluster_id.append(torch.argmin(cost_coref, 1))   #PROBLEM - NON DIFFERENTIABLE
-                matched_predicted_cluster_id.append(torch.arange(len(matched_gold_cluster_id)))
+                inds1, inds2 = [], []
+                for j in range(cost_coref.shape[0]):
+                    indices = linear_sum_assignment(cost_coref[j].unsqueeze(1).cpu())
+                    ind1, ind2 = indices
+                    inds1.append(ind1[0])
+                    inds2.append(j)
+
+                matched_predicted_cluster_id.append(torch.as_tensor(inds1, dtype=torch.int64))
+                matched_gold_cluster_id.append(torch.as_tensor(inds2, dtype=torch.int64))
 
             else:
                 matched_predicted_cluster_id.append(torch.arange(0, sum(torch.sum(targets_clusters[i], -1) > 0)))
