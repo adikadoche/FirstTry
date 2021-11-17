@@ -574,7 +574,7 @@ class MatchingLoss(nn.Module):
 
                 if self.args.is_self_loss:  
                     gold_is_cluster = real_cluster_target_rows.float()
-                    pred_is_cluster = torch.zeros(targets_clusters[i].shape[0], device=matched_predicted_cluster_id[i].device)
+                    pred_is_cluster = torch.zeros(targets_clusters[i].shape[0], device=real_cluster_target_rows.device)
                     pred_is_cluster[matched_predicted_cluster_id[i] < num_real_cluster_target] = 1
                     weight_cluster = gold_is_cluster + (1-gold_is_cluster) * self.eos_coef
                     cost_is_cluster = F.binary_cross_entropy(pred_is_cluster, gold_is_cluster, weight=weight_cluster) ## remove zeros from cost?                    
