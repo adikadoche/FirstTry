@@ -211,10 +211,10 @@ class OrderedMatcher(nn.Module):
                 cost_coref = torch.stack(cost_coref, 1) # [num_queries, gold_clusters]
                 inds1, inds2 = [], []
                 for j in range(cost_coref.shape[0]):
-                    indices = linear_sum_assignment(cost_coref[j].unsqueeze(1).cpu())
+                    indices = linear_sum_assignment(cost_coref[j].unsqueeze(0).cpu())
                     ind1, ind2 = indices
-                    inds1.append(ind1[0])
-                    inds2.append(j)
+                    inds1.append(j)
+                    inds2.append(ind2[0])
 
                 matched_predicted_cluster_id.append(torch.as_tensor(inds1, dtype=torch.int64))
                 matched_gold_cluster_id.append(torch.as_tensor(inds2, dtype=torch.int64))
