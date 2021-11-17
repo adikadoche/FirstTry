@@ -520,12 +520,17 @@ class MatchingLoss(nn.Module):
             # num_of_gold_clusters = torch.clamp(num_of_gold_clusters / get_world_size(), min=1).item()
 
             if self.args.is_cluster:
-                gold_is_cluster = torch.zeros_like(cluster_logits)
-                weight_cluster = self.eos_coef * torch.ones_like(cluster_logits)
-                if matched_predicted_cluster_id[i] is not False:
-                    gold_is_cluster[matched_predicted_cluster_id[i]] = 1
-                    weight_cluster[matched_predicted_cluster_id[i]] = 1
-                cost_is_cluster = F.binary_cross_entropy(cluster_logits, gold_is_cluster, weight=weight_cluster) ## remove zeros from cost?
+                if self.args.is_new_loss:
+                    gold_is_cluster = torch.zeros_like(cluster_logits)
+                    weight_cluster = self.eos_coef * torch.ones_like(cluster_logits)
+                    if matched_predicted_cluster_id[i] is not False:
+                        gold_is_cluster[matched_predicted_cluster_id[i]] = 1
+                        weight_cluster[matched_predicted_cluster_id[i]] = 1
+                    cost_is_cluster = F.binary_cross_entropy(cluster_logits, gold_is_cluster, weight=weight_cluster) ## remove zeros from cost?
+                else:
+                    gold_is_cluster = torch.ones(len(matched_predicted_cluster_id[i]), device=cluster_logits.device)
+                    weight_cluster = torch.ones_like(gold_is_cluster, device=cluster_logits.device)
+                    cost_is_cluster = F.binary_cross_entropy(cluster_logits[matched_predicted_cluster_id[i].numpy()], gold_is_cluster, weight=weight_cluster) ## remove zeros from cost?
             else:
                 cost_is_cluster = torch.tensor(0)
 
@@ -543,12 +548,16 @@ class MatchingLoss(nn.Module):
 
             cost_coref = 0
             if matched_predicted_cluster_id[i] is not False:
-                id_predicted_not_clusters = [j for j in range(coref_logits.shape[0]) if j not in matched_predicted_cluster_id[i].numpy()]
-                permuted_coref_logits = torch.zeros_like(coref_logits)
-                permuted_coref_logits[:len(matched_predicted_cluster_id[i])] = coref_logits[matched_predicted_cluster_id[i].numpy()]
-                permuted_coref_logits[len(matched_predicted_cluster_id[i]):] = coref_logits[id_predicted_not_clusters]
-                permuted_gold = targets_clusters[i].clone()
-                permuted_gold[:len(matched_gold_cluster_id[i])] = targets_clusters[i][matched_gold_cluster_id[i].numpy()]
+                if self.args.is_new_loss:
+                    id_predicted_not_clusters = [j for j in range(coref_logits.shape[0]) if j not in matched_predicted_cluster_id[i].numpy()]
+                    permuted_coref_logits = torch.zeros_like(coref_logits)
+                    permuted_coref_logits[:len(matched_predicted_cluster_id[i])] = coref_logits[matched_predicted_cluster_id[i].numpy()]
+                    permuted_coref_logits[len(matched_predicted_cluster_id[i]):] = coref_logits[id_predicted_not_clusters]
+                    permuted_gold = targets_clusters[i].clone()
+                    permuted_gold[:len(matched_gold_cluster_id[i])] = targets_clusters[i][matched_gold_cluster_id[i].numpy()]
+                else:
+                    permuted_coref_logits = coref_logits[matched_predicted_cluster_id[i].numpy()]
+                    permuted_gold = targets_clusters[i][matched_gold_cluster_id[i].numpy()]
 
                 if self.args.multiclass_ce:
                     logits = permuted_coref_logits.transpose(0, 1)  # [mentions, num_queries]
