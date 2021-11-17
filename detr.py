@@ -155,7 +155,7 @@ class DETR(nn.Module):
             span_emb = self.span_proj(span_emb) # [mentions, emb]
             if self.args.speaker == 'after':
                 span_emb = torch.cat([span_emb, avg_speaker_onehot], 2)
-            hs, memory, gold_matrix_permute, gold_mask = self.transformer(span_emb, span_mask, raw_query_embed, gold_matrix, cluster_number, self.args.tgt_mask)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
+            hs, memory, gold_matrix_permute, gold_mask = self.transformer(span_emb, span_mask, raw_query_embed, gold_matrix, cluster_number)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
 
 
         last_hs = hs[-1] # [1, num_queries, emb]

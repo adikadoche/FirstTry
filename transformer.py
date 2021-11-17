@@ -47,7 +47,7 @@ class Transformer(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def forward(self, src, mask, query_embed, gold_matrix, cluster_number, is_tgt_mask, pos_embed=None):
+    def forward(self, src, mask, query_embed, gold_matrix, cluster_number, pos_embed=None):
         # flatten NxMxE to ExNxM
         bs, m, e = src.shape
         src = src.permute(1,0,2)
@@ -61,13 +61,8 @@ class Transformer(nn.Module):
 
         gold_mask, memory, binary_mask, gold_matrix_permute = self.create_new_mask_mask_mentions(gold_matrix, cluster_number, memory, binary_mask)
 
-        if is_tgt_mask:
-            tgt_mask = torch.triu(torch.ones([tgt.shape[0], tgt.shape[0]], device=tgt.device), diagonal=1) == 1
-        else:
-            tgt_mask = None
-
         hs = self.decoder(tgt, memory, memory_key_padding_mask=binary_mask, memory_mask=gold_mask,
-                          pos=pos_embed, query_pos=query_embed, tgt_mask=tgt_mask)
+                          pos=pos_embed, query_pos=query_embed)
 
         return hs.transpose(1, 2), memory.transpose(0, 1), gold_matrix_permute, gold_mask
 
