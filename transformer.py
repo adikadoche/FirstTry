@@ -47,7 +47,7 @@ class Transformer(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def forward(self, src, mask, query_embed, gold_matrix, cluster_number, pos_embed=None):
+    def forward(self, src, mask, query_embed, gold_matrix, cluster_number, is_weighted_loss_smaller_mask, pos_embed=None):
         # flatten NxMxE to ExNxM
         bs, m, e = src.shape
         src = src.permute(1,0,2)
@@ -59,24 +59,29 @@ class Transformer(nn.Module):
         tgt = query_embed
         memory = self.encoder(src, src_key_padding_mask=binary_mask, pos=pos_embed)
 
-        gold_mask, memory, binary_mask, gold_matrix_permute = self.create_new_mask_mask_mentions(gold_matrix, cluster_number, memory, binary_mask)
+        gold_mask, memory, binary_mask, gold_matrix_permute = self.create_new_mask_mask_mentions(gold_matrix, cluster_number, memory, binary_mask, is_weighted_loss_smaller_mask)
 
         hs = self.decoder(tgt, memory, memory_key_padding_mask=binary_mask, memory_mask=gold_mask,
                           pos=pos_embed, query_pos=query_embed)
 
         return hs.transpose(1, 2), memory.transpose(0, 1), gold_matrix_permute, gold_mask
 
-    def create_new_mask_mask_mentions(self, gold_matrix, cluster_number, memory, binary_mask):
+    def create_new_mask_mask_mentions(self, gold_matrix, cluster_number, memory, binary_mask, is_weighted_loss_smaller_mask):
+        if is_weighted_loss_smaller_mask:
+            factor = 0.5
+        else:
+            factor = 1
         idx = torch.arange(gold_matrix[0].shape[1], 0, -1, device = gold_matrix[0].device)
         tmp2 = gold_matrix[0] * idx
         indices = torch.argmax(tmp2, 1, keepdim=True).squeeze()
         indices = indices[:cluster_number]
         gold_matrix_sorted = torch.index_select(gold_matrix[0], 0, torch.argsort(indices))
         gold_matrix_sorted = torch.cat([gold_matrix_sorted, torch.zeros(gold_matrix_sorted.shape[0],1, device = gold_matrix[0].device)], 1)
-        gold_matrix_sumed = torch.cumsum(gold_matrix_sorted, axis=0)
-        gold_mask = torch.cat([torch.zeros(1, gold_matrix_sorted.shape[1], device = gold_matrix[0].device), \
-                            torch.index_select(gold_matrix_sumed, 0, torch.arange(gold_matrix_sorted.shape[0]-1, device = gold_matrix[0].device)), \
-                            gold_matrix_sumed[-1] * torch.ones(gold_matrix[0].shape[0] - gold_matrix_sorted.shape[0], gold_matrix_sorted.shape[1], device = gold_matrix[0].device)], 0) == 1 
+        log_gold_matrix_sorted = torch.log(1 - factor*gold_matrix_sorted)
+        gold_matrix_sumed = torch.cumsum(log_gold_matrix_sorted, axis=0)
+        gold_mask = torch.cat([torch.zeros(1, log_gold_matrix_sorted.shape[1], device = gold_matrix[0].device), \
+                            torch.index_select(gold_matrix_sumed, 0, torch.arange(log_gold_matrix_sorted.shape[0]-1, device = gold_matrix[0].device)), \
+                            gold_matrix_sumed[-1] * torch.ones(gold_matrix[0].shape[0] - log_gold_matrix_sorted.shape[0], log_gold_matrix_sorted.shape[1], device = gold_matrix[0].device)], 0) 
         memory = torch.cat([memory, torch.ones(1, memory.shape[1], memory.shape[2], device = gold_matrix[0].device) * 0.001])
         binary_mask = torch.cat([binary_mask, torch.zeros(binary_mask.shape[0], 1, device = gold_matrix[0].device) == 1], 1)
         return gold_mask, memory, binary_mask, torch.argsort(indices).unsqueeze(0)
