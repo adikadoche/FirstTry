@@ -16,6 +16,7 @@ from utils import tensor_and_remove_empty, calc_best_avg_f1, create_gold_matrix,
 from conll import evaluate_conll
 from consts import TOKENS_PAD, SPEAKER_PAD
 from metrics import CorefEvaluator
+from matcher import build_matcher
 import wandb
 logger = logging.getLogger(__name__)
 
@@ -123,6 +124,8 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
     # thress = [0.05, 0.1, 0.3, 0.5, 0.7, 0.9]
     thress = [0.05]
 
+    hung_matcher = build_matcher(args, 'Hungarian')
+
     print('Searching for best threshold')
     # for threshold in np.arange(thres_start, thres_stop, thres_step):
     for threshold in thress:
@@ -132,6 +135,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
         all_mention_logits_cuda = []
         losses = []
         losses_parts = {}
+        query_cluster_confusion_matrix = np.zeros([args.num_queries, args.num_queries], dtype=int)
         batch_sizes = []
         evaluator = CorefEvaluator()
         metrics = [0] * 5
@@ -165,8 +169,12 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
                 mention_logits = []
                 cluster_logits, coref_logits, predicted_clusters = model.generate(input_ids, sum_text_len, input_mask, gold_mentions, num_mentions, speaker_ids, genre, threshold, gold_mentions_list)
                 evaluator.update(predicted_clusters, gold_clusters)
-                loss, loss_parts = criterion({'cluster_logits':cluster_logits, 'coref_logits': coref_logits, 'mention_logits':mention_logits}, 
-                                            {'clusters':gold_matrix, 'mentions':gold_mentions_vector}, is_training=False)
+                outputs = {'cluster_logits':cluster_logits, 'coref_logits': coref_logits, 'mention_logits':mention_logits}
+                targets = {'clusters':gold_matrix, 'mentions':gold_mentions_vector}
+                matched_predicted_cluster_id, matched_gold_cluster_id = hung_matcher(outputs, targets)
+                for i, j in zip(matched_predicted_cluster_id[0], matched_gold_cluster_id[0]):
+                    query_cluster_confusion_matrix[i][j] += 1
+                loss, loss_parts = criterion(outputs, targets, is_training=False)
                 losses.append(loss.mean().detach().cpu())
                 for key in loss_parts.keys():
                     if key in losses_parts.keys() and len(losses_parts[key]) > 0:
@@ -204,6 +212,21 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
         avg_pred_split_without_perfect, avg_pred_split_with_perfect, prec_biggest_gold_in_pred_without_perfect, \
             prec_biggest_gold_in_pred_with_perfect, prec_biggest_pred_in_gold_without_perfect, prec_biggest_pred_in_gold_with_perfect = \
                 error_analysis(best_all_cluster_logits_cuda, best_all_coref_logits_cuda, best_all_mention_logits_cuda, all_gold_clusters, all_gold_mentions, all_input_ids, threshold)
+
+    non_zero_rows = np.where(np.sum(query_cluster_confusion_matrix, 1) > 0)[0]
+    non_zero_cols = np.where(np.sum(query_cluster_confusion_matrix, 0) > 0)[0]
+    print('rows - predict, cols - gt')
+    line_to_print = '   '
+    for i in non_zero_cols:
+        line_to_print += str(i) + ' ' + ('' if i>=10 else ' ')
+    print(line_to_print)
+    for i in non_zero_rows:
+        line_to_print = str(i) + ' ' + ('' if i>=10 else ' ')
+        for j in non_zero_cols:
+            line_to_print += str(query_cluster_confusion_matrix[i][j]) + ' ' + ('' if query_cluster_confusion_matrix[i][j]>=10 else ' ')
+        print(line_to_print)
+    
+
 
     results = {'loss': eval_loss,
                'avg_f1': f1,
