@@ -153,7 +153,14 @@ class TransformerDecoder(nn.Module):
             factor = 0.5
         else:
             factor = 1
-        memory_mask += torch.log(1 - factor*coref_logits.squeeze())
+        else_avg = []
+        for i in range(coref_logits.shape[1]):
+            no_query_i = torch.eye(coref_logits.shape[1])
+            no_query_i = torch.index_select(no_query_i, 1, torch.cat([torch.arange(i), torch.arange(i+1,no_query_i.shape[0])]))
+            coref_no_i = torch.bmm(coref_logits.transpose(1,2), no_query_i.unsqueeze(0)).transpose(1,2)
+            coref_no_i = torch.sum(torch.softmax(coref_no_i, 1) * coref_no_i, 1)
+            else_avg.append(coref_no_i)
+        memory_mask += torch.log(1 - factor*coref_logits.squeeze() / torch.cat(else_avg))
         return memory_mask
 
 

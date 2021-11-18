@@ -70,7 +70,7 @@
                 "1",
                 // "--amp",
                 "--use_gold_mentions",
-                // "--no_cuda",
+                "--no_cuda",
                 // "--normalise_loss",
                 "--max_total_seq_len",
                 "5000",
