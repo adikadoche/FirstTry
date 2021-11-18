@@ -145,8 +145,6 @@ class DETR(nn.Module):
             raw_query_embed = torch.normal(torch.zeros_like(self.query_embed.weight), 1) * self.query_sigma + self.query_mu #raw_query_embed = torch.normal(torch.zeros_like(self.query_embed.weight), 0.5)
         else:
             raw_query_embed = self.query_embed.weight
-            if self.args.is_shuffle_queries:
-                raw_query_embed = raw_query_embed[torch.randperm(raw_query_embed.shape[0])]
 
         if not self.args.use_gold_mentions:
             hs, memory = self.transformer(self.input_proj(longfomer_no_pad_list), mask, raw_query_embed) # [dec_layers, 1, num_queries, emb], [1, seg*seq, emb]
@@ -557,13 +555,6 @@ class MatchingLoss(nn.Module):
 
             cost_coref = torch.tensor(0)
             if matched_predicted_cluster_id[i] is not False:
-                if is_training and self.args.is_self_loss:  
-                    gold_is_cluster = real_cluster_target_rows.float()
-                    pred_is_cluster = torch.zeros(targets_clusters[i].shape[0], device=real_cluster_target_rows.device)
-                    pred_is_cluster[matched_gold_cluster_id[i] < num_real_cluster_target] = 1
-                    weight_cluster = gold_is_cluster + (1-gold_is_cluster) * self.eos_coef
-                    cost_is_cluster = F.binary_cross_entropy(pred_is_cluster, gold_is_cluster, weight=torch.linspace(start_weight, 1, len(weight_cluster), device=self.args.device)*weight_cluster) ## remove zeros from cost?   
-
                 if self.args.only_matched_loss:
                     id_predicted_not_clusters = [j for j in range(coref_logits.shape[0]) if j not in matched_predicted_cluster_id[i].numpy()]
                     permuted_coref_logits = torch.zeros_like(coref_logits)

@@ -70,8 +70,6 @@ def parse_args():
     parser.add_argument("--add_junk", action="store_true", help="whether to use junk spans")
     parser.add_argument("--only_matched_loss", action="store_true", help="whether to use loss only on the matched queries")
     parser.add_argument("--is_cluster", action="store_true", help="whether to use is_cluster head")
-    parser.add_argument("--is_self_loss", action="store_true", help="whether to measure self loss")   #NOT READY
-    parser.add_argument("--is_shuffle_queries", action="store_true", help="whether to shuffle queries")
     parser.add_argument("--is_weighted_loss_smaller_mask", action="store_true", help="whether to weight loss by query number and decrease mask decrease")
     parser.add_argument("--refeed_queries", action="store_true", help="whether to use already predicted queries")
     parser.add_argument("--predict_at_end", action="store_true", help="whether to predict eval at the end of the auto regression")
