@@ -192,8 +192,5 @@ class OrderedMatcher(nn.Module):
         return matched_predicted_cluster_id, matched_gold_cluster_id
 
 
-def build_matcher(args, type='Hungarian'):
-    if type == 'Hungarian':
-        return HungarianMatcher(cost_is_cluster=args.cost_is_cluster, cost_coref=args.cost_coref, args=args)
-    else:
-        return OrderedMatcher(cost_is_cluster=args.cost_is_cluster, cost_coref=args.cost_coref, args=args)
+def build_matcher(args):
+    return HungarianMatcher(cost_is_cluster=args.cost_is_cluster, cost_coref=args.cost_coref, args=args)
