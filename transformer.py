@@ -155,8 +155,8 @@ class TransformerDecoder(nn.Module):
             factor = 1
         else_avg = []
         for i in range(coref_logits.shape[1]):
-            no_query_i = torch.eye(coref_logits.shape[1])
-            no_query_i = torch.index_select(no_query_i, 1, torch.cat([torch.arange(i), torch.arange(i+1,no_query_i.shape[0])]))
+            no_query_i = torch.eye(coref_logits.shape[1], device=coref_logits.device)
+            no_query_i = torch.index_select(no_query_i, 1, torch.cat([torch.arange(i, device=coref_logits.device), torch.arange(i+1,no_query_i.shape[0], device=coref_logits.device)]))
             coref_no_i = torch.bmm(coref_logits.transpose(1,2), no_query_i.unsqueeze(0)).transpose(1,2)
             coref_no_i = torch.sum(torch.softmax(coref_no_i, 1) * coref_no_i, 1)
             else_avg.append(coref_no_i)
