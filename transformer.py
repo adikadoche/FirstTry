@@ -15,8 +15,6 @@ import torch
 import torch.nn.functional as F
 from torch import nn, Tensor
 
-from utils import calc_predicted_clusters
-
 
 class Transformer(nn.Module):
 
@@ -47,7 +45,7 @@ class Transformer(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def forward(self, src, mask, query_embed, gold_matrix, cluster_number, is_weighted_loss_smaller_mask, pos_embed=None):
+    def forward(self, src, mask, query_embed, is_cluster, IO_score, is_weighted_loss_smaller_mask, pos_embed=None):
         # flatten NxMxE to ExNxM
         bs, m, e = src.shape
         src = src.permute(1,0,2)
@@ -59,60 +57,10 @@ class Transformer(nn.Module):
         tgt = query_embed
         memory = self.encoder(src, src_key_padding_mask=binary_mask, pos=pos_embed)
 
-        gold_mask, memory, binary_mask, gold_matrix_permute = self.create_new_mask_mask_mentions(gold_matrix, cluster_number, memory, binary_mask, is_weighted_loss_smaller_mask)
-
-        hs = self.decoder(tgt, memory, memory_key_padding_mask=binary_mask, memory_mask=gold_mask,
+        hs = self.decoder(tgt, memory, is_cluster, IO_score, is_weighted_loss_smaller_mask, memory_key_padding_mask=binary_mask, 
                           pos=pos_embed, query_pos=query_embed)
 
-        return hs.transpose(1, 2), memory.transpose(0, 1), gold_matrix_permute, gold_mask
-
-    def create_new_mask_mask_mentions(self, gold_matrix, cluster_number, memory, binary_mask, is_weighted_loss_smaller_mask):
-        if is_weighted_loss_smaller_mask:
-            factor = 0.5
-        else:
-            factor = 1
-        idx = torch.arange(gold_matrix[0].shape[1], 0, -1, device = gold_matrix[0].device)
-        tmp2 = gold_matrix[0] * idx
-        indices = torch.argmax(tmp2, 1, keepdim=True).squeeze()
-        indices = indices[:cluster_number]
-        gold_matrix_sorted = torch.index_select(gold_matrix[0], 0, torch.argsort(indices))
-        gold_matrix_sorted = torch.cat([gold_matrix_sorted, torch.zeros(gold_matrix_sorted.shape[0],1, device = gold_matrix[0].device)], 1)
-        log_gold_matrix_sorted = torch.log(1 - factor*gold_matrix_sorted)
-        gold_matrix_sumed = torch.cumsum(log_gold_matrix_sorted, axis=0)
-        gold_mask = torch.cat([torch.zeros(1, log_gold_matrix_sorted.shape[1], device = gold_matrix[0].device), \
-                            torch.index_select(gold_matrix_sumed, 0, torch.arange(log_gold_matrix_sorted.shape[0]-1, device = gold_matrix[0].device)), \
-                            gold_matrix_sumed[-1] * torch.ones(gold_matrix[0].shape[0] - log_gold_matrix_sorted.shape[0], log_gold_matrix_sorted.shape[1], device = gold_matrix[0].device)], 0) 
-        memory = torch.cat([memory, torch.ones(1, memory.shape[1], memory.shape[2], device = gold_matrix[0].device) * 0.001])
-        binary_mask = torch.cat([binary_mask, torch.zeros(binary_mask.shape[0], 1, device = gold_matrix[0].device) == 1], 1)
-        return gold_mask, memory, binary_mask, torch.argsort(indices).unsqueeze(0)
-
-    def create_new_tgt_and_mask_concat_text_querys(self, tgt, src, memory, gold_matrix):
-        # concat text and querys one after another. UNFINISHED
-        text = src
-        gold_matrix_cumsum = gold_matrix.cumsum()
-        #TODO: sort goldmatrix by first mention
-        new_tgt = []
-        for i in range(tgt.shape[-1]):
-            new_tgt.append(tgt[:,:,i])
-            new_tgt.append(text[:,:,gold_matrix[i].ind])
-
-    @torch.no_grad()
-    def generate(self, src, mask, query_embed, is_cluster, span_mask, IO_score, threshold, gold_mentions_list, refeed_queries, predict_at_end, is_weighted_loss_smaller_mask, pos_embed=None):
-        # flatten NxMxE to ExNxM
-        bs, m, e = src.shape
-        src = src.permute(1,0,2)
-        if pos_embed is not None:
-            pos_embed = pos_embed.transpose(0,1)
-        binary_mask = mask == 0
-        query_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)
-
-        tgt = query_embed
-        memory = self.encoder(src, src_key_padding_mask=binary_mask, pos=pos_embed)
-        cluster_logits, coref_logits, predicted_clusters  = self.decoder.mask_mention_decoder(tgt, memory, is_cluster, span_mask, IO_score, 
-                                        threshold, gold_mentions_list, refeed_queries, predict_at_end, is_weighted_loss_smaller_mask, memory_key_padding_mask=binary_mask,
-                                        pos=pos_embed, query_pos=query_embed)
-        return cluster_logits, coref_logits, predicted_clusters 
-
+        return hs.transpose(1, 2), memory.transpose(0, 1)
 
 
 class TransformerEncoder(nn.Module):
@@ -148,7 +96,7 @@ class TransformerDecoder(nn.Module):
         self.norm = norm
         self.return_intermediate = return_intermediate
 
-    def forward(self, tgt, memory,
+    def forward(self, tgt, memory, is_cluster, IO_score, is_weighted_loss_smaller_mask,
                 tgt_mask: Optional[Tensor] = None,
                 memory_mask: Optional[Tensor] = None,
                 tgt_key_padding_mask: Optional[Tensor] = None,
@@ -157,6 +105,9 @@ class TransformerDecoder(nn.Module):
                 query_pos: Optional[Tensor] = None):
         output = tgt
 
+        tmp_memory = memory.transpose(0, 1)
+        if memory_mask is None:
+            memory_mask = torch.zeros([tgt.shape[0], memory.shape[0]], device=output.device)
         intermediate = []
 
         for layer in self.layers:
@@ -167,7 +118,10 @@ class TransformerDecoder(nn.Module):
                            pos=pos, query_pos=query_pos)
             if self.return_intermediate:
                 intermediate.append(self.norm(output))
-
+            
+            _, cur_coref_logits = self.create_logits(is_cluster, tmp_memory, memory_key_padding_mask, self.norm(output).transpose(0, 1), IO_score, tgt.shape[0])
+            memory_mask = self.create_new_mask_mask_mentions(cur_coref_logits, memory_mask, is_weighted_loss_smaller_mask)
+            
         if self.norm is not None:
             output = self.norm(output)
             if self.return_intermediate:
@@ -179,88 +133,12 @@ class TransformerDecoder(nn.Module):
 
         return output.unsqueeze(0)
 
-    def mask_mention_decoder(self, tgt, memory, is_cluster, span_mask, IO_score, threshold, gold_mentions_list, refeed_queries, predict_at_end, is_weighted_loss_smaller_mask,
-                tgt_mask: Optional[Tensor] = None,
-                tgt_key_padding_mask: Optional[Tensor] = None,
-                memory_key_padding_mask: Optional[Tensor] = None,
-                pos: Optional[Tensor] = None,
-                query_pos: Optional[Tensor] = None):
-
-        if predict_at_end:
-            refeed_queries = True
-        cluster_logits = []
-        coref_logits = []
-        output = tgt[0].unsqueeze(0)
-        cur_query_pos = query_pos[0].unsqueeze(0)
-        memory_mask = torch.zeros([1, memory.shape[0]], device=output.device)
-        i = 1
-
-        while True:   #TODO i<100? mask not empty?
-            for layer in self.layers:
-                output = layer(output, memory, tgt_mask=tgt_mask, #TODO: will it work when output is not in query size?
-                            memory_mask=memory_mask,
-                            tgt_key_padding_mask=tgt_key_padding_mask,
-                            memory_key_padding_mask=memory_key_padding_mask,
-                            pos=pos, query_pos=cur_query_pos)
-
-            if self.norm is not None:
-                output = self.norm(output)
-            tmp_memory = memory.transpose(0, 1)
-            
-            if predict_at_end:
-                cur_output = output.transpose(0, 1)
-                num_clusters = i
-            else:
-                cur_output = output[-1].unsqueeze(1)
-                num_clusters = 1
-
-            cur_cluster_logits, cur_coref_logits = self.create_logits(is_cluster, tmp_memory, span_mask, cur_output, IO_score, num_clusters)
-
-            if not predict_at_end:
-                coref_logits.append(cur_coref_logits)
-                if is_cluster is not None:
-                    cluster_logits.append(cur_cluster_logits)
-
-            memory_mask = self.create_new_mask_mask_mentions(cur_coref_logits, memory_mask, refeed_queries, predict_at_end, is_weighted_loss_smaller_mask)
-
-            if i >= tgt.shape[0] or sum(memory_mask[-1]) == memory_mask.shape[-1]:   #TODO: maybe it need to be i >= tgt.shape[0] but then there is a bug
-                # num_of_empty_clusters = i - len(predicted_clusters[0])
-                # if num_of_empty_clusters > 0:
-                #     print(f'total of {num_of_empty_clusters} emptys out of {i}')
-                if predict_at_end:
-                    cluster_logits, coref_logits = self.create_logits(is_cluster, tmp_memory, span_mask, cur_output, IO_score, num_clusters)
-                    if is_cluster is None:
-                        predicted_clusters, _ = calc_predicted_clusters(None, coref_logits.cpu().detach(), [],
-                                                                                threshold, gold_mentions_list, num_clusters=num_clusters)
-                    else:
-                        predicted_clusters, _ = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
-                                                                                threshold, gold_mentions_list, num_clusters=num_clusters)
-                else:
-                    coref_logits = torch.cat(coref_logits, 1)
-                    if is_cluster is None:
-                        cluster_logits = []
-                        predicted_clusters, _ = calc_predicted_clusters(None, coref_logits.cpu().detach(), [],
-                                                                                threshold, gold_mentions_list, num_clusters=num_clusters)
-                    else:
-                        cluster_logits = torch.cat(cluster_logits, 1)
-                        predicted_clusters, _ = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
-                                                                                threshold, gold_mentions_list, num_clusters=num_clusters)
-                return cluster_logits, coref_logits, predicted_clusters 
-
-            i += 1
-            if refeed_queries:
-                output = tgt[:i]   #TODO: using the generated querys? the trained querys? different decisions for prediction and decoder's inputs? For now I think using the trained, because we wouldnt know the generated vectors in training
-                cur_query_pos = query_pos[:i]
-            else:
-                output = tgt[i-1].unsqueeze(0)
-                cur_query_pos = query_pos[i-1].unsqueeze(0)
-
     def create_logits(self, is_cluster, memory, span_mask, output, IO_score, num_queries):
         if is_cluster is None:
             cluster_logits = None
         else:
             cluster_logits = is_cluster(output).sigmoid()  # [bs, num_queries, 1]
-        cur_memory = memory[0][span_mask[0]==1].unsqueeze(0)
+        cur_memory = memory[0][~span_mask[0]].unsqueeze(0)
         cur_last_hs = output
         num_tokens_or_mentions = cur_memory.shape[1]
         last_hs_tiled = cur_last_hs.unsqueeze(2).repeat(1, 1, num_tokens_or_mentions, 1) # [bs, num_queries, tokens/mentions, emb]
@@ -270,25 +148,13 @@ class TransformerDecoder(nn.Module):
         cur_coref_logits = coref_logits_unnorm.sigmoid()
         return cluster_logits, cur_coref_logits
 
-    def create_new_mask_mask_mentions(self, coref_logits, memory_mask, refeed_queries, predict_at_end, is_weighted_loss_smaller_mask):
+    def create_new_mask_mask_mentions(self, coref_logits, memory_mask, is_weighted_loss_smaller_mask):
         if is_weighted_loss_smaller_mask:
             factor = 0.5
         else:
             factor = 1
-        if predict_at_end:
-            new_memory_mask = torch.zeros([memory_mask.shape[0]+1, memory_mask.shape[1]], device=memory_mask.device)
-            for i in range(1, new_memory_mask.shape[0]):
-                new_memory_mask[i] = new_memory_mask[i-1] + torch.log(1 - factor*coref_logits.squeeze()[i-1])
-        else:
-            added_mask = memory_mask[-1].clone()
-            if len(coref_logits) > 0:
-                added_mask += torch.log(1 - factor*coref_logits.squeeze())
-            added_mask = added_mask.unsqueeze(0)
-            if refeed_queries:
-                new_memory_mask = torch.cat([memory_mask, added_mask], 0)   #TODO: first version: recreating the whole mask and not only the new cluster row.
-            else:
-                new_memory_mask = added_mask
-        return new_memory_mask
+        memory_mask += torch.log(1 - factor*coref_logits.squeeze())
+        return memory_mask
 
 
 class TransformerEncoderLayer(nn.Module):
