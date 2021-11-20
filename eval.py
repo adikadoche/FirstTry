@@ -172,14 +172,14 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
                 
                 if args.add_junk:
                     predicted_clusters, _ = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), mention_logits.cpu().detach(),
-                                                                threshold, gold_mentions_list, num_clusters=len(gold_clusters[0]))
+                                                                threshold, gold_mentions_list)
                 else:
                     if args.is_cluster:
                         predicted_clusters, _ = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
-                                                                    threshold, gold_mentions_list, num_clusters=len(gold_clusters[0]))
+                                                                    threshold, gold_mentions_list)
                     else:
                         predicted_clusters, _ = calc_predicted_clusters(None, coref_logits.cpu().detach(), [],
-                                                                    threshold, gold_mentions_list, num_clusters=len(gold_clusters[0]))
+                                                                    threshold, gold_mentions_list)
                 evaluator.update(predicted_clusters, gold_clusters)
                 targets = {'clusters':gold_matrix, 'mentions':gold_mentions_vector}
                 matched_predicted_cluster_id, matched_gold_cluster_id = hung_matcher(outputs, targets)

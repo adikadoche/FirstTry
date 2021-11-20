@@ -178,7 +178,7 @@ def create_gold_matrix(device, doc_len, num_queries, gold_clusters, gold_mention
 def make_mentions_from_clustered_tokens(self, coref_logits):
     pass
 
-def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, threshold, gold_mentions: List, num_clusters, mention_mask=None):
+def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, threshold, gold_mentions: List):
     # when we are using gold mentions, we get coref_logits at the size of the gold mentions ([bs, clusters, gold_mentions]) (because we know they are mentions, what we are predicting is the clustering)
     
     bs = coref_logits.shape[0]
@@ -213,28 +213,16 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, thresh
         clusters = []
         index_clusters = []
         for i in range(bs):
-            cur_coref_logits = coref_logits[i][:num_clusters]
+            cur_coref_logits = coref_logits[i]
             cluster_mention_mask = np.full((1, cur_coref_logits.shape[-2], cur_coref_logits.shape[-1]), True)
             if cluster_logits is not None:
-                cur_cluster_bool = cluster_logits[i].squeeze(-1)[:num_clusters].numpy() >= threshold #TODO: should the cluster and coref share the same threshold?
+                cur_cluster_bool = cluster_logits[i].squeeze(-1).numpy() >= threshold #TODO: should the cluster and coref share the same threshold?
                 cur_cluster_bool = np.tile(cur_cluster_bool.reshape([1, -1, 1]), (1, 1, cur_coref_logits.shape[-1]))
                 cluster_mention_mask = cur_cluster_bool
             if len(mention_logits) > 0:
                 cur_mention_bools = mention_logits[i].squeeze(-1).numpy() >= threshold
-                cur_mention_bools = np.tile(cur_mention_bools.reshape([1, 1, -1]), (1, cluster_mention_mask.shape[1], 1))
-                cluster_mention_mask = cur_mention_bools & cluster_mention_mask
-            if mention_mask is not None:
-                cur_mention_bools = ~mention_mask.detach().cpu()
-                if len(cur_mention_bools.shape) == 2:
-                    if cur_mention_bools.shape[0] > cluster_mention_mask.shape[1]:
-                        cur_mention_bools = cur_mention_bools[:cluster_mention_mask.shape[1]]
-                    if cur_mention_bools.shape[1] > cluster_mention_mask.shape[2]:
-                        cur_mention_bools = torch.index_select(cur_mention_bools, 1, torch.arange(cluster_mention_mask.shape[2]))
-                    cur_mention_bools = cur_mention_bools.unsqueeze(0).numpy()
-                else:
-                    cur_mention_bools = cur_mention_bools.reshape([1, 1, -1])
-                    cur_mention_bools = np.tile(cur_mention_bools, (1, cluster_mention_mask.shape[1], 1))
-                cluster_mention_mask = cur_mention_bools & cluster_mention_mask                
+                cur_mention_bools = np.tile(cur_mention_bools.reshape([1, 1, -1]), (1, cur_cluster_bool.shape[1], 1))
+                cluster_mention_mask = cur_mention_bools & cluster_mention_mask             
             cluster_mention_mask = cluster_mention_mask.astype(int)
             
             coref_logits_after_cluster_bool = np.multiply(cluster_mention_mask, cur_coref_logits.unsqueeze(0))
