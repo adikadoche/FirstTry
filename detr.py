@@ -418,7 +418,7 @@ class MatchingLoss(nn.Module):
                     gold_is_cluster = torch.ones(len(matched_predicted_cluster_id[i]), device=cluster_logits.device)
                     weight_cluster = torch.ones_like(gold_is_cluster, device=cluster_logits.device)
                     cost_is_cluster = F.binary_cross_entropy(cluster_logits[matched_predicted_cluster_id[i].numpy()], gold_is_cluster, \
-                        weight=torch.linspace(start_weight, 1, -len(weight_cluster), device=self.args.device)*weight_cluster) ## remove zeros from cost?
+                        weight=torch.linspace(start_weight, 1, len(weight_cluster), device=self.args.device)*weight_cluster) ## remove zeros from cost?
             else:
                 cost_is_cluster = torch.tensor(0)
 
