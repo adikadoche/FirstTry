@@ -65,6 +65,7 @@
                 "1",
                 // "--amp",
                 "--use_gold_mentions",
+                "--b3_loss",
                 "--no_cuda",
                 // "--normalise_loss",
                 "--max_total_seq_len",
