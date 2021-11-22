@@ -114,7 +114,10 @@ class HungarianMatcher(nn.Module):
                         coref_logits = coref_logits.softmax(-2)
                     if self.args.sum_attn:
                         coref_logits = coref_logits.clamp(0, 1)
-                    losses_for_current_gold_cluster = F.binary_cross_entropy(coref_logits, gold_per_token_repeated, reduction='none').mean(1)
+                    if self.args.cluster_block:
+                        losses_for_current_gold_cluster = F.binary_cross_entropy(cluster_logits * coref_logits, gold_per_token_repeated, reduction='none').mean(1)
+                    else:
+                        losses_for_current_gold_cluster = F.binary_cross_entropy(coref_logits, gold_per_token_repeated, reduction='none').mean(1)
 
                     cost_coref.append(losses_for_current_gold_cluster) # [num_queries]
                 if num_of_gold_clusters < num_queries:

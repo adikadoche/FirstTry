@@ -66,6 +66,7 @@
                 // "--amp",
                 "--use_gold_mentions",
                 // "--b3_loss",
+                "--cluster_block",
                 "--no_cuda",
                 // "--normalise_loss",
                 "--max_total_seq_len",

@@ -120,6 +120,8 @@ def parse_args():
                         help="Class coefficient in the matching cost")
     parser.add_argument('--cost_coref', default=5, type=float,
                         help="L1 box coefficient in the matching cost")
+    parser.add_argument('--cluster_block', action='store_true',
+                        help="L1 box coefficient in the matching cost")
     parser.add_argument('--b3_loss', action='store_true',
                         help="L1 box coefficient in the matching cost")
     parser.add_argument('--reduction', default='mean', type=str,
