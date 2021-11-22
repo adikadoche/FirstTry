@@ -275,7 +275,7 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
             wandb.log({'Train Precision':p}, step=global_step)
             wandb.log({'Train Recall': r}, step=global_step)
             wandb.log({'Train F1': f1}, step=global_step)
-            logger.info('Train precision, recall, f1: {}'.format((p, r, f1)))
+            logger.info(f'Train step {global_step} f1 {f1}, precision {p} , recall {r}')
 
         if args.lr_drop_interval == 'epoch':
             lr_scheduler.step()  # Update learning rate schedule
@@ -285,15 +285,23 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
                     epoch + 1 == args.num_train_epochs and (args.eval_epochs > 0 or args.eval_steps > 0):
                 results = report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, threshold)
                 threshold = results['threshold']
+                f1 = results['avg_f1']
+            logger.info(f'Train step {global_step} f1 {f1}, precision {p} , recall {r}')
 
             if args.save_epochs > 0 and (epoch + 1) % args.save_epochs == 0 or epoch + 1 == args.num_train_epochs:
                 if f1 > best_f1:
+                    prev_best_f1 = best_f1
+                    prev_best_f1_global_step = best_f1_global_step
                     output_dir = os.path.join(args.output_dir, 'checkpoint-{}'.format(global_step))
                     save_checkpoint(args, global_step, threshold, model, optimizer, output_dir)
-                    if best_f1_global_step > -1:
-                        shutil.rmtree(output_dir)
-                        best_f1 = f1
-                        best_f1_global_step = global_step
+                    print(f'previous checkpoint with f1 {prev_best_f1} was {prev_best_f1_global_step}')
+                    best_f1 = f1
+                    best_f1_global_step = global_step
+                    print(f'saved checkpoint with f1 {best_f1} in step {best_f1_global_step} to {output_dir}')
+                    if prev_best_f1_global_step > -1:
+                        path_to_remove = os.path.join(args.output_dir, 'checkpoint-{}'.format(prev_best_f1_global_step))
+                        shutil.rmtree(path_to_remove)
+                        print(f'removed checkpoint with f1 {prev_best_f1} from {path_to_remove}')
 
 
         if 0 < args.max_steps < global_step:

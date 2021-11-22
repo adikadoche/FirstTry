@@ -643,7 +643,7 @@ class MatchingLoss(nn.Module):
             if matched_predicted_cluster_id[i] is not False:
                 gold_is_cluster[matched_predicted_cluster_id_real] = 1
                 weight_cluster[matched_predicted_cluster_id_real] = 1
-            cost_is_cluster = F.binary_cross_entropy(cluster_logits, gold_is_cluster, weight=weight_cluster)
+            cost_is_cluster = F.binary_cross_entropy(cluster_logits, gold_is_cluster, weight=weight_cluster, reduction=self.args.reduction)
                 
             if not self.args.add_junk or sum(targets_mentions[i].shape) == 0:
                 cost_is_mention = torch.tensor(0)
@@ -653,7 +653,7 @@ class MatchingLoss(nn.Module):
                 else:
                     mention_logits = mention_logits[:targets_mentions[i].shape[0]]
                 weight_mention = targets_mentions[i] + self.eos_coef * (1 - targets_mentions[i])
-                cost_is_mention = F.binary_cross_entropy(mention_logits, targets_mentions[i], weight=weight_mention)
+                cost_is_mention = F.binary_cross_entropy(mention_logits, targets_mentions[i], weight=weight_mention, reduction=self.args.reduction)
 
             coref_logits = torch.index_select(coref_logits, 1, torch.arange(0, targets_clusters[i].shape[1]).to(coref_logits.device))
 

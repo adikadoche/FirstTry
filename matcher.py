@@ -6,7 +6,6 @@ import numpy as np
 import torch
 from scipy.optimize import linear_sum_assignment
 from torch import nn
-from torch._C import device
 import torch.nn.functional as F
 import logging
 logger = logging.getLogger(__name__)
