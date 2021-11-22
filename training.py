@@ -62,7 +62,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                 cluster_logits, coref_logits = outputs['cluster_logits'], outputs['coref_logits']
 
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(),
-                                                            threshold, gold_mentions_list)
+                                                            threshold, gold_mentions_list, args.is_max or args.detr)
                 evaluator.update(predicted_clusters, gold_clusters)
                 loss = criterion(outputs, gold_matrix)
         else:
@@ -71,10 +71,10 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
             if args.add_junk:
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), mention_logits.cpu().detach(),
-                                                            threshold, gold_mentions_list)
+                                                            threshold, gold_mentions_list, args.is_max or args.detr)
             else:
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
-                                                            threshold, gold_mentions_list)
+                                                            threshold, gold_mentions_list, args.is_max or args.detr)
             evaluator.update(predicted_clusters, gold_clusters)
             loss, loss_parts = criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
 

@@ -122,6 +122,8 @@ def parse_args():
                         help="L1 box coefficient in the matching cost")
     parser.add_argument('--detr', action='store_true',
                         help="L1 box coefficient in the matching cost")
+    parser.add_argument('--is_max', action='store_true',
+                        help="L1 box coefficient in the matching cost")
     parser.add_argument('--softmax', action='store_true',
                         help="L1 box coefficient in the matching cost")
     parser.add_argument('--cluster_block', action='store_true',

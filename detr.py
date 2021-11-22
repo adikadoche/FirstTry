@@ -256,7 +256,7 @@ class DETR(nn.Module):
             coref_logits_unnorm = self.IO_score(coref_features).squeeze(-1) # [bs, num_queries, tokens/mentions, 1]
 
 
-            if self.args.softmax: 
+            if self.args.detr or self.args.softmax: 
                 cur_coref_logits = coref_logits_unnorm.softmax(dim=1)
             else:
                 cur_coref_logits = coref_logits_unnorm.sigmoid()
@@ -659,20 +659,25 @@ class MatchingLoss(nn.Module):
 
             cost_coref = 0
             if matched_predicted_cluster_id[i] is not False:
-                permuted_coref_logits = coref_logits[torch.cat([matched_predicted_cluster_id_real,matched_predicted_cluster_id_junk])]
-                if self.args.cluster_block:
-                    permuted_coref_logits *= cluster_logits[torch.cat([matched_predicted_cluster_id_real,matched_predicted_cluster_id_junk])].unsqueeze(1)
-                permuted_gold = torch.cat([targets_clusters[i][matched_gold_cluster_id_real], \
-                    torch.zeros(len(matched_gold_cluster_id_junk), targets_clusters[i].shape[1], device=targets_clusters[i].device)])
-
-                if self.args.multiclass_ce:
-                    logits = permuted_coref_logits.transpose(0, 1)  # [mentions, num_queries]
-                    gold = permuted_gold.transpose(0, 1).nonzero()[:, 1]  # [mentions]
-                    cost_coref = F.cross_entropy(logits, gold, reduction=self.args.reduction)
+                if self.args.detr:
+                    permuted_coref_logits = coref_logits[matched_predicted_cluster_id_real]
+                    permuted_gold = targets_clusters[i][matched_gold_cluster_id_real]
+                    cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_gold, reduction='sum') / len(matched_predicted_cluster_id_real)
                 else:
-                    if self.args.sum_attn:
-                        permuted_coref_logits = permuted_coref_logits.clamp(0, 1)
-                    cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_gold, reduction=self.args.reduction)
+                    permuted_coref_logits = coref_logits[torch.cat([matched_predicted_cluster_id_real,matched_predicted_cluster_id_junk])]
+                    if self.args.cluster_block:
+                        permuted_coref_logits *= cluster_logits[torch.cat([matched_predicted_cluster_id_real,matched_predicted_cluster_id_junk])].unsqueeze(1)
+                    permuted_gold = torch.cat([targets_clusters[i][matched_gold_cluster_id_real], \
+                        torch.zeros(len(matched_gold_cluster_id_junk), targets_clusters[i].shape[1], device=targets_clusters[i].device)])
+
+                    if self.args.multiclass_ce:
+                        logits = permuted_coref_logits.transpose(0, 1)  # [mentions, num_queries]
+                        gold = permuted_gold.transpose(0, 1).nonzero()[:, 1]  # [mentions]
+                        cost_coref = F.cross_entropy(logits, gold, reduction=self.args.reduction)
+                    else:
+                        if self.args.sum_attn:
+                            permuted_coref_logits = permuted_coref_logits.clamp(0, 1)
+                        cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_gold, reduction=self.args.reduction)
             elif coref_logits.shape[1] > 0:
                 cost_coref = F.binary_cross_entropy(coref_logits, torch.zeros_like(coref_logits), reduction=self.args.reduction)
 
@@ -713,8 +718,14 @@ class MatchingLoss(nn.Module):
 
             costs_parts['loss_is_cluster'].append(self.cost_is_cluster * cost_is_cluster.detach().cpu())
             costs_parts['loss_is_mention'].append(self.cost_is_mention * cost_is_mention.detach().cpu())
-            costs_parts['loss_coref'].append(self.cost_coref * cost_coref.detach().cpu())
-            total_cost = self.cost_coref * cost_coref + self.cost_is_cluster * cost_is_cluster + self.cost_is_mention * cost_is_mention
+            if self.args.detr:
+                costs_parts['loss_coref'].append((self.cost_coref+2) * cost_coref.detach().cpu())
+            else:
+                costs_parts['loss_coref'].append(self.cost_coref * cost_coref.detach().cpu())
+            if self.args.detr:
+                total_cost = (self.cost_coref+2) * cost_coref + self.cost_is_cluster * cost_is_cluster + self.cost_is_mention * cost_is_mention
+            else:
+                total_cost = self.cost_coref * cost_coref + self.cost_is_cluster * cost_is_cluster + self.cost_is_mention * cost_is_mention
             costs.append(total_cost)
         return torch.stack(costs), costs_parts
 
