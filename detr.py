@@ -256,10 +256,10 @@ class DETR(nn.Module):
             coref_logits_unnorm = self.IO_score(coref_features).squeeze(-1) # [bs, num_queries, tokens/mentions, 1]
 
 
-        # if not args.add_junk: 
-            # cur_coref_logits = coref_logits_unnorm.softmax(dim=1)
-        # else:
-            cur_coref_logits = coref_logits_unnorm.sigmoid()
+            if self.args.softmax: 
+                cur_coref_logits = coref_logits_unnorm.softmax(dim=1)
+            else:
+                cur_coref_logits = coref_logits_unnorm.sigmoid()
             coref_logits.append(torch.cat([cur_coref_logits, (torch.ones(1, cur_coref_logits.shape[1], max_num_mentions-cur_coref_logits.shape[2]) * -1).to(cur_coref_logits.device)], dim=2))
 
             if self.args.add_junk:
