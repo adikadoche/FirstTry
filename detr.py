@@ -659,14 +659,12 @@ class MatchingLoss(nn.Module):
 
             cost_coref = 0
             if matched_predicted_cluster_id[i] is not False:
-                if self.args.detr:
+                if self.args.detr or self.args.cluster_block:
                     permuted_coref_logits = coref_logits[matched_predicted_cluster_id_real]
                     permuted_gold = targets_clusters[i][matched_gold_cluster_id_real]
                     cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_gold, reduction='sum') / len(matched_predicted_cluster_id_real)
                 else:
                     permuted_coref_logits = coref_logits[torch.cat([matched_predicted_cluster_id_real,matched_predicted_cluster_id_junk])]
-                    if self.args.cluster_block:
-                        permuted_coref_logits *= cluster_logits[torch.cat([matched_predicted_cluster_id_real,matched_predicted_cluster_id_junk])].unsqueeze(1)
                     permuted_gold = torch.cat([targets_clusters[i][matched_gold_cluster_id_real], \
                         torch.zeros(len(matched_gold_cluster_id_junk), targets_clusters[i].shape[1], device=targets_clusters[i].device)])
 
