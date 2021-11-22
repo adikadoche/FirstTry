@@ -113,14 +113,17 @@ class HungarianMatcher(nn.Module):
                         coref_logits = coref_logits.softmax(-2)
                     if self.args.sum_attn:
                         coref_logits = coref_logits.clamp(0, 1)
-                    if self.args.cluster_block:
+                    if self.args.cluster_block and not self.args.detr:
                         losses_for_current_gold_cluster = F.binary_cross_entropy(cluster_logits * coref_logits, gold_per_token_repeated, reduction='none').mean(1)
                     else:
                         losses_for_current_gold_cluster = F.binary_cross_entropy(coref_logits, gold_per_token_repeated, reduction='none').mean(1)
 
                     cost_coref.append(losses_for_current_gold_cluster) # [num_queries]
                 if num_of_gold_clusters < num_queries:
-                    junk_cluster_score = F.binary_cross_entropy(coref_logits, torch.zeros([num_queries, real_cluster_target.shape[1]], device=coref_logits.device), reduction='none').mean(1)
+                    if self.args.cluster_block and not self.args.detr:
+                        junk_cluster_score = F.binary_cross_entropy(cluster_logits * coref_logits, torch.zeros([num_queries, real_cluster_target.shape[1]], device=coref_logits.device), reduction='none').mean(1)
+                    else:
+                        junk_cluster_score = F.binary_cross_entropy(coref_logits, torch.zeros([num_queries, real_cluster_target.shape[1]], device=coref_logits.device), reduction='none').mean(1)
                     cost_coref += (num_queries-num_of_gold_clusters) * [junk_cluster_score]
                 cost_coref = torch.stack(cost_coref, 1) # [num_queries, num_queries]
 

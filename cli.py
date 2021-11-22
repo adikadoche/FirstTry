@@ -120,6 +120,8 @@ def parse_args():
                         help="Class coefficient in the matching cost")
     parser.add_argument('--cost_coref', default=5, type=float,
                         help="L1 box coefficient in the matching cost")
+    parser.add_argument('--detr', action='store_true',
+                        help="L1 box coefficient in the matching cost")
     parser.add_argument('--softmax', action='store_true',
                         help="L1 box coefficient in the matching cost")
     parser.add_argument('--cluster_block', action='store_true',
