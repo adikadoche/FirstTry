@@ -6,6 +6,7 @@ import numpy as np
 import torch
 from scipy.optimize import linear_sum_assignment
 from torch import nn
+from torch._C import device
 import torch.nn.functional as F
 import logging
 logger = logging.getLogger(__name__)
@@ -128,8 +129,8 @@ class HungarianMatcher(nn.Module):
             indices = linear_sum_assignment(total_cost)
             ind1, ind2 = indices
 
-            matched_predicted_cluster_id.append(torch.as_tensor(ind1, dtype=torch.int64))
-            matched_gold_cluster_id.append(torch.as_tensor(ind2, dtype=torch.int64))
+            matched_predicted_cluster_id.append(torch.as_tensor(ind1, dtype=torch.int64, device=coref_logits.device))
+            matched_gold_cluster_id.append(torch.as_tensor(ind2, dtype=torch.int64, device=coref_logits.device))
 
         return matched_predicted_cluster_id, matched_gold_cluster_id
 
