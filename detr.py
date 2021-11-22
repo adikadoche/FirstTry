@@ -606,7 +606,6 @@ class MatchingLoss(nn.Module):
              targets: list of dicts, such that len(targets) == batch_size.
                       The expected keys in each dict depends on the losses applied, see each loss' doc
         """
-        # outputs_without_aux = {k: v for k, v in outputs.items() if k != 'aux_outputs'}
 
         # Retrieve the matching between the outputs of the last layer and the targets
         matched_predicted_cluster_id, matched_gold_cluster_id = self.matcher(outputs, targets)
@@ -620,6 +619,14 @@ class MatchingLoss(nn.Module):
             # Compute the average number of target boxes accross all nodes, for normalization purposes
             coref_logits = outputs["coref_logits"][i].squeeze(0)  # [num_queries, tokens]
             cluster_logits = outputs["cluster_logits"][i].squeeze() # [num_queries]
+            num_real_cluster_target_rows = sum(torch.sum(targets_clusters[i], -1) > 0)
+            matched_predicted_cluster_id_real, matched_gold_cluster_id_real = \
+                matched_predicted_cluster_id[i][matched_gold_cluster_id[i]<num_real_cluster_target_rows], \
+                    matched_gold_cluster_id[i][matched_gold_cluster_id[i]<num_real_cluster_target_rows]
+            matched_predicted_cluster_id_junk, matched_gold_cluster_id_junk = \
+                matched_predicted_cluster_id[i][matched_gold_cluster_id[i]>=num_real_cluster_target_rows], \
+                    matched_gold_cluster_id[i][matched_gold_cluster_id[i]>=num_real_cluster_target_rows]
+
             if self.args.add_junk:
                 mention_logits = outputs["mention_logits"][i].squeeze() # [tokens]
             num_queries, doc_len = coref_logits.shape
@@ -634,8 +641,8 @@ class MatchingLoss(nn.Module):
             gold_is_cluster = torch.zeros_like(cluster_logits)
             weight_cluster = self.eos_coef * torch.ones_like(cluster_logits)
             if matched_predicted_cluster_id[i] is not False:
-                gold_is_cluster[matched_predicted_cluster_id[i]] = 1
-                weight_cluster[matched_predicted_cluster_id[i]] = 1
+                gold_is_cluster[matched_predicted_cluster_id_real] = 1
+                weight_cluster[matched_predicted_cluster_id_real] = 1
             cost_is_cluster = F.binary_cross_entropy(cluster_logits, gold_is_cluster, weight=weight_cluster)
                 
             if not self.args.add_junk or sum(targets_mentions[i].shape) == 0:
@@ -652,35 +659,56 @@ class MatchingLoss(nn.Module):
 
             cost_coref = 0
             if matched_predicted_cluster_id[i] is not False:
-                permuted_coref_logits = coref_logits[matched_predicted_cluster_id[i].numpy()]
-                permuted_gold = targets_clusters[i][matched_gold_cluster_id[i].numpy()]
+                permuted_coref_logits = coref_logits[torch.cat([matched_predicted_cluster_id_real,matched_predicted_cluster_id_junk])]
+                permuted_gold = torch.cat([targets_clusters[i][matched_gold_cluster_id_real], \
+                    torch.zeros(len(matched_gold_cluster_id_junk), targets_clusters[i].shape[1], device=targets_clusters[i].device)])
 
                 if self.args.multiclass_ce:
                     logits = permuted_coref_logits.transpose(0, 1)  # [mentions, num_queries]
                     gold = permuted_gold.transpose(0, 1).nonzero()[:, 1]  # [mentions]
-                    cost_coref = F.cross_entropy(logits, gold, reduction='mean')
+                    cost_coref = F.cross_entropy(logits, gold, reduction=self.args.reduction)
                 else:
                     if self.args.sum_attn:
                         permuted_coref_logits = permuted_coref_logits.clamp(0, 1)
-                    cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_gold, reduction='mean')
+                    cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_gold, reduction=self.args.reduction)
             elif coref_logits.shape[1] > 0:
-                cost_coref = F.binary_cross_entropy(coref_logits, torch.zeros_like(coref_logits), reduction='mean')
+                cost_coref = F.binary_cross_entropy(coref_logits, torch.zeros_like(coref_logits), reduction=self.args.reduction)
 
 
-            # cost_coref = []
-            # for predicted_cluster_id, gold_cluster_id in zip(matched_predicted_cluster_id, matched_gold_cluster_id):
-            #     # generate gold label for this cluster for all doc tokens
-            #     gold_per_token = torch.zeros(doc_len, device=coref_logits.device)
-            #     for start, end in targets[gold_cluster_id]:
-            #         gold_per_token[start: end + 1] = 1
-            #
-            #     loss_fn = F.binary_cross_entropy
-            #     # loss_fn = F.mse_loss
-            #     loss_for_predicted_gold_match = loss_fn(coref_logits[predicted_cluster_id], gold_per_token,
-            #                                             reduction='sum')
-            #     cost_coref.append(loss_for_predicted_gold_match)
-            #
-            # cost_coref = torch.stack(cost_coref).sum() if len(cost_coref) > 0 else 0
+            if self.args.b3_loss:
+                # b3_loss
+                real_coref_logits = coref_logits
+                # if self.args.is_cluster:
+                #     real_coref_logits = coref_logits[]
+                real_target_rows = targets_clusters[i][torch.sum(targets_clusters[i], 1) > 0]
+                gold_predic_intersect = torch.pow(torch.matmul(real_target_rows, real_coref_logits.transpose(0,1)), 2)  # [gold_entities, predict_entities]  x[i, j] = \sum_k I[m_k \in e_i] * p[m_k \in e_j]
+                r_num = torch.sum(torch.sum(gold_predic_intersect, 1) / torch.sum(real_target_rows, 1))
+                r_den = torch.sum(real_target_rows)
+                recall = torch.reshape(r_num / r_den, [])
+
+                predict_gold_intersection = gold_predic_intersect.transpose(0, 1)
+                p_num = torch.sum(torch.sum(predict_gold_intersection, 1) / torch.sum(coref_logits, 1))
+                p_den = torch.sum(coref_logits)
+                prec = torch.reshape(p_num / p_den, [])
+
+                beta_2 = 2.0 ** 2
+                f_beta = (1 + beta_2) * prec * recall / (beta_2 * prec + recall)
+
+                cost_coref = 1. - f_beta
+
+            # top_antecedent_cluster_ids = tf.gather(top_span_cluster_ids, top_antecedents)  # [k, c]
+            # top_antecedent_cluster_ids += tf.to_int32(tf.log(tf.to_float(top_antecedents_mask)))  # [k, c]
+            # same_cluster_indicator = tf.equal(top_antecedent_cluster_ids, tf.expand_dims(top_span_cluster_ids, 1))  # [k, c]
+            # non_dummy_indicator = tf.expand_dims(top_span_cluster_ids > 0, 1)  # [k, 1]
+            # pairwise_labels = tf.logical_and(same_cluster_indicator, non_dummy_indicator)  # [k, c]
+            # dummy_labels = tf.logical_not(tf.reduce_any(pairwise_labels, 1, keepdims=True))  # [k, 1]
+            # antecedent_labels = tf.concat([dummy_labels, pairwise_labels], 1)  # [k, c + 1]
+            # gold_scores = antecedent_scores + tf.log(tf.to_float(antecedent_labels))  # [k, max_ant + 1]
+            # marginalized_gold_scores = torch.logsumexp(gold_scores, [1])  # [k]
+            # log_norm = torch.logsumexp(antecedent_scores, 1)  # [k]
+            # antecedent_loss = log_norm - marginalized_gold_scores  # [k]
+            # antecedent_loss = torch.sum(antecedent_loss)  # []
+
             costs_parts['loss_is_cluster'].append(self.cost_is_cluster * cost_is_cluster.detach().cpu())
             costs_parts['loss_is_mention'].append(self.cost_is_mention * cost_is_mention.detach().cpu())
             costs_parts['loss_coref'].append(self.cost_coref * cost_coref.detach().cpu())
