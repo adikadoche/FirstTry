@@ -214,12 +214,12 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
 
 
     print_predictions(best_all_cluster_logits_cuda, best_all_coref_logits_cuda, best_all_mention_logits_cuda, \
-        all_gold_clusters, all_gold_mentions, all_input_ids, threshold, args, eval_dataset.tokenizer, args.is_max)
+        all_gold_clusters, all_gold_mentions, all_input_ids, threshold, args, eval_dataset.tokenizer)
     prec_gold_to_one_pred, prec_pred_to_one_gold, avg_gold_split_without_perfect, avg_gold_split_with_perfect, \
         avg_pred_split_without_perfect, avg_pred_split_with_perfect, prec_biggest_gold_in_pred_without_perfect, \
             prec_biggest_gold_in_pred_with_perfect, prec_biggest_pred_in_gold_without_perfect, prec_biggest_pred_in_gold_with_perfect = \
                 error_analysis(best_all_cluster_logits_cuda, best_all_coref_logits_cuda, best_all_mention_logits_cuda, all_gold_clusters, \
-                    all_gold_mentions, all_input_ids, threshold)
+                    all_gold_mentions, all_input_ids, threshold, args.is_max)
 
     non_zero_rows = np.where(np.sum(query_cluster_confusion_matrix, 1) > 0)[0]
     non_zero_cols = np.where(np.sum(query_cluster_confusion_matrix, 0) > 0)[0]
