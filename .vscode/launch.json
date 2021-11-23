@@ -59,8 +59,6 @@
                 "1",
                 "--per_gpu_eval_batch_size",
                 "1",
-                "--refeed_queries",
-                "--predict_at_end",
                 "--is_cluster",
                 // "--train_file_cache", "/home/gamir/adiz/Code/runs/s2e-coref/cache_dir/train.english.4096.pkl",
                 // "--predict_file_cache", "/home/gamir/adiz/Code/runs/s2e-coref/cache_dir/dev.english.4096.pkl",
