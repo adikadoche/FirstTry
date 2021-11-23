@@ -93,8 +93,9 @@ class HungarianMatcher(nn.Module):
                 num_of_gold_clusters = int(real_cluster_target.shape[0])
                 num_queries, doc_len = coref_logits.shape
 
-                cost_is_cluster = F.binary_cross_entropy(cluster_logits, torch.ones_like(cluster_logits), reduction='none') # [num_queries, 1]
-                cost_is_cluster = cost_is_cluster.repeat(1, num_of_gold_clusters) # [num_queries, gold_clusters]
+                cost_is_cluster = F.binary_cross_entropy(cluster_logits.repeat(1, num_queries), \
+                    torch.cat([torch.ones([num_queries, num_of_gold_clusters], device=coref_logits.device), \
+                        torch.zeros([num_queries, num_queries - num_of_gold_clusters], device=coref_logits.device)], 1), reduction='none') # [num_queries, num_queries]
 
                 if self.args.add_junk:
                     mention_logits = mention_logits.repeat(num_queries, 1) # [num_queries, tokens]
@@ -112,10 +113,19 @@ class HungarianMatcher(nn.Module):
                         coref_logits = coref_logits.softmax(-2)
                     if self.args.sum_attn:
                         coref_logits = coref_logits.clamp(0, 1)
-                    losses_for_current_gold_cluster = F.binary_cross_entropy(coref_logits, gold_per_token_repeated, reduction='none').mean(1)
-
+                    if self.args.cluster_block:
+                        losses_for_current_gold_cluster = F.binary_cross_entropy(cluster_logits * coref_logits, gold_per_token_repeated, reduction='none').mean(1)
+                    else:
+                        losses_for_current_gold_cluster = F.binary_cross_entropy(coref_logits, gold_per_token_repeated, reduction='none').mean(1)
                     cost_coref.append(losses_for_current_gold_cluster) # [num_queries]
-                cost_coref = torch.stack(cost_coref, 1) # [num_queries, gold_clusters]
+                if num_of_gold_clusters < num_queries:
+                    zero_cluster = torch.zeros([num_queries, real_cluster_target.shape[1]], device=coref_logits.device)
+                    if self.args.cluster_block:
+                        junk_cluster_score = F.binary_cross_entropy(cluster_logits * coref_logits, zero_cluster, reduction='none').mean(1)
+                    else:
+                        junk_cluster_score = F.binary_cross_entropy(coref_logits, zero_cluster, reduction='none').mean(1)
+                    cost_coref += (num_queries-num_of_gold_clusters) * [junk_cluster_score]
+                cost_coref = torch.stack(cost_coref, 1) # [num_queries, num_queries]
 
                 total_cost = self.cost_is_cluster * cost_is_cluster + self.cost_coref * cost_coref
                 # total_cost = self.cost_coref * cost_coref
@@ -124,8 +134,8 @@ class HungarianMatcher(nn.Module):
             indices = linear_sum_assignment(total_cost)
             ind1, ind2 = indices
 
-            matched_predicted_cluster_id.append(torch.as_tensor(ind1, dtype=torch.int64))
-            matched_gold_cluster_id.append(torch.as_tensor(ind2, dtype=torch.int64))
+            matched_predicted_cluster_id.append(torch.as_tensor(ind1, dtype=torch.int64, device=coref_logits.device))
+            matched_gold_cluster_id.append(torch.as_tensor(ind2, dtype=torch.int64, device=coref_logits.device))
 
         return matched_predicted_cluster_id, matched_gold_cluster_id
 

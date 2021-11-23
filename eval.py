@@ -171,15 +171,11 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
                 cluster_logits, coref_logits = outputs['cluster_logits'], outputs['coref_logits']
                 
                 if args.add_junk:
-                    predicted_clusters, _ = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), mention_logits.cpu().detach(),
-                                                                threshold, gold_mentions_list)
+                    predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), mention_logits.cpu().detach(),
+                                                                threshold, gold_mentions_list, args.is_max)
                 else:
-                    if args.is_cluster:
-                        predicted_clusters, _ = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
-                                                                    threshold, gold_mentions_list)
-                    else:
-                        predicted_clusters, _ = calc_predicted_clusters(None, coref_logits.cpu().detach(), [],
-                                                                    threshold, gold_mentions_list)
+                    predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
+                                                                threshold, gold_mentions_list, args.is_max)
                 evaluator.update(predicted_clusters, gold_clusters)
                 targets = {'clusters':gold_matrix, 'mentions':gold_mentions_vector}
                 matched_predicted_cluster_id, matched_gold_cluster_id = hung_matcher(outputs, targets)
@@ -195,8 +191,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
                 batch_sizes.append(loss.shape[0]) 
             if args.add_junk:
                 all_mention_logits_cuda += [ml.detach().clone() for ml in mention_logits]
-            if args.is_cluster:
-                all_cluster_logits_cuda += [cl.detach().clone() for cl in cluster_logits]
+            all_cluster_logits_cuda += [cl.detach().clone() for cl in cluster_logits]
             all_coref_logits_cuda += [cl.detach().clone() for cl in coref_logits]
         p, r, f1 = evaluator.get_prf()
         if f1 > best[-1]:
@@ -218,11 +213,13 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
     p, r, f1 = best
 
 
-    print_predictions(best_all_cluster_logits_cuda, best_all_coref_logits_cuda, best_all_mention_logits_cuda, all_gold_clusters, all_gold_mentions, all_input_ids, threshold, args, eval_dataset.tokenizer)
+    print_predictions(best_all_cluster_logits_cuda, best_all_coref_logits_cuda, best_all_mention_logits_cuda, \
+        all_gold_clusters, all_gold_mentions, all_input_ids, threshold, args, eval_dataset.tokenizer, args.is_max)
     prec_gold_to_one_pred, prec_pred_to_one_gold, avg_gold_split_without_perfect, avg_gold_split_with_perfect, \
         avg_pred_split_without_perfect, avg_pred_split_with_perfect, prec_biggest_gold_in_pred_without_perfect, \
             prec_biggest_gold_in_pred_with_perfect, prec_biggest_pred_in_gold_without_perfect, prec_biggest_pred_in_gold_with_perfect = \
-                error_analysis(best_all_cluster_logits_cuda, best_all_coref_logits_cuda, best_all_mention_logits_cuda, all_gold_clusters, all_gold_mentions, all_input_ids, threshold)
+                error_analysis(best_all_cluster_logits_cuda, best_all_coref_logits_cuda, best_all_mention_logits_cuda, all_gold_clusters, \
+                    all_gold_mentions, all_input_ids, threshold, args.is_max)
 
     non_zero_rows = np.where(np.sum(query_cluster_confusion_matrix, 1) > 0)[0]
     non_zero_cols = np.where(np.sum(query_cluster_confusion_matrix, 0) > 0)[0]

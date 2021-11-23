@@ -61,8 +61,8 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                 outputs = model(input_ids, sum_text_len, input_mask, gold_mentions, num_mentions, speaker_ids, genre)
                 cluster_logits, coref_logits = outputs['cluster_logits'], outputs['coref_logits']
 
-                predicted_clusters, _ = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(),
-                                                            threshold, gold_mentions_list)
+                predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(),
+                                                            threshold, gold_mentions_list, args.is_max)
                 evaluator.update(predicted_clusters, gold_clusters)
                 loss = criterion(outputs, gold_matrix)
         else:
@@ -70,11 +70,11 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             cluster_logits, coref_logits, mention_logits = outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits']
 
             if args.add_junk:
-                predicted_clusters, _ = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), mention_logits.cpu().detach(),
-                                                            threshold, gold_mentions_list)
+                predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), mention_logits.cpu().detach(),
+                                                            threshold, gold_mentions_list, args.is_max)
             else:
-                predicted_clusters, _ = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
-                                                            threshold, gold_mentions_list)
+                predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
+                                                            threshold, gold_mentions_list, args.is_max)
             evaluator.update(predicted_clusters, gold_clusters)
             loss, loss_parts = criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
 
@@ -302,6 +302,7 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
                         path_to_remove = os.path.join(args.output_dir, 'checkpoint-{}'.format(prev_best_f1_global_step))
                         shutil.rmtree(path_to_remove)
                         print(f'removed checkpoint with f1 {prev_best_f1} from {path_to_remove}')
+
 
         if 0 < args.max_steps < global_step:
             train_iterator.close()
