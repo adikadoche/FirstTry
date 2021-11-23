@@ -134,10 +134,7 @@ class TransformerDecoder(nn.Module):
         return output.unsqueeze(0)
 
     def create_logits(self, is_cluster, memory, span_mask, output, IO_score, num_queries):
-        if is_cluster is None:
-            cluster_logits = None
-        else:
-            cluster_logits = is_cluster(output).sigmoid()  # [bs, num_queries, 1]
+        cluster_logits = is_cluster(output).sigmoid()  # [bs, num_queries, 1]
         cur_memory = memory[0][~span_mask[0]].unsqueeze(0)
         cur_last_hs = output
         num_tokens_or_mentions = cur_memory.shape[1]

@@ -68,7 +68,6 @@ def parse_args():
     parser.add_argument("--speaker", type=str, choices=['before', 'after', 'text'], default='after', help="Whether to add speaker before/after embedding or as text.")
     parser.add_argument("--do_train", action="store_true", help="Whether to run training.")
     parser.add_argument("--add_junk", action="store_true", help="whether to use junk spans")
-    parser.add_argument("--is_cluster", action="store_true", help="whether to use is_cluster head")
     parser.add_argument("--eval", type=str, choices=['no', 'specific', 'all', 'vanilla'], default='no')
 
     parser.add_argument("--weight_decay", default=0.01, type=float, help="Weight deay if we apply some.")
@@ -123,6 +122,15 @@ def parse_args():
                         help="L1 box coefficient in the matching cost")
     parser.add_argument('--eos_coef', default=0.1, type=float,
                         help="Relative classification weight of the no-object class")
+
+    parser.add_argument('--is_max', action='store_true',
+                        help="L1 box coefficient in the matching cost")
+    parser.add_argument('--softmax', action='store_true',
+                        help="L1 box coefficient in the matching cost")
+    parser.add_argument('--cluster_block', action='store_true',
+                        help="L1 box coefficient in the matching cost")
+    parser.add_argument('--reduction', default='mean', type=str,
+                        help="L1 box coefficient in the matching cost")
 
     parser.add_argument('--max_training_sentences', default=3, type=int)
     parser.add_argument('--max_num_speakers', default=20, type=int)

@@ -45,10 +45,7 @@ class DETR(nn.Module):
         hidden_dim = transformer.d_model
         self.input_proj = nn.Linear(backbone.config.hidden_size, hidden_dim)
         self.query_embed = nn.Embedding(num_queries, hidden_dim)
-        if args.is_cluster:
-            self.is_cluster = nn.Linear(hidden_dim, 1)
-        else:
-            self.is_cluster = None
+        self.is_cluster = nn.Linear(hidden_dim, 1)
         self.backbone = backbone
         self.aux_loss = aux_loss
         self.args = args
@@ -208,10 +205,7 @@ class DETR(nn.Module):
         # last_hs [bs, num_queries, emb]
         # memory [bs, tokens, emb]
 
-        if self.args.is_cluster:
-            cluster_logits = self.is_cluster(last_hs).sigmoid()  # [bs, num_queries, 1]
-        else:
-            cluster_logits = []
+        cluster_logits = self.is_cluster(last_hs).sigmoid()  # [bs, num_queries, 1]
         if self.args.add_junk:
             mention_logits = self.mention_classifier(memory).sigmoid()  # [bs, tokens, 1]
 
@@ -396,15 +390,12 @@ class MatchingLoss(nn.Module):
             #     torch.distributed.all_reduce(num_of_gold_clusters)
             # num_of_gold_clusters = torch.clamp(num_of_gold_clusters / get_world_size(), min=1).item()
 
-            if self.args.is_cluster:
-                gold_is_cluster = torch.zeros_like(cluster_logits)
-                weight_cluster = self.eos_coef * torch.ones_like(cluster_logits)
-                if matched_predicted_cluster_id[i] is not False:
-                    gold_is_cluster[matched_predicted_cluster_id[i]] = 1
-                    weight_cluster[matched_predicted_cluster_id[i]] = 1
-                cost_is_cluster = F.binary_cross_entropy(cluster_logits, gold_is_cluster, weight=weight_cluster) 
-            else:
-                cost_is_cluster = torch.tensor(0)
+            gold_is_cluster = torch.zeros_like(cluster_logits)
+            weight_cluster = self.eos_coef * torch.ones_like(cluster_logits)
+            if matched_predicted_cluster_id[i] is not False:
+                gold_is_cluster[matched_predicted_cluster_id[i]] = 1
+                weight_cluster[matched_predicted_cluster_id[i]] = 1
+            cost_is_cluster = F.binary_cross_entropy(cluster_logits, gold_is_cluster, weight=weight_cluster) 
 
             if not self.args.add_junk or sum(targets_mentions[i].shape) == 0:
                 cost_is_mention = torch.tensor(0)
