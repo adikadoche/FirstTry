@@ -61,7 +61,6 @@
                 "1",
                 "--refeed_queries",
                 "--predict_at_end",
-                "--is_weighted_loss_smaller_mask",
                 "--is_cluster",
                 // "--train_file_cache", "/home/gamir/adiz/Code/runs/s2e-coref/cache_dir/train.english.4096.pkl",
                 // "--predict_file_cache", "/home/gamir/adiz/Code/runs/s2e-coref/cache_dir/dev.english.4096.pkl",

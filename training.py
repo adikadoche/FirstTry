@@ -274,12 +274,12 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
             recent_cluster_logits, recent_coref_logits, recent_losses, recent_losses_parts, recent_logits_sums, global_step,
             lr_scheduler, eval_loader, eval_dataset, threshold)
 
-        p, r, f1 = evaluator.get_prf()
+        t_p, t_r, t_f1 = evaluator.get_prf()
         if args.local_rank in [-1, 0]:
-            wandb.log({'Train Precision':p}, step=global_step)
-            wandb.log({'Train Recall': r}, step=global_step)
-            wandb.log({'Train F1': f1}, step=global_step)
-            logger.info('Train precision, recall, f1: {}'.format((p, r, f1)))
+            wandb.log({'Train Precision':t_p}, step=global_step)
+            wandb.log({'Train Recall': t_r}, step=global_step)
+            wandb.log({'Train F1': t_f1}, step=global_step)
+            logger.info(f'Train step {global_step} f1 {t_f1}, precision {t_p} , recall {t_r}')
 
         if args.lr_drop_interval == 'epoch':
             lr_scheduler.step()  # Update learning rate schedule
@@ -290,6 +290,7 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
                 results = report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, threshold)
                 threshold = results['threshold']
                 f1 = results['avg_f1']
+            logger.info(f'Train step {global_step} f1 {t_f1}, precision {t_p} , recall {t_r}')
 
             if args.save_epochs > 0 and (epoch + 1) % args.save_epochs == 0 or epoch + 1 == args.num_train_epochs:
                 if f1 > best_f1:

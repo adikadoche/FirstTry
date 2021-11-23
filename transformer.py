@@ -45,7 +45,7 @@ class Transformer(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def forward(self, src, mask, query_embed, is_cluster, IO_score, is_weighted_loss_smaller_mask, pos_embed=None):
+    def forward(self, src, mask, query_embed, is_cluster, IO_score, pos_embed=None):
         # flatten NxMxE to ExNxM
         bs, m, e = src.shape
         src = src.permute(1,0,2)
@@ -57,7 +57,7 @@ class Transformer(nn.Module):
         tgt = query_embed
         memory = self.encoder(src, src_key_padding_mask=binary_mask, pos=pos_embed)
 
-        hs = self.decoder(tgt, memory, is_cluster, IO_score, is_weighted_loss_smaller_mask, memory_key_padding_mask=binary_mask, 
+        hs = self.decoder(tgt, memory, is_cluster, IO_score, memory_key_padding_mask=binary_mask, 
                           pos=pos_embed, query_pos=query_embed)
 
         return hs.transpose(1, 2), memory.transpose(0, 1)
@@ -96,7 +96,7 @@ class TransformerDecoder(nn.Module):
         self.norm = norm
         self.return_intermediate = return_intermediate
 
-    def forward(self, tgt, memory, is_cluster, IO_score, is_weighted_loss_smaller_mask,
+    def forward(self, tgt, memory, is_cluster, IO_score,
                 tgt_mask: Optional[Tensor] = None,
                 memory_mask: Optional[Tensor] = None,
                 tgt_key_padding_mask: Optional[Tensor] = None,
@@ -120,7 +120,7 @@ class TransformerDecoder(nn.Module):
                 intermediate.append(self.norm(output))
             
             _, cur_coref_logits = self.create_logits(is_cluster, tmp_memory, memory_key_padding_mask, self.norm(output).transpose(0, 1), IO_score, tgt.shape[0])
-            memory_mask = self.create_new_mask_mask_mentions(cur_coref_logits, memory_mask, is_weighted_loss_smaller_mask)
+            memory_mask = self.create_new_mask_mask_mentions(cur_coref_logits, memory_mask)
             
         if self.norm is not None:
             output = self.norm(output)
@@ -148,11 +148,8 @@ class TransformerDecoder(nn.Module):
         cur_coref_logits = coref_logits_unnorm.sigmoid()
         return cluster_logits, cur_coref_logits
 
-    def create_new_mask_mask_mentions(self, coref_logits, memory_mask, is_weighted_loss_smaller_mask):
-        if is_weighted_loss_smaller_mask:
-            factor = 0.5
-        else:
-            factor = 1
+    def create_new_mask_mask_mentions(self, coref_logits, memory_mask):
+        factor = 0.5
         else_avg = []
         for i in range(coref_logits.shape[1]):
             no_query_i = torch.eye(coref_logits.shape[1], device=coref_logits.device)
