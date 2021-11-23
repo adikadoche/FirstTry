@@ -35,7 +35,7 @@ def save_checkpoint(args, global_step, threshold, model, optimizer, output_dir, 
 
 def load_from_checkpoint(model, checkpoint_path, args=None, device=None, optimizer=None, amp=None):
     global_step = checkpoint_path.rstrip('/').split('-')[-1]
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(os.path.join(checkpoint_path, 'model.step-{}.pt'.format(global_step)), map_location=device)
     model_to_load = model.module if hasattr(model, 'module') else model  # Take care of distributed/parallel training
     model_to_load.load_state_dict(checkpoint['model'])
     if optimizer is not None:
