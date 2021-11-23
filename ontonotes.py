@@ -84,12 +84,14 @@ class OntonotesDataset(Dataset):
                 word = ' ' + word
             word_speaker = speaker[i]
             token_ids = self.tokenizer.tokenize(word)
+            speaker_prefix_token_num = 0
             if self.args.speaker == 'text' and word_speaker != last_speaker_per_token:
                 speaker_prefix = [SPEAKER_START_TOKEN] + self.tokenizer.tokenize(" " + word_speaker, add_special_tokens=False) + [SPEAKER_END_TOKEN]
+                speaker_prefix_token_num = len(speaker_prefix)
                 token_ids = speaker_prefix + token_ids
                 new_sentence = new_sentence + f'{SPEAKER_START_TOKEN} {word_speaker}{SPEAKER_END_TOKEN}'
             new_sentence += word
-            word_idx_to_start_token_idx[word_idx] = total_tokens + 1  # +1 for <s>
+            word_idx_to_start_token_idx[word_idx] = total_tokens + 1 + speaker_prefix_token_num  # +1 for <s>
             total_tokens += len(token_ids)
             word_idx_to_end_token_idx[word_idx] = total_tokens  # old_seq_len + 1 (for <s>) + len(tokenized_word) - 1 (we start counting from zero) = len(token_ids)
             speaker_per_token += [word_speaker] * len(token_ids)
