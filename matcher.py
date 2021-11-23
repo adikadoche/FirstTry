@@ -58,12 +58,13 @@ class HungarianMatcher(nn.Module):
         targets_clusters = targets['clusters']
         targets_mentions = targets['mentions']
         bs = outputs["coref_logits"].shape[0]
-        matched_predicted_cluster_id = []
-        matched_gold_cluster_id = []
+        matched_predicted_cluster_id_real, matched_gold_cluster_id_real, matched_predicted_cluster_id_junk, matched_gold_cluster_id_junk = [],[],[],[]
         for i in range(bs):
             if targets_clusters[i].shape[1] == 0 or sum(sum(targets_clusters[i])) == 0:
-                matched_predicted_cluster_id.append(False)
-                matched_gold_cluster_id.append(False)
+                matched_predicted_cluster_id_real.append(False)
+                matched_gold_cluster_id_real.append(False)
+                matched_predicted_cluster_id_junk.append(False)
+                matched_gold_cluster_id_junk.append(False)
                 continue
 
             coref_logits = outputs["coref_logits"][i].squeeze(0) # [num_queries, tokens]
@@ -134,10 +135,12 @@ class HungarianMatcher(nn.Module):
             indices = linear_sum_assignment(total_cost)
             ind1, ind2 = indices
 
-            matched_predicted_cluster_id.append(torch.as_tensor(ind1, dtype=torch.int64, device=coref_logits.device))
-            matched_gold_cluster_id.append(torch.as_tensor(ind2, dtype=torch.int64, device=coref_logits.device))
+            matched_predicted_cluster_id_real.append(torch.as_tensor(ind1[ind2<num_of_gold_clusters], dtype=torch.int64, device=coref_logits.device))
+            matched_predicted_cluster_id_junk.append(torch.as_tensor(ind1[ind2>=num_of_gold_clusters], dtype=torch.int64, device=coref_logits.device))
+            matched_gold_cluster_id_real.append(torch.as_tensor(ind2[ind2<num_of_gold_clusters], dtype=torch.int64, device=coref_logits.device))
+            matched_gold_cluster_id_junk.append(torch.as_tensor(ind2[ind2>=num_of_gold_clusters], dtype=torch.int64, device=coref_logits.device))
 
-        return matched_predicted_cluster_id, matched_gold_cluster_id
+        return matched_predicted_cluster_id_real, matched_gold_cluster_id_real, matched_predicted_cluster_id_junk, matched_gold_cluster_id_junk
 
 
 def build_matcher(args):

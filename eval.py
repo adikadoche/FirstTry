@@ -178,8 +178,8 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
                                                                 threshold, gold_mentions_list, args.is_max)
                 evaluator.update(predicted_clusters, gold_clusters)
                 targets = {'clusters':gold_matrix, 'mentions':gold_mentions_vector}
-                matched_predicted_cluster_id, matched_gold_cluster_id = hung_matcher(outputs, targets)
-                for i, j in zip(matched_predicted_cluster_id[0], matched_gold_cluster_id[0]):
+                matched_predicted_cluster_id_real, matched_gold_cluster_id_real, _, _ = hung_matcher(outputs, targets)
+                for i, j in zip(matched_predicted_cluster_id_real[0], matched_gold_cluster_id_real[0]):
                     query_cluster_confusion_matrix[i][j] += 1
                 loss, loss_parts = criterion(outputs, targets)
                 losses.append(loss.mean().detach().cpu())

@@ -3,7 +3,6 @@
 # Press Shift+F10 to execute it or replace it with your code.
 # Press Double Shift to search everywhere for classes, files, tool windows, actions, and settings.
 import os
-# os.environ["CUDA_VISIBLE_DEVICES"] = "2, 3"
 # os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 import cProfile, pstats
 import pandas as pd
@@ -38,6 +37,10 @@ def main():
         wandb.run.name = args.run_name
 
     # Setup CUDA, GPU & distributed training
+    if args.is_debug:
+        args.n_gpu = 1 
+        os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+        os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
     if args.local_rank == -1 or args.no_cuda:
         device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
         args.n_gpu = torch.cuda.device_count() if not args.no_cuda else 0
@@ -47,7 +50,10 @@ def main():
         torch.distributed.init_process_group(backend='nccl')
         args.n_gpu = 1
     args.device = device
-    # args.n_gpu = 2   #TODO:REMOVEEEEEEEe
+    if args.is_debug:
+        args.n_gpu = 1 
+        os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+        os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
     # Setup logging
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
