@@ -141,7 +141,7 @@ class DETR(nn.Module):
             hs, memory = self.transformer(span_emb, span_mask, raw_query_embed, self.is_cluster, self.IO_score)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
 
 
-        last_hs = hs[-1] # [1, num_queries, emb]
+        last_hs = hs[-1] # [bs, num_queries, emb]
         cluster_logits, coref_logits, mention_logits = self.calc_cluster_and_coref_logits(last_hs, memory, gold_mentions is not None, span_mask, gold_mentions.shape[1])
 
         out = {"coref_logits": coref_logits,
@@ -390,8 +390,8 @@ class MatchingLoss(nn.Module):
             gold_is_cluster = torch.zeros_like(cluster_logits)
             weight_cluster = self.eos_coef * torch.ones_like(cluster_logits)
             if matched_predicted_cluster_id_real[i] is not False:
-                gold_is_cluster[matched_predicted_cluster_id_real] = 1
-                weight_cluster[matched_predicted_cluster_id_real] = 1
+                gold_is_cluster[matched_predicted_cluster_id_real[i]] = 1
+                weight_cluster[matched_predicted_cluster_id_real[i]] = 1
             cost_is_cluster = F.binary_cross_entropy(cluster_logits, gold_is_cluster, weight=weight_cluster, reduction=self.args.reduction)
 
             if not self.args.add_junk or sum(targets_mentions[i].shape) == 0:
@@ -409,13 +409,13 @@ class MatchingLoss(nn.Module):
             cost_coref = 0
             if matched_predicted_cluster_id_real[i] is not False:
                 if self.args.cluster_block:
-                    permuted_coref_logits = coref_logits[matched_predicted_cluster_id_real]
-                    permuted_gold = targets_clusters[i][matched_gold_cluster_id_real]
-                    cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_gold, reduction='sum') / len(matched_predicted_cluster_id_real)
+                    permuted_coref_logits = coref_logits[matched_predicted_cluster_id_real[i]]
+                    permuted_gold = targets_clusters[i][matched_gold_cluster_id_real[i]]
+                    cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_gold, reduction='sum') / len(matched_predicted_cluster_id_real[i])
                 else:
-                    permuted_coref_logits = coref_logits[torch.cat([matched_predicted_cluster_id_real,matched_predicted_cluster_id_junk])]
-                    permuted_gold = torch.cat([targets_clusters[i][matched_gold_cluster_id_real], \
-                        torch.zeros(len(matched_gold_cluster_id_junk), targets_clusters[i].shape[1], device=targets_clusters[i].device)])
+                    permuted_coref_logits = coref_logits[torch.cat([matched_predicted_cluster_id_real[i],matched_predicted_cluster_id_junk[i]])]
+                    permuted_gold = torch.cat([targets_clusters[i][matched_gold_cluster_id_real[i]], \
+                        torch.zeros(len(matched_gold_cluster_id_junk[i]), targets_clusters[i].shape[1], device=targets_clusters[i].device)])
 
                     if self.args.multiclass_ce:
                         logits = permuted_coref_logits.transpose(0, 1)  # [mentions, num_queries]
