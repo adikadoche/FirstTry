@@ -107,7 +107,7 @@ class TransformerDecoder(nn.Module):
 
         tmp_memory = memory.transpose(0, 1)
         if memory_mask is None:
-            memory_mask = torch.zeros([tgt.shape[0], memory.shape[0]], device=output.device)
+            memory_mask = torch.zeros([tgt.shape[1] * self.layers[0].multihead_attn.num_heads, tgt.shape[0], memory.shape[0]], device=output.device)
         intermediate = []
 
         for layer in self.layers:
@@ -119,8 +119,8 @@ class TransformerDecoder(nn.Module):
             if self.return_intermediate:
                 intermediate.append(self.norm(output))
             
-            _, cur_coref_logits = self.create_logits(is_cluster, tmp_memory, memory_key_padding_mask, self.norm(output).transpose(0, 1), IO_score, tgt.shape[0])
-            memory_mask = self.create_new_mask_mask_mentions(cur_coref_logits, memory_mask)
+            _, cur_coref_logits = self.create_logits(is_cluster, tmp_memory, memory_key_padding_mask, self.norm(output).transpose(0, 1), IO_score, tgt.shape[0], self.layers[0].multihead_attn.num_heads,)
+            memory_mask += torch.log(cur_coref_logits)
             
         if self.norm is not None:
             output = self.norm(output)
@@ -133,17 +133,21 @@ class TransformerDecoder(nn.Module):
 
         return output.unsqueeze(0)
 
-    def create_logits(self, is_cluster, memory, span_mask, output, IO_score, num_queries):
+    def create_logits(self, is_cluster, memory, span_mask, output, IO_score, num_queries, nheads):
         cluster_logits = is_cluster(output).sigmoid()  # [bs, num_queries, 1]
-        cur_memory = memory[0][~span_mask[0]].unsqueeze(0)
-        cur_last_hs = output
-        num_tokens_or_mentions = cur_memory.shape[1]
-        last_hs_tiled = cur_last_hs.unsqueeze(2).repeat(1, 1, num_tokens_or_mentions, 1) # [bs, num_queries, tokens/mentions, emb]
-        memory_tiled = cur_memory.unsqueeze(1).repeat(1, num_queries, 1, 1) # [bs, num_queries, tokens/mentions, emb]
-        coref_features = torch.cat([last_hs_tiled, memory_tiled], -1) # [bs, num_queries, tokens/mentions, 2 * emb]
-        coref_logits_unnorm = IO_score(coref_features).squeeze(-1) # [bs, num_queries, tokens/mentions, 1]
-        cur_coref_logits = coref_logits_unnorm.sigmoid()
-        return cluster_logits, cur_coref_logits
+        coref_logits = []
+        for i in range(memory.shape[0]):
+            cur_memory = memory[i][~span_mask[i]].unsqueeze(0)
+            cur_last_hs = output[i].unsqueeze(0)
+            num_tokens_or_mentions = cur_memory.shape[1]
+            last_hs_tiled = cur_last_hs.unsqueeze(2).repeat(1, 1, num_tokens_or_mentions, 1) # [bs, num_queries, tokens/mentions, emb]
+            memory_tiled = cur_memory.unsqueeze(1).repeat(1, num_queries, 1, 1) # [bs, num_queries, tokens/mentions, emb]
+            coref_features = torch.cat([last_hs_tiled, memory_tiled], -1) # [bs, num_queries, tokens/mentions, 2 * emb]
+            coref_logits_unnorm = IO_score(coref_features).squeeze(-1) # [bs, num_queries, tokens/mentions, 1]
+            cur_coref_logits = coref_logits_unnorm.sigmoid()
+            coref_logits.append(torch.cat([cur_coref_logits, \
+                torch.zeros(1, cur_coref_logits.shape[1], memory.shape[1]-cur_coref_logits.shape[2], device=cur_coref_logits.device)], 2).repeat([nheads,1,1]))
+        return cluster_logits, torch.cat(coref_logits)
 
     def create_new_mask_mask_mentions(self, coref_logits, memory_mask):
         factor = 0.5
