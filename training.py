@@ -28,6 +28,8 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     speaker_ids_pads = torch.ones(1, args.max_segment_len, args.max_num_speakers, dtype=torch.int, device=args.device) * SPEAKER_PAD
     mask_pads = torch.zeros(1, args.max_segment_len, dtype=torch.int, device=args.device)
     for step, batch in enumerate(epoch_iterator):
+        if batch == []:
+            continue
         if skip_steps > 0:
             skip_steps -= 1
             continue

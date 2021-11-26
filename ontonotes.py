@@ -41,6 +41,8 @@ class OntonotesDataset(Dataset):
         return len(self.examples)
 
     def __getitem__(self, index):
+        if self.args.max_ind_example > 0 and index > self.args.max_ind_example:
+            return []
         example = self.examples[index]
         tensorized_example = self.tensorize_example(example, self.is_training)
         return tensorized_example

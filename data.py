@@ -143,6 +143,8 @@ def get_dataset(args, tokenizer, evaluate=False):
     return coref_dataset
 
 def collate_fn(batch):
+    if batch[0] == []:
+        return []
     batch_concat = {}
     for key in batch[0].keys():
         batch_concat[key] = [0] * len(batch)

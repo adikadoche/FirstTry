@@ -140,6 +140,8 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
         evaluator = CorefEvaluator()
         metrics = [0] * 5
         for batch in tqdm(eval_dataloader, desc="Evaluating"):
+            if batch == []:
+                continue
             model.eval()
 
             sum_text_len = [sum(tl) for tl in batch['text_len']]
