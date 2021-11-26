@@ -173,24 +173,24 @@ def parse_args():
                     help="Max gradient norm.")
     parser.add_argument('--lr_drop_interval', default="step", type=str, choices=['epoch, step'])
 
+    parser.add_argument(
+        "--train_file_cache",
+        default=None,
+        type=str,
+        required=True,
+        help="The output directory where the datasets will be written and read from.",
+    )
+    parser.add_argument(
+        "--predict_file_cache",
+        default=None,
+        type=str,
+        required=True,
+        help="The output directory where the datasets will be written and read from.",
+    )
 
     args = parser.parse_args()
     return args
 
-    # parser.add_argument(
-    #     "--train_file_cache",
-    #     default=None,
-    #     type=str,
-    #     required=True,
-    #     help="The output directory where the datasets will be written and read from.",
-    # )
-    # parser.add_argument(
-    #     "--predict_file_cache",
-    #     default=None,
-    #     type=str,
-    #     required=True,
-    #     help="The output directory where the datasets will be written and read from.",
-    # )
     # parser.add_argument("--nonfreeze_params", default=None, type=str,
     #                     help="named parameters to update while training (separated by ,). The rest will kept frozen. If None or empty - train all")
     # parser.add_argument('--lr_drop', default=200, type=int) #TODO:?

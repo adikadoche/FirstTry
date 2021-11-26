@@ -6,6 +6,7 @@ from collections import namedtuple
 import numpy as np
 
 import torch
+from transformers import AutoTokenizer
 
 from consts import SPEAKER_START_ID, SPEAKER_END_ID, NULL_ID_FOR_COREF
 from torch.utils.data import Dataset, RandomSampler, DistributedSampler, SequentialSampler, DataLoader
@@ -18,8 +19,8 @@ logger = logging.getLogger(__name__)
 
 
 class CorefDataset(Dataset):
-    def __init__(self, file_path, tokenizer, max_seq_length=-1):
-        self.tokenizer = tokenizer
+    def __init__(self, file_path, tokenizer_name, cache_dir, max_seq_length=-1):
+        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, cache_dir=cache_dir)
         logger.info(f"Reading dataset from {file_path}")
         examples, self.max_mention_num, self.max_cluster_size, self.max_num_clusters = self._parse_jsonlines(file_path)
         self.max_seq_length = max_seq_length
@@ -120,7 +121,7 @@ class CorefDataset(Dataset):
         return tensored_batch
 
 
-def get_dataset(args, tokenizer, evaluate=False):
+def get_dataset(args, evaluate=False):
     read_from_cache, file_path = False, ''
     if evaluate and os.path.exists(args.predict_file_cache):
         file_path = args.predict_file_cache
@@ -136,7 +137,7 @@ def get_dataset(args, tokenizer, evaluate=False):
 
     file_path, cache_path = (args.predict_file, args.predict_file_cache) if evaluate else (args.train_file, args.train_file_cache)
 
-    coref_dataset = CorefDataset(file_path, tokenizer, max_seq_length=args.max_seq_length)
+    coref_dataset = CorefDataset(file_path, args.tokenizer_name, args.cache_dir, max_seq_length=args.max_seq_length)
     with open(cache_path, 'wb') as f:
         pickle.dump(coref_dataset, f)
 
