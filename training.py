@@ -217,6 +217,10 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
         args.num_train_epochs = args.max_steps // (len(train_loader) // args.gradient_accumulation_steps) + 1
     else:
         args.t_total = len(train_loader) // args.gradient_accumulation_steps * args.num_train_epochs
+    
+    if args.max_ind_example > 0:
+        args.num_train_epochs *= 2800 / args.max_ind_example
+        args.num_train_epochs = int(args.num_train_epochs) + 1
 
     # lr_scheduler = get_constant_schedule_with_warmup(optimizer, num_warmup_steps=int(args.warmup_steps / args.train_batch_size))
     lr_scheduler = WarmupLinearSchedule(optimizer, warmup_steps=int((args.warmup_steps/args.train_batch_size) * (1 + (args.train_batch_size - 1) / 5)),
