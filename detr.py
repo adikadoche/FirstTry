@@ -58,13 +58,7 @@ class DETR(nn.Module):
 
         self.word_attn_projection = nn.Linear(backbone.config.hidden_size, 1)
         self.span_width_embed = nn.Embedding(30, 20)
-        if self.args.speaker == 'before':
-            # self.span_proj = nn.Linear(3*backbone.config.hidden_size+20+self.args.max_num_speakers+len(GENRES)+1, hidden_dim) # TODO config
-            self.span_proj = nn.Linear(3*backbone.config.hidden_size+20 + self.args.max_num_speakers, hidden_dim) # TODO config
-        elif self.args.speaker == 'after':
-            self.span_proj = nn.Linear(3*backbone.config.hidden_size+20, hidden_dim - self.args.max_num_speakers) # TODO config
-        elif self.args.speaker == 'text':
-            self.span_proj = nn.Linear(3*backbone.config.hidden_size+20, hidden_dim) # TODO config
+        self.span_proj = nn.Linear(3*backbone.config.hidden_size+20, hidden_dim) # TODO config
              
         self.mention_classifier = nn.Linear(hidden_dim, 1)
 
@@ -81,7 +75,7 @@ class DETR(nn.Module):
         self.query_token_IO_score = nn.Linear(150, 1)  #TODO: change to 3 so it would be BIO instead of IO
  
 
-    def forward(self, input_ids, sum_text_len, mask, gold_mentions, num_mentions, speaker_ids, genre):
+    def forward(self, input_ids, sum_text_len, mask, gold_mentions, num_mentions):
         """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
@@ -102,10 +96,7 @@ class DETR(nn.Module):
         bs = input_ids.shape[0]
         input_ids_r = input_ids.reshape(input_ids.shape[0], -1)
         mask_r = mask.reshape(mask.shape[0], -1)
-        if self.args.speaker != 'text':
-            speaker_ids_r = speaker_ids.reshape(speaker_ids.shape[0], -1, speaker_ids.shape[-1])
         longfomer_no_pad_list = []
-        speaker_ids_no_pad_list = []
         for i in range(input_ids_r.shape[0]):
             masked_ids = input_ids_r[i][mask_r[i]==1].unsqueeze(0)
             masked_mask = torch.ones_like(masked_ids).unsqueeze(0)
@@ -121,22 +112,6 @@ class DETR(nn.Module):
 
             longformer_emb = self.backbone(masked_ids, attention_mask=masked_mask)[0]
             longfomer_no_pad_list.append(longformer_emb.reshape(-1, longformer_emb.shape[-1]))
-            if self.args.speaker != 'text':
-                speaker_ids_no_pad_list.append(speaker_ids_r[i][mask_r[i]==1])
-        # input_ids_r = input_ids_r.narrow(-1, 0, max(sum_text_len))
-        # mask_r = mask_r.narrow(-1, 0, max(sum_text_len))
-        # longformer_emb = self.backbone(input_ids.reshape(-1, input_ids.shape[-1]), attention_mask=mask.reshape(-1, mask.shape[-1]))[0]  # Getting representation for each token in the text
-
-        # longformer_emb_size = longformer_emb.shape[-1]
-        # # # filter out masked tokens
-        # start_ind = 0
-        # longfomer_no_pad_list = []
-        # speaker_ids_no_pad_list = []
-        # for i in range(bs):
-        #     end_ind = start_ind + input_ids.shape[1]
-        #     longfomer_no_pad_list.append(torch.masked_select(longformer_emb[start_ind:end_ind], mask[i].unsqueeze(-1)==1).reshape(-1, longformer_emb_size))
-        #     speaker_ids_no_pad_list.append(torch.masked_select(speaker_ids[i], mask[i].unsqueeze(-1)==1).reshape(-1, speaker_ids[0].shape[-1]))
-        #     start_ind = end_ind
 
         if self.args.random_queries:
             raw_query_embed = torch.normal(torch.zeros_like(self.query_embed.weight), 1) * self.query_sigma + self.query_mu #raw_query_embed = torch.normal(torch.zeros_like(self.query_embed.weight), 0.5)
@@ -148,10 +123,8 @@ class DETR(nn.Module):
         else:
             span_starts = [torch.tensor([m[0] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
             span_ends = [torch.tensor([m[1] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
-            span_emb, span_mask, avg_speaker_onehot = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends, num_mentions, speaker_ids_no_pad_list, genre)  # [mentions, emb']
+            span_emb, span_mask = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends, num_mentions)  # [mentions, emb']
             span_emb = self.span_proj(span_emb) # [mentions, emb]
-            if self.args.speaker == 'after':
-                span_emb = torch.cat([span_emb, avg_speaker_onehot], 2)
             hs, memory = self.transformer(span_emb, span_mask, raw_query_embed)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
 
 
@@ -272,11 +245,10 @@ class DETR(nn.Module):
 
         return cluster_logits, torch.cat(coref_logits), mention_logits_masked
 
-    def get_span_emb(self, context_outputs_list, span_starts, span_ends, num_mentions, speaker_ids_masked, genre):
+    def get_span_emb(self, context_outputs_list, span_starts, span_ends, num_mentions):
         max_mentions = num_mentions.max()
         span_mask_list = []
         span_emb_list = []
-        avg_speaker_onehot_list = []
         # print(f'context outputs {context_outputs.shape}')
         # print(f'span_starts {span_starts[0].shape}')
         for i in range(len(num_mentions)):
@@ -302,14 +274,6 @@ class DETR(nn.Module):
             head_attn_reps = torch.matmul(mention_word_score, context_outputs_list[i])  # [K, emb]
             span_emb_construct.append(head_attn_reps)
             # span_emb_construct.append((genre[i].unsqueeze(0)/1.0).repeat(num_mentions[i], 1))
-            if self.args.speaker == 'before' or self.args.speaker == 'after':
-                avg_speaker_onehot = []
-                for j in range(num_mentions[i]):
-                    avg_speaker_onehot.append((speaker_ids_masked[i][span_starts[i][j]:span_ends[i][j]+1].sum(0) / (span_ends[i][j]-span_starts[i][j]+1.0)).unsqueeze(0))
-                avg_speaker_onehot = torch.cat(avg_speaker_onehot,0)
-                if self.args.speaker == 'before':
-                    span_emb_construct.append(avg_speaker_onehot)
-                avg_speaker_onehot_list.append(torch.cat([avg_speaker_onehot, torch.zeros(max_mentions-avg_speaker_onehot.shape[0], avg_speaker_onehot.shape[1], dtype=torch.float, device=context_outputs_list[i].device)]).unsqueeze(0))
             span_emb_cat = torch.cat(span_emb_construct, 1)
             span_mask = torch.cat([torch.ones(span_emb_cat.shape[0], dtype=torch.int, device=context_outputs_list[i].device), \
                 torch.zeros(max_mentions-span_emb_cat.shape[0], dtype=torch.int, device=context_outputs_list[i].device)])
@@ -319,9 +283,7 @@ class DETR(nn.Module):
             span_mask_list.append(span_mask.unsqueeze(0))  
         span_emb_tensor = torch.cat(span_emb_list, 0)
         span_mask_tensor = torch.cat(span_mask_list, 0)
-        if len(avg_speaker_onehot_list) > 0:
-            avg_speaker_onehot_list = torch.cat(avg_speaker_onehot_list, 0)
-        return span_emb_tensor, span_mask_tensor, avg_speaker_onehot_list  # [k, emb], [K, T]
+        return span_emb_tensor, span_mask_tensor  # [k, emb], [K, T]
 
     def get_masked_mention_word_scores(self, encoded_doc, span_starts, span_ends):
         num_words = encoded_doc.shape[0]  # T

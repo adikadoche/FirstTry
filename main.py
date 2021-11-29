@@ -78,14 +78,14 @@ def main():
 
     model.to(args.device)
 
-    # eval_dataset, eval_sampler, eval_loader, args.eval_batch_size = get_data_objects(args, args.predict_file, False)
-    eval_dataset = get_dataset(args, evaluate=True)
-    eval_loader = BucketBatchSampler(eval_dataset, max_total_seq_len=args.max_total_seq_len, batch_size_1=True)
+    eval_dataset, eval_sampler, eval_loader, args.eval_batch_size = get_data_objects(args, args.predict_file, False)
+    # eval_dataset = get_dataset(args, evaluate=True)
+    # eval_loader = BucketBatchSampler(eval_dataset, max_total_seq_len=args.max_total_seq_len, batch_size_1=True)
 
     if args.do_train:
-        train_dataset = get_dataset(args, evaluate=False)
-        train_loader = BucketBatchSampler(train_dataset, max_total_seq_len=args.max_total_seq_len)
-        # train_dataset, train_sampler, train_loader, args.train_batch_size = get_data_objects(args, args.train_file, True)
+        # train_dataset = get_dataset(args, evaluate=False)
+        # train_loader = BucketBatchSampler(train_dataset, max_total_seq_len=args.max_total_seq_len)
+        train_dataset, train_sampler, train_loader, args.train_batch_size = get_data_objects(args, args.train_file, True)
         # if args.do_profile:
         #     profiler = cProfile.Profile()
         #     profiler.enable()
