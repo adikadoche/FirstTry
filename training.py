@@ -24,41 +24,22 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     epoch_iterator, optimizer: torch.optim.Optimizer, scaler: torch.cuda.amp.GradScaler,
                     args, evaluator, skip_steps, recent_grad_norms, recent_cluster_logits,
         recent_coref_logits, recent_losses, recent_losses_parts, recent_logits_sums, global_step, lr_scheduler, eval_loader, eval_dataset, threshold):
-    input_ids_pads = torch.ones(1, args.max_segment_len, dtype=torch.int, device=args.device) * TOKENS_PAD
-    speaker_ids_pads = torch.ones(1, args.max_segment_len, args.max_num_speakers, dtype=torch.int, device=args.device) * SPEAKER_PAD
-    mask_pads = torch.zeros(1, args.max_segment_len, dtype=torch.int, device=args.device)
     for step, batch in enumerate(epoch_iterator):
         if skip_steps > 0:
             skip_steps -= 1
             continue
 
         model.train()
+        batch = tuple(tensor.to(args.device) for tensor in batch)
+        input_ids, input_mask, gold_clusters = batch
+        gold_mentions_list = [[tuple(m) for i in range(gold_clusters.shape[1]) for m in gold_clusters[b][i] if m[0] != 0 and m[1] != 0] \
+                for b in range(gold_clusters.shape[0])]
 
-        sum_text_len = [sum(tl) for tl in batch['text_len']]
-        gold_clusters = batch['clusters']
+        gold_matrix = create_gold_matrix(args.device, args.num_queries, gold_clusters, gold_mentions_list)
 
-        gold_mentions_list = None
-        if args.use_gold_mentions:
-            # gold_mentions = []
-            # if len(gold_clusters) > 0:  #TODO: create junk clusters even if 0 gold clusters
-            gold_mentions_list = [list(set([tuple(m) for c in gc for m in c])) for gc in gold_clusters]
-            if args.add_junk:
-                gold_mentions_list, gold_mentions_vector = create_junk_gold_mentions(gold_mentions_list, sum_text_len, args.device)
-            else:
-                gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=args.device) for gm in gold_mentions_list]
-
-        input_ids, input_mask, sum_text_len, gold_mentions, num_mentions, speaker_ids, genre = tensor_and_remove_empty(batch, gold_mentions_list, args, input_ids_pads, mask_pads, speaker_ids_pads)
-        if len(input_ids) == 0:
-            continue
-
-        gold_matrix = create_gold_matrix(args.device, sum_text_len, args.num_queries, gold_clusters, gold_mentions_list)
-
-        # orig_input_dim = input_ids.shape
-        # input_ids = torch.reshape(input_ids, (1, -1))
-        # input_mask = torch.reshape(input_mask, (1, -1))
         if args.amp:
             with torch.cuda.amp.autocast():
-                outputs = model(input_ids, sum_text_len, input_mask, gold_mentions, num_mentions, speaker_ids, genre)
+                outputs = model(input_ids, input_mask, gold_clusters)
                 cluster_logits, coref_logits = outputs['cluster_logits'], outputs['coref_logits']
 
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(),
@@ -66,17 +47,33 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                 evaluator.update(predicted_clusters, gold_clusters)
                 loss = criterion(outputs, gold_matrix)
         else:
-            outputs = model(input_ids, sum_text_len, input_mask, gold_mentions, num_mentions, speaker_ids, genre)
+            start_time = time.time_ns()
+            outputs = model(input_ids, input_mask, gold_clusters)   #TODO: gold clusters over padded
+            total_time = time.time_ns() - start_time
+            total_time_str = str(datetime.timedelta(microseconds=int(total_time / 1000)))
+            print('model time {}'.format(total_time_str))
             cluster_logits, coref_logits, mention_logits = outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits']
 
+            start_time = time.time_ns()
             if args.add_junk:
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), mention_logits.cpu().detach(),
                                                             threshold, gold_mentions_list, args.is_max or args.detr)
             else:
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
                                                             threshold, gold_mentions_list, args.is_max or args.detr)
+            total_time = time.time_ns() - start_time
+            total_time_str = str(datetime.timedelta(microseconds=int(total_time / 1000)))
+            print('predictedclusters time {}'.format(total_time_str))
+            start_time = time.time_ns()
             evaluator.update(predicted_clusters, gold_clusters)
-            loss, loss_parts = criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
+            total_time = time.time_ns() - start_time
+            total_time_str = str(datetime.timedelta(microseconds=int(total_time / 1000)))
+            print('evaluator time {}'.format(total_time_str))
+            start_time = time.time_ns()
+            loss, loss_parts = criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_list})
+            total_time = time.time_ns() - start_time
+            total_time_str = str(datetime.timedelta(microseconds=int(total_time / 1000)))
+            print('loss time {}'.format(total_time_str))
 
         # recent_cluster_logits.append(cluster_logits.detach().cpu().numpy())
         # recent_coref_logits.append(coref_logits.detach().cpu().numpy().flatten())
@@ -84,7 +81,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
         # TODO handle NaNs and +-infs
 
-        if args.n_gpu > 1 or args.train_batch_size > 1:
+        if len(loss) > 1:
             loss = loss.mean()  # mean() to average on multi-gpu parallel training
         if args.gradient_accumulation_steps > 1:
             loss = loss / args.gradient_accumulation_steps
@@ -120,7 +117,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             if args.lr_drop_interval == 'step':
                 lr_scheduler.step()  # Update learning rate schedule
             model.zero_grad()
-            global_step += args.train_batch_size
+            global_step += 1
 
             if args.local_rank in [-1, 0] and args.eval_steps > 0 and global_step % args.eval_steps == 0:
                 results = report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, threshold)
@@ -155,6 +152,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         if args.max_steps > 0 and global_step > args.max_steps:
             epoch_iterator.close()
             break
+        # return global_step, threshold
     return global_step, threshold
 
 
@@ -172,8 +170,7 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
         },
     ]
 
-    optimizer = torch.optim.AdamW(param_dicts, lr=args.lr * (1 + (args.train_batch_size- 1)/40.0),
-                                  weight_decay=args.weight_decay)
+    optimizer = torch.optim.AdamW(param_dicts, lr=args.lr, weight_decay=args.weight_decay)
     
     if args.resume_from:
         logger.info("Loading from checkpoint {}".format(args.resume_from))
@@ -217,15 +214,9 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
         args.t_total = len(train_loader) // args.gradient_accumulation_steps * args.num_train_epochs
 
     # lr_scheduler = get_constant_schedule_with_warmup(optimizer, num_warmup_steps=int(args.warmup_steps / args.train_batch_size))
-    lr_scheduler = WarmupLinearSchedule(optimizer, warmup_steps=int((args.warmup_steps/args.train_batch_size) * (1 + (args.train_batch_size - 1) / 5)),
-                                        t_total=args.t_total)  # ConstantLRSchedule(optimizer)
+    lr_scheduler = WarmupLinearSchedule(optimizer, warmup_steps=args.warmup_steps, t_total=args.t_total)  # ConstantLRSchedule(optimizer)
     # lr_scheduler = WarmupExponentialSchedule(optimizer, warmup_steps=int(args.warmup_steps / args.train_batch_size),
     #                                     gamma=0.99998)  # ConstantLRSchedule(optimizer)
-    
-    if args.train_batch_size > 1:
-        args.eval_steps = -1 if args.eval_steps == -1 else max(1, int(round(args.eval_steps / args.train_batch_size)))
-        args.save_steps = -1 if args.save_steps == -1 else max(1, int(round(args.save_steps / args.train_batch_size)))
-        args.logging_steps = -1 if args.logging_steps == -1 else max(1, int(round(args.logging_steps / args.train_batch_size)))
 
 
     global_step = 0 if not args.resume_from else args.resume_global_step
@@ -236,10 +227,6 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
     logger.info("***** Running training *****")
     logger.info("  Num steps per epoch = %d", try_measure_len(train_loader))
     logger.info("  Num Epochs = %d", args.num_train_epochs if args.num_train_epochs is not None else -1)
-    logger.info("  Instantaneous batch size per GPU = %d", args.per_gpu_train_batch_size)
-    logger.info("  Total train batch size (w. parallel, distributed & accumulation) = %d",
-                args.train_batch_size * args.gradient_accumulation_steps * (
-                    torch.distributed.get_world_size() if args.local_rank != -1 else 1))
     logger.info("  Gradient Accumulation steps = %d", args.gradient_accumulation_steps)
     logger.info("  Total optimization steps = %d", args.t_total)
 
@@ -259,7 +246,7 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
 
     best_f1 = 0
     best_f1_global_step = -1
-    start_time = time.time()
+    start_time = time.time_ns()
     for epoch in train_iterator:
         # if epoch > len(train_iterator) / 2:
         #     args.add_junk = True
@@ -308,8 +295,8 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
             train_iterator.close()
             break
 
-    total_time = time.time() - start_time
-    total_time_str = str(datetime.timedelta(seconds=int(total_time)))
+    total_time = time.time_ns() - start_time
+    total_time_str = str(datetime.timedelta(microseconds=int(total_time / 1000)))
     print('Training time {}'.format(total_time_str))
 
     # if args.local_rank in [-1, 0]:

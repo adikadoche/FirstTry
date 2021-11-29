@@ -4,7 +4,7 @@
 # Press Double Shift to search everywhere for classes, files, tool windows, actions, and settings.
 import os
 # os.environ["CUDA_VISIBLE_DEVICES"] = "2, 3"
-# os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 import cProfile, pstats
 import pandas as pd
 import io
@@ -86,25 +86,25 @@ def main():
         train_dataset = get_dataset(args, evaluate=False)
         train_loader = BucketBatchSampler(train_dataset, max_total_seq_len=args.max_total_seq_len)
         # train_dataset, train_sampler, train_loader, args.train_batch_size = get_data_objects(args, args.train_file, True)
-        # if args.do_profile:
-        #     profiler = cProfile.Profile()
-        #     profiler.enable()
-        #     global_step = train(args, model, criterion, train_loader, eval_loader, eval_dataset)
-        #     profiler.disable()
-        #     result = io.StringIO()
-        #     pstats.Stats(profiler,stream=result).sort_stats('tottime').print_stats()
-        #     result=result.getvalue()
-        #     # chop the string into a csv-like buffer
-        #     result='ncalls'+result.split('ncalls')[-1]
-        #     result='\n'.join([','.join(line.rstrip().split(None,5)) for line in result.split('\n')])
-        #     # save it to disk
+        if args.do_profile:
+            profiler = cProfile.Profile()
+            profiler.enable()
+            global_step = train(args, model, criterion, train_loader, eval_loader, eval_dataset)
+            profiler.disable()
+            result = io.StringIO()
+            pstats.Stats(profiler,stream=result).sort_stats('tottime').print_stats()
+            result=result.getvalue()
+            # chop the string into a csv-like buffer
+            result='ncalls'+result.split('ncalls')[-1]
+            result='\n'.join([','.join(line.rstrip().split(None,5)) for line in result.split('\n')])
+            # save it to disk
             
-        #     with open('test.csv', 'w+') as f:
-        #         #f=open(result.rsplit('.')[0]+'.csv','w')
-        #         f.write(result)
-        #         f.close()
-        # else:
-        global_step = train(args, model, criterion, train_loader, eval_loader, eval_dataset)
+            with open('test.csv', 'w+') as f:
+                #f=open(result.rsplit('.')[0]+'.csv','w')
+                f.write(result)
+                f.close()
+        else:
+            global_step = train(args, model, criterion, train_loader, eval_loader, eval_dataset)
     make_evaluation(model, criterion, eval_loader, eval_dataset, args) #TODO: report_eval won't work in here because of missing parameters
 
 # Press the green button in the gutter to run the script.

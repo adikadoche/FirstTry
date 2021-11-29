@@ -8,6 +8,7 @@ import torch.nn.functional as F
 from torch import nn, Tensor
 from consts import OUT_KEYS, TOKENS_PAD
 import math
+import time, datetime
 
 
 import numpy as np
@@ -58,13 +59,7 @@ class DETR(nn.Module):
 
         self.word_attn_projection = nn.Linear(backbone.config.hidden_size, 1)
         self.span_width_embed = nn.Embedding(30, 20)
-        if self.args.speaker == 'before':
-            # self.span_proj = nn.Linear(3*backbone.config.hidden_size+20+self.args.max_num_speakers+len(GENRES)+1, hidden_dim) # TODO config
-            self.span_proj = nn.Linear(3*backbone.config.hidden_size+20 + self.args.max_num_speakers, hidden_dim) # TODO config
-        elif self.args.speaker == 'after':
-            self.span_proj = nn.Linear(3*backbone.config.hidden_size+20, hidden_dim - self.args.max_num_speakers) # TODO config
-        elif self.args.speaker == 'text':
-            self.span_proj = nn.Linear(3*backbone.config.hidden_size+20, hidden_dim) # TODO config
+        self.span_proj = nn.Linear(3*backbone.config.hidden_size+20, hidden_dim) # TODO config
              
         self.mention_classifier = nn.Linear(hidden_dim, 1)
 
@@ -81,7 +76,7 @@ class DETR(nn.Module):
         self.query_token_IO_score = nn.Linear(150, 1)  #TODO: change to 3 so it would be BIO instead of IO
  
 
-    def forward(self, input_ids, sum_text_len, mask, gold_mentions, num_mentions, speaker_ids, genre):
+    def forward(self, input_ids, mask, gold_clusters):
         """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
@@ -100,29 +95,14 @@ class DETR(nn.Module):
         # mask_cat = torch.cat(mask, dim=1).squeeze(0)
 
         bs = input_ids.shape[0]
-        input_ids_r = input_ids.reshape(input_ids.shape[0], -1)
-        mask_r = mask.reshape(mask.shape[0], -1)
-        if self.args.speaker != 'text':
-            speaker_ids_r = speaker_ids.reshape(speaker_ids.shape[0], -1, speaker_ids.shape[-1])
         longfomer_no_pad_list = []
-        speaker_ids_no_pad_list = []
-        for i in range(input_ids_r.shape[0]):
-            masked_ids = input_ids_r[i][mask_r[i]==1].unsqueeze(0)
-            masked_mask = torch.ones_like(masked_ids).unsqueeze(0)
-            if masked_ids.shape[-1] > self.args.max_seq_length:
-                masked_ids = torch.zeros([2, math.ceil(input_ids.shape[1]/2) * input_ids.shape[-1]], dtype=torch.long)
-                masked_mask = torch.zeros([2, math.ceil(mask.shape[1]/2) * mask.shape[-1]], dtype=torch.long)
-                masked_ids[0] = input_ids[i][:math.ceil(input_ids.shape[1]/2)].reshape(1, math.ceil(input_ids.shape[1]/2) * input_ids.shape[-1])
-                masked_mask[0] = mask[i][:math.ceil(mask.shape[1]/2)].reshape(1, math.ceil(mask.shape[1]/2) * mask.shape[-1])
-                masked_ids[1][:(input_ids.shape[1]-math.ceil(input_ids.shape[1]/2)) * input_ids.shape[-1]] = \
-                    input_ids[i][math.ceil(input_ids.shape[1]/2):].reshape(1, (input_ids.shape[1]-math.ceil(input_ids.shape[1]/2)) * input_ids.shape[-1])
-                masked_mask[1][:(mask.shape[1]-math.ceil(mask.shape[1]/2)) * mask.shape[-1]] = \
-                    mask[i][math.ceil(mask.shape[1]/2):].reshape(1, (mask.shape[1]-math.ceil(mask.shape[1]/2)) * mask.shape[-1])
-
-            longformer_emb = self.backbone(masked_ids, attention_mask=masked_mask)[0]
-            longfomer_no_pad_list.append(longformer_emb.reshape(-1, longformer_emb.shape[-1]))
-            if self.args.speaker != 'text':
-                speaker_ids_no_pad_list.append(speaker_ids_r[i][mask_r[i]==1])
+        start_time = time.time_ns()
+        longformer_emb = self.backbone(input_ids, attention_mask=mask)[0]
+        for i in range(bs):
+            longfomer_no_pad_list.append(longformer_emb[i][:sum(mask[i])].reshape(-1, longformer_emb.shape[-1]))
+        total_time = time.time_ns() - start_time
+        total_time_str = str(datetime.timedelta(microseconds=int(total_time / 1000)))
+        print('longformer time {}'.format(total_time_str))
         # input_ids_r = input_ids_r.narrow(-1, 0, max(sum_text_len))
         # mask_r = mask_r.narrow(-1, 0, max(sum_text_len))
         # longformer_emb = self.backbone(input_ids.reshape(-1, input_ids.shape[-1]), attention_mask=mask.reshape(-1, mask.shape[-1]))[0]  # Getting representation for each token in the text
@@ -146,17 +126,29 @@ class DETR(nn.Module):
         if not self.args.use_gold_mentions:
             hs, memory = self.transformer(self.input_proj(longfomer_no_pad_list), mask, raw_query_embed) # [dec_layers, 1, num_queries, emb], [1, seg*seq, emb]
         else:
-            span_starts = [torch.tensor([m[0] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
-            span_ends = [torch.tensor([m[1] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
-            span_emb, span_mask, avg_speaker_onehot = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends, num_mentions, speaker_ids_no_pad_list, genre)  # [mentions, emb']
+            start_time = time.time_ns()
+            span_starts = [torch.tensor([m[0] for i in range(gold_clusters.shape[1]) for m in gold_clusters[b][i] if m[0] != 0 and m[1] != 0], dtype=torch.long) \
+                for b in range(gold_clusters.shape[0])]
+            span_ends = [torch.tensor([m[1] for i in range(gold_clusters.shape[1]) for m in gold_clusters[b][i] if m[0] != 0 and m[1] != 0], dtype=torch.long) \
+                for b in range(gold_clusters.shape[0])]
+            span_emb, span_mask, max_num_mentions = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends)  # [mentions, emb']
             span_emb = self.span_proj(span_emb) # [mentions, emb]
-            if self.args.speaker == 'after':
-                span_emb = torch.cat([span_emb, avg_speaker_onehot], 2)
+            total_time = time.time_ns() - start_time
+            total_time_str = str(datetime.timedelta(microseconds=int(total_time / 1000)))
+            print('span_proj time {}'.format(total_time_str))
+            start_time = time.time_ns()
             hs, memory = self.transformer(span_emb, span_mask, raw_query_embed)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
+            total_time = time.time_ns() - start_time
+            total_time_str = str(datetime.timedelta(microseconds=int(total_time / 1000)))
+            print('transformer time {}'.format(total_time_str))
 
 
         last_hs = hs[-1] # [1, num_queries, emb]
-        cluster_logits, coref_logits, mention_logits = self.calc_cluster_and_coref_logits(last_hs, memory, gold_mentions is not None, span_mask, gold_mentions.shape[1])
+        start_time = time.time_ns()
+        cluster_logits, coref_logits, mention_logits = self.calc_cluster_and_coref_logits(last_hs, memory, gold_clusters is not None, span_mask, max_num_mentions)
+        total_time = time.time_ns() - start_time
+        total_time_str = str(datetime.timedelta(microseconds=int(total_time / 1000)))
+        print('calc_cluster_and_coref_logits time {}'.format(total_time_str))
 
         # aux_coref_logits = [self.calc_cluster_and_coref_logits(curr_hs, memory)[1] for curr_hs in hs[:-1]]
 
@@ -272,23 +264,22 @@ class DETR(nn.Module):
 
         return cluster_logits, torch.cat(coref_logits), mention_logits_masked
 
-    def get_span_emb(self, context_outputs_list, span_starts, span_ends, num_mentions, speaker_ids_masked, genre):
-        max_mentions = num_mentions.max()
+    def get_span_emb(self, context_outputs_list, span_starts, span_ends):
+        max_mentions = max([len(ss) for ss in span_starts])
         span_mask_list = []
         span_emb_list = []
-        avg_speaker_onehot_list = []
         # print(f'context outputs {context_outputs.shape}')
         # print(f'span_starts {span_starts[0].shape}')
-        for i in range(len(num_mentions)):
+        for i in range(len(span_starts)):
             span_emb_construct = []
             # print(f'span_starts max {span_starts[i].max()} min {span_starts[i].min()}')
-            span_start_emb = context_outputs_list[i][span_starts[i][:num_mentions[i]]] # [k, emb]
+            span_start_emb = context_outputs_list[i][span_starts[i]] # [k, emb]
             span_emb_construct.append(span_start_emb)
 
-            span_end_emb = context_outputs_list[i][span_ends[i][:num_mentions[i]]]  # [k, emb]
+            span_end_emb = context_outputs_list[i][span_ends[i]]  # [k, emb]
             span_emb_construct.append(span_end_emb)
 
-            span_width = (1 + span_ends[i][:num_mentions[i]] - span_starts[i][:num_mentions[i]]).clamp(max=30)  # [k]
+            span_width = (1 + span_ends[i] - span_starts[i]).clamp(max=30)  # [k]
 
             # if self.config["use_features"]:
             span_width_index = span_width - 1  # [k]
@@ -298,18 +289,10 @@ class DETR(nn.Module):
             span_emb_construct.append(span_width_emb)
 
             # if self.config["model_heads"]:
-            mention_word_score = self.get_masked_mention_word_scores(context_outputs_list[i], span_starts[i][:num_mentions[i]], span_ends[i][:num_mentions[i]])  # [K, T]
+            mention_word_score = self.get_masked_mention_word_scores(context_outputs_list[i], span_starts[i], span_ends[i])  # [K, T]
             head_attn_reps = torch.matmul(mention_word_score, context_outputs_list[i])  # [K, emb]
             span_emb_construct.append(head_attn_reps)
             # span_emb_construct.append((genre[i].unsqueeze(0)/1.0).repeat(num_mentions[i], 1))
-            if self.args.speaker == 'before' or self.args.speaker == 'after':
-                avg_speaker_onehot = []
-                for j in range(num_mentions[i]):
-                    avg_speaker_onehot.append((speaker_ids_masked[i][span_starts[i][j]:span_ends[i][j]+1].sum(0) / (span_ends[i][j]-span_starts[i][j]+1.0)).unsqueeze(0))
-                avg_speaker_onehot = torch.cat(avg_speaker_onehot,0)
-                if self.args.speaker == 'before':
-                    span_emb_construct.append(avg_speaker_onehot)
-                avg_speaker_onehot_list.append(torch.cat([avg_speaker_onehot, torch.zeros(max_mentions-avg_speaker_onehot.shape[0], avg_speaker_onehot.shape[1], dtype=torch.float, device=context_outputs_list[i].device)]).unsqueeze(0))
             span_emb_cat = torch.cat(span_emb_construct, 1)
             span_mask = torch.cat([torch.ones(span_emb_cat.shape[0], dtype=torch.int, device=context_outputs_list[i].device), \
                 torch.zeros(max_mentions-span_emb_cat.shape[0], dtype=torch.int, device=context_outputs_list[i].device)])
@@ -319,9 +302,7 @@ class DETR(nn.Module):
             span_mask_list.append(span_mask.unsqueeze(0))  
         span_emb_tensor = torch.cat(span_emb_list, 0)
         span_mask_tensor = torch.cat(span_mask_list, 0)
-        if len(avg_speaker_onehot_list) > 0:
-            avg_speaker_onehot_list = torch.cat(avg_speaker_onehot_list, 0)
-        return span_emb_tensor, span_mask_tensor, avg_speaker_onehot_list  # [k, emb], [K, T]
+        return span_emb_tensor, span_mask_tensor, max_mentions  # [k, emb], [K, T]
 
     def get_masked_mention_word_scores(self, encoded_doc, span_starts, span_ends):
         num_words = encoded_doc.shape[0]  # T
@@ -620,12 +601,13 @@ class MatchingLoss(nn.Module):
             coref_logits = outputs["coref_logits"][i].squeeze(0)  # [num_queries, tokens]
             cluster_logits = outputs["cluster_logits"][i].squeeze() # [num_queries]
             num_real_cluster_target_rows = sum(torch.sum(targets_clusters[i], -1) > 0)
-            matched_predicted_cluster_id_real, matched_gold_cluster_id_real = \
-                matched_predicted_cluster_id[i][matched_gold_cluster_id[i]<num_real_cluster_target_rows], \
-                    matched_gold_cluster_id[i][matched_gold_cluster_id[i]<num_real_cluster_target_rows]
-            matched_predicted_cluster_id_junk, matched_gold_cluster_id_junk = \
-                matched_predicted_cluster_id[i][matched_gold_cluster_id[i]>=num_real_cluster_target_rows], \
-                    matched_gold_cluster_id[i][matched_gold_cluster_id[i]>=num_real_cluster_target_rows]
+            if matched_predicted_cluster_id[i] is not False:
+                matched_predicted_cluster_id_real, matched_gold_cluster_id_real = \
+                    matched_predicted_cluster_id[i][matched_gold_cluster_id[i]<num_real_cluster_target_rows], \
+                        matched_gold_cluster_id[i][matched_gold_cluster_id[i]<num_real_cluster_target_rows]
+                matched_predicted_cluster_id_junk, matched_gold_cluster_id_junk = \
+                    matched_predicted_cluster_id[i][matched_gold_cluster_id[i]>=num_real_cluster_target_rows], \
+                        matched_gold_cluster_id[i][matched_gold_cluster_id[i]>=num_real_cluster_target_rows]
 
             if self.args.add_junk:
                 mention_logits = outputs["mention_logits"][i].squeeze() # [tokens]
@@ -643,6 +625,8 @@ class MatchingLoss(nn.Module):
             if matched_predicted_cluster_id[i] is not False:
                 gold_is_cluster[matched_predicted_cluster_id_real] = 1
                 weight_cluster[matched_predicted_cluster_id_real] = 1
+            print(cluster_logits)
+            print(matched_predicted_cluster_id[i])
             cost_is_cluster = F.binary_cross_entropy(cluster_logits, gold_is_cluster, weight=weight_cluster, reduction=self.args.reduction)
                 
             if not self.args.add_junk or sum(targets_mentions[i].shape) == 0:

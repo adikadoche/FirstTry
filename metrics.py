@@ -47,7 +47,7 @@ class CorefEvaluator(object):
 
     def update(self, predicted, gold):
         for i in range(len(predicted)):
-            gold_flat = [tuple([tuple(m) for m in c]) for c in gold[i]]
+            gold_flat = [tuple([tuple(m) for m in c if m[0] != 0 or m[1] != 0]) for c in gold[i] if c[0][0] != 0 or c[0][1] != 0]
             predicted_flat = [tuple([tuple(m) for m in c]) for c in predicted[i]]
             mention_to_predicted = calc_mention_to_cluster(predicted_flat)
             mention_to_gold = calc_mention_to_cluster(gold_flat)

@@ -13,14 +13,14 @@ from torch.utils.data import Dataset, RandomSampler, DistributedSampler, Sequent
 from ontonotes import OntonotesDataset
 
 
-CorefExample = namedtuple("CorefExample", ["token_ids", "clusters"])
+CorefExample = namedtuple("CorefExample", ["words", "token_ids", "clusters"])
 
 logger = logging.getLogger(__name__)
 
 
 class CorefDataset(Dataset):
     def __init__(self, file_path, tokenizer_name, cache_dir, max_seq_length=-1):
-        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, cache_dir=cache_dir)
+        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, cache_dir=cache_dir, add_prefix_space=True)
         logger.info(f"Reading dataset from {file_path}")
         examples, self.max_mention_num, self.max_cluster_size, self.max_num_clusters = self._parse_jsonlines(file_path)
         self.max_seq_length = max_seq_length
@@ -56,11 +56,13 @@ class CorefDataset(Dataset):
             end_token_idx_to_word_idx = [0]  # for <s>
 
             token_ids = []
+            words_with_speaker = []
             last_speaker = None
             for idx, (word, speaker) in enumerate(zip(words, speakers)):
                 if last_speaker != speaker:
-                    speaker_prefix = [SPEAKER_START_ID] + self.tokenizer.encode(" " + speaker,
+                    speaker_prefix = [SPEAKER_START_ID] + self.tokenizer.tokenize(speaker,
                                                                              add_special_tokens=False) + [SPEAKER_END_ID]
+                    words_with_speaker += [SPEAKER_START_ID, speaker, SPEAKER_END_ID]
                     last_speaker = speaker
                 else:
                     speaker_prefix = []
@@ -68,7 +70,8 @@ class CorefDataset(Dataset):
                     end_token_idx_to_word_idx.append(idx)
                 token_ids.extend(speaker_prefix)
                 word_idx_to_start_token_idx[idx] = len(token_ids) + 1  # +1 for <s>
-                tokenized = self.tokenizer.encode(" " + word, add_special_tokens=False)
+                tokenized = self.tokenizer.tokenize(word, add_special_tokens=False)
+                words_with_speaker.append(word)
                 for _ in range(len(tokenized)):
                     end_token_idx_to_word_idx.append(idx)
                 token_ids.extend(tokenized)
@@ -83,7 +86,7 @@ class CorefDataset(Dataset):
                 cluster in clusters]
             lengths.append(len(token_ids))
 
-            coref_examples.append(((doc_key, end_token_idx_to_word_idx), CorefExample(token_ids=token_ids, clusters=new_clusters)))
+            coref_examples.append(((doc_key, end_token_idx_to_word_idx), CorefExample(words=words_with_speaker, token_ids=token_ids, clusters=new_clusters)))
         return coref_examples, lengths, num_examples_filtered
 
     def __len__(self):
@@ -108,9 +111,10 @@ class CorefDataset(Dataset):
         max_length += 2  # we have additional two special tokens <s>, </s>
         padded_batch = []
         for example in batch:
-            encoded_dict = self.tokenizer.encode_plus(example[0],
+            encoded_dict = self.tokenizer(text=example.words,
                                                       add_special_tokens=True,
-                                                      pad_to_max_length=True,
+                                                      is_split_into_words=True,
+                                                      padding='max_length',
                                                       max_length=max_length,
                                                       return_attention_mask=True,
                                                       return_tensors='pt')

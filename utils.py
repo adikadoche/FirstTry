@@ -150,28 +150,30 @@ def reduce_dict(input_dict, average=True):
         reduced_dict = {k: v for k, v in zip(names, values)}
     return reduced_dict
 
-def create_gold_matrix(device, doc_len, num_queries, gold_clusters, gold_mentions: List):
-    if gold_mentions is None:
-        gold_per_token = torch.zeros(num_queries, doc_len, device=device)
-        for cluster_id, cluster in enumerate(gold_clusters):
-            for start, end in cluster:
-                gold_per_token[cluster_id, start: end + 1] = 1
-    else:
-        gold_per_token_batch = []
-        for i in range(len(gold_clusters)):
-            gold_per_token = torch.zeros(num_queries, len(gold_mentions[i]), device=device)
-            if num_queries < len(gold_clusters[i]):
-                logger.info("in utils, exceeds num_queries with length {}".format(len(gold_clusters[i])))
-            for cluster_id, cluster in enumerate(gold_clusters[i]):
-                if cluster_id >= num_queries:
+def create_gold_matrix(device, num_queries, gold_clusters, gold_mentions: List):
+    # if gold_mentions is None:
+    #     gold_per_token = torch.zeros(num_queries, doc_len, device=device)
+    #     for cluster_id, cluster in enumerate(gold_clusters):
+    #         for start, end in cluster:
+    #             gold_per_token[cluster_id, start: end + 1] = 1
+    # else:
+    gold_per_token_batch = []
+    for i in range(len(gold_clusters)):
+        gold_per_token = torch.zeros(num_queries, len(gold_mentions[i]), device=device)
+        if num_queries < sum(torch.sum(torch.sum(gold_clusters[i], dim=1),dim=1)>1):
+            logger.info("in utils, exceeds num_queries with length {}".format(len(gold_clusters[i])))
+        for cluster_id, cluster in enumerate(gold_clusters[i]):
+            if cluster_id >= num_queries:
+                continue
+            for mention in cluster:
+                if mention[0] == 0 and mention[1] == 0:
                     continue
-                for mention in cluster:
-                    mention_index = gold_mentions[i].index(tuple(mention))
-                    assert mention_index >= 0
-                    gold_per_token[cluster_id, mention_index] = 1
-            # if gold_per_token.shape[1] == 0:
-            #     logger.info("size of gold_cluster {}, size of gold matrix {}".format(len(gold_clusters[i]), gold_per_token.shape))
-            gold_per_token_batch.append(gold_per_token)
+                mention_index = gold_mentions[i].index(tuple(mention))
+                assert mention_index >= 0
+                gold_per_token[cluster_id, mention_index] = 1
+        # if gold_per_token.shape[1] == 0:
+        #     logger.info("size of gold_cluster {}, size of gold matrix {}".format(len(gold_clusters[i]), gold_per_token.shape))
+        gold_per_token_batch.append(gold_per_token)
 
     return gold_per_token_batch
 
@@ -251,6 +253,11 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, thresh
             clusters.append(b_clusters)
 
     return clusters
+
+def extract_clusters(gold_clusters):
+    gold_clusters = [tuple(tuple(m) for m in gc if NULL_ID_FOR_COREF not in m) for gc in gold_clusters.tolist()]
+    gold_clusters = [cluster for cluster in gold_clusters if len(cluster) > 0]
+    return gold_clusters
 
 def calc_best_avg_f1(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, all_gold_mentions, is_max):
     best = [-1, -1, -1]
