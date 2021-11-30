@@ -380,6 +380,9 @@ class DETR(pl.LightningModule):
                 'prec_correct_gold_clusters': metrics[3],
                 'prec_correct_predict_clusters': metrics[4]} | losses_parts
 
+        for key, value in results.items():
+            self.log('eval_{}'.format(key), value)
+
         output_eval_file = os.path.join(self.args.output_dir, "eval_results.txt")
         with open(output_eval_file, "a") as writer:
 
