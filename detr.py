@@ -282,10 +282,6 @@ class DETR(pl.LightningModule):
         return {'loss': loss}
 
     def training_epoch_end(self, train_step_outputs):
-        self.recent_losses.clear()
-        self.recent_losses_parts.clear()
-        self.train_evaluator = CorefEvaluator()
-
         t_p, t_r, t_f1 = self.train_evaluator.get_prf()
         if self.args.local_rank in [-1, 0]:
             self.log('Train Precision', t_p)
@@ -293,6 +289,9 @@ class DETR(pl.LightningModule):
             self.log('Train F1', t_f1)
             logger.info(f'Train f1 {t_f1}, precision {t_p} , recall {t_r}')
 
+        self.recent_losses.clear()
+        self.recent_losses_parts.clear()
+        self.train_evaluator = CorefEvaluator()
         self.epoch += 1
 
     def validation_step(self, batch, batch_idx):
@@ -397,6 +396,7 @@ class DETR(pl.LightningModule):
 
         if self.args.save_epochs > 0 and (self.epoch + 1) % self.args.save_epochs == 0 or self.epoch + 1 == self.args.num_train_epochs:
             if f1 > self.best_f1:
+                self.log('eval_best_f1', f1)
                 prev_best_f1 = self.best_f1
                 prev_best_f1_epoch = self.best_f1_epoch
                 output_dir = os.path.join(self.args.output_dir, 'checkpoint-{}'.format(self.epoch))
@@ -409,8 +409,8 @@ class DETR(pl.LightningModule):
                     path_to_remove = os.path.join(self.args.output_dir, 'checkpoint-{}'.format(prev_best_f1_epoch))
                     shutil.rmtree(path_to_remove)
                     print(f'removed checkpoint with f1 {prev_best_f1} from {path_to_remove}')
+        
         self.eval_evaluator = CorefEvaluator()
-
         self.recent_losses = []
         self.recent_losses_parts = {}
         self.losses = []
