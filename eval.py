@@ -108,11 +108,8 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
     all_coref_logits_cpu = []
     all_mention_logits_cpu = []
     all_cluster_logits_cuda = []
-    all_input_ids = []
     all_coref_logits_cuda = []
     all_mention_logits_cuda = []
-    all_gold_clusters = []
-    all_gold_mentions = []
 
     count_clusters = 0
     count_mentions = 0
@@ -125,101 +122,3 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", t
     count_excess_mentions = 0
     count_excess_pronous = 0
 
-    input_ids_pads = torch.ones(1, args.max_segment_len, dtype=torch.int, device=args.device) * TOKENS_PAD
-    mask_pads = torch.zeros(1, args.max_segment_len, dtype=torch.int, device=args.device)
-    speaker_ids_pads = torch.ones(1, args.max_segment_len, args.max_num_speakers, dtype=torch.int, device=args.device) * SPEAKER_PAD
-
-    for batch in tqdm(eval_dataloader, desc="Evaluating"):
-        model.eval()
-
-        sum_text_len = [sum(tl) for tl in batch['text_len']]
-        gold_clusters = batch['clusters']
-
-
-        gold_mentions_list = []
-        # if len(gold_clusters) > 0: #TODO:
-        gold_mentions_list = [list(set([tuple(m) for c in gc for m in c])) for gc in gold_clusters]
-        if args.add_junk:
-            gold_mentions_list, gold_mentions_vector = create_junk_gold_mentions(gold_mentions_list, sum_text_len, args.device)
-        else:
-            gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=args.device) for gm in gold_mentions_list]
-        
-        gold_matrix = create_gold_matrix(args.device, sum_text_len, args.num_queries, gold_clusters, gold_mentions_list)
-
-        input_ids, input_mask, sum_text_len, gold_mentions, num_mentions, speaker_ids, genre = tensor_and_remove_empty(batch, gold_mentions_list, args, input_ids_pads, mask_pads, speaker_ids_pads)
-        if len(input_ids) == 0:
-            continue
-            
-        all_gold_mentions += gold_mentions_list
-        all_input_ids += input_ids    
-        all_gold_clusters += gold_clusters
-
-        with torch.no_grad():
-            # orig_input_dim = input_ids.shape
-            # input_ids = torch.reshape(input_ids, (1, -1))
-            # input_mask = torch.reshape(input_mask, (1, -1))
-            outputs = model(input_ids, sum_text_len, input_mask, gold_mentions, num_mentions)
-            cluster_logits, coref_logits, mention_logits = outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits']
-
-            loss, loss_parts = criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
-            losses.append(loss.mean().detach().cpu())
-            for key in loss_parts.keys():
-                if key in losses_parts.keys() and len(losses_parts[key]) > 0:
-                    losses_parts[key] += loss_parts[key]
-                else:
-                    losses_parts[key] = loss_parts[key]
-            batch_sizes.append(loss.shape[0]) 
-
-        if args.add_junk:
-            all_mention_logits_cuda += [ml.detach().clone() for ml in mention_logits]
-            all_mention_logits_cpu += [ml.detach().cpu() for ml in mention_logits]
-        all_cluster_logits_cuda += [cl.detach().clone() for cl in cluster_logits]
-        all_coref_logits_cuda += [cl.detach().clone() for cl in coref_logits]
-        all_cluster_logits_cpu += [cl.detach().cpu() for cl in cluster_logits]
-        all_coref_logits_cpu += [cl.detach().cpu() for cl in coref_logits]
-
-    eval_loss = np.average(losses, weights=batch_sizes)
-    losses_parts = {key:np.average(losses_parts[key]) for key in losses_parts.keys()}
-
-    p, r, f1, threshold, metrics = calc_best_avg_f1(all_cluster_logits_cpu, all_coref_logits_cpu, all_mention_logits_cpu, all_gold_clusters, all_gold_mentions,  args.is_max or args.detr)
-
-    print_predictions(all_cluster_logits_cuda, all_coref_logits_cuda, all_mention_logits_cuda, all_gold_clusters, all_gold_mentions, all_input_ids, threshold, args, eval_dataset.tokenizer)
-    prec_gold_to_one_pred, prec_pred_to_one_gold, avg_gold_split_without_perfect, avg_gold_split_with_perfect, \
-        avg_pred_split_without_perfect, avg_pred_split_with_perfect, prec_biggest_gold_in_pred_without_perfect, \
-            prec_biggest_gold_in_pred_with_perfect, prec_biggest_pred_in_gold_without_perfect, prec_biggest_pred_in_gold_with_perfect = \
-                error_analysis(all_cluster_logits_cuda, all_coref_logits_cuda, all_mention_logits_cuda, all_gold_clusters, all_gold_mentions, all_input_ids, threshold, args.is_max or args.detr)
-
-    results = {'loss': eval_loss,
-               'avg_f1': f1,
-               'threshold': threshold,
-               'precision': p,
-               'recall': r,  
-               'prec_gold_to_one_pred': prec_gold_to_one_pred,  
-               'prec_pred_to_one_gold': prec_pred_to_one_gold,  
-               'avg_gold_split_without_perfect': avg_gold_split_without_perfect,  
-               'avg_gold_split_with_perfect': avg_gold_split_with_perfect,  
-               'avg_pred_split_without_perfect': avg_pred_split_without_perfect,  
-               'avg_pred_split_with_perfect': avg_pred_split_with_perfect,  
-               'prec_biggest_gold_in_pred_without_perfect': prec_biggest_gold_in_pred_without_perfect, 
-               'prec_biggest_gold_in_pred_with_perfect': prec_biggest_gold_in_pred_with_perfect,  
-               'prec_biggest_pred_in_gold_without_perfect': prec_biggest_pred_in_gold_without_perfect,  
-               'prec_biggest_pred_in_gold_with_perfect': prec_biggest_pred_in_gold_with_perfect,  
-               'prec_correct_mentions': metrics[0],
-               'prec_gold': metrics[1],
-               'prec_junk': metrics[2],
-               'prec_correct_gold_clusters': metrics[3],
-               'prec_correct_predict_clusters': metrics[4]} | losses_parts
-
-    output_eval_file = os.path.join(args.output_dir, "eval_results.txt")
-    with open(output_eval_file, "a") as writer:
-
-        def out(s):
-            logger.info(str(s))
-            writer.write(str(s) + '\n')
-
-        out("***** Eval results {} *****".format(prefix))
-
-        for key in sorted(results.keys()):
-            out("eval %s = %s" % (key, str(results[key])))
-
-    return results
