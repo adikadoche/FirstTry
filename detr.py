@@ -121,8 +121,8 @@ class DETR(pl.LightningModule):
         self.input_ids_pads = torch.ones(1, self.args.max_segment_len, dtype=torch.int, device=self.args.device) * TOKENS_PAD
         self.speaker_ids_pads = torch.ones(1, self.args.max_segment_len, self.args.max_num_speakers, dtype=torch.int, device=self.args.device) * SPEAKER_PAD
         self.mask_pads = torch.zeros(1, self.args.max_segment_len, dtype=torch.int, device=self.args.device)
-        self.recent_losses = []
-        self.recent_losses_parts = {}
+        self.recent_train_losses = []
+        self.recent_train_losses_parts = {}
         self.losses = []
         self.losses_parts = {}
         self.batch_sizes = []
@@ -139,6 +139,7 @@ class DETR(pl.LightningModule):
         self.best_f1 = 0
         self.best_f1_epoch = -1
         self.epoch = 0
+        self.step_num = 0
         self.tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name, cache_dir=args.cache_dir)
 
     def forward(self, input_ids, sum_text_len, mask, gold_mentions, num_mentions):
@@ -263,34 +264,36 @@ class DETR(pl.LightningModule):
         self.train_evaluator.update(predicted_clusters, gold_clusters)
         loss, loss_parts = self.criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
         
-        self.recent_losses.append(loss.item())
+        self.recent_train_losses.append(loss.item())
         for key in loss_parts.keys():
-            if key in self.recent_losses_parts.keys() and len(self.recent_losses_parts[key]) > 0:
-                self.recent_losses_parts[key] += loss_parts[key]
+            if key in self.recent_train_losses_parts.keys() and len(self.recent_train_losses_parts[key]) > 0:
+                self.recent_train_losses_parts[key] += loss_parts[key]
             else:
-                self.recent_losses_parts[key] = loss_parts[key]
+                self.recent_train_losses_parts[key] = loss_parts[key]
 
         if self.args.local_rank in [-1, 0] and self.args.logging_steps > 0 and batch_idx % self.args.logging_steps == 0:
-            self.log('lr', self.optimizer.param_groups[0]['lr'])
-            self.log('lr_bert', self.optimizer.param_groups[1]['lr'])
-            self.log('loss', np.mean(self.recent_losses))
-            for key in self.recent_losses_parts.keys():
-                self.log(key, np.mean(self.recent_losses_parts[key]))
-            self.recent_losses.clear()
-            self.recent_losses_parts.clear()
+            self.trainer.logger.log_metrics({'lr': self.optimizer.param_groups[0]['lr']}, self.step_num)
+            self.trainer.logger.log_metrics({'lr_bert': self.optimizer.param_groups[1]['lr']}, self.step_num)
+            self.trainer.logger.log_metrics({'loss': np.mean(self.recent_train_losses)}, self.step_num)
+            for key in self.recent_train_losses_parts.keys():
+                self.trainer.logger.log_metrics({key: np.mean(self.recent_train_losses_parts[key])}, self.step_num)
+            self.recent_train_losses.clear()
+            self.recent_train_losses_parts.clear()
+
+        self.step_num += 1
 
         return {'loss': loss}
 
     def training_epoch_end(self, train_step_outputs):
         t_p, t_r, t_f1 = self.train_evaluator.get_prf()
         if self.args.local_rank in [-1, 0]:
-            self.log('Train Precision', t_p)
-            self.log('Train Recall', t_r)
-            self.log('Train F1', t_f1)
+            self.trainer.logger.log_metrics({'Train Precision': t_p}, self.step_num)
+            self.trainer.logger.log_metrics({'Train Recall': t_r}, self.step_num)
+            self.trainer.logger.log_metrics({'Train F1': t_f1}, self.step_num)
             logger.info(f'Train f1 {t_f1}, precision {t_p} , recall {t_r}')
 
-        self.recent_losses.clear()
-        self.recent_losses_parts.clear()
+        self.recent_train_losses.clear()
+        self.recent_train_losses_parts.clear()
         self.train_evaluator = CorefEvaluator()
         self.epoch += 1
 
@@ -380,7 +383,7 @@ class DETR(pl.LightningModule):
                 'prec_correct_predict_clusters': metrics[4]} | losses_parts
 
         for key, value in results.items():
-            self.log('eval_{}'.format(key), value)
+            self.trainer.logger.log_metrics({'eval_{}'.format(key): value}, self.step_num)
 
         output_eval_file = os.path.join(self.args.output_dir, "eval_results.txt")
         with open(output_eval_file, "a") as writer:
@@ -396,7 +399,7 @@ class DETR(pl.LightningModule):
 
         if self.args.save_epochs > 0 and (self.epoch + 1) % self.args.save_epochs == 0 or self.epoch + 1 == self.args.num_train_epochs:
             if f1 > self.best_f1:
-                self.log('eval_best_f1', f1)
+                self.trainer.logger.log_metrics({'eval_best_f1': f1}, self.step_num)
                 prev_best_f1 = self.best_f1
                 prev_best_f1_epoch = self.best_f1_epoch
                 output_dir = os.path.join(self.args.output_dir, 'checkpoint-{}'.format(self.epoch))
@@ -411,8 +414,8 @@ class DETR(pl.LightningModule):
                     print(f'removed checkpoint with f1 {prev_best_f1} from {path_to_remove}')
         
         self.eval_evaluator = CorefEvaluator()
-        self.recent_losses = []
-        self.recent_losses_parts = {}
+        self.recent_train_losses = []
+        self.recent_train_losses_parts = {}
         self.losses = []
         self.losses_parts = {}
         self.batch_sizes = []
