@@ -196,14 +196,6 @@ class TransformerSequentialDecoder(nn.Module):
 
     def create_new_mask_mask_mentions(self, coref_logits, memory_mask):
         factor = 0.5
-        else_avg = []
-        for i in range(coref_logits.shape[1]):
-            no_query_i = torch.eye(coref_logits.shape[1], device=coref_logits.device)
-            no_query_i = torch.index_select(no_query_i, 1, torch.cat([torch.arange(i, device=coref_logits.device), torch.arange(i+1,no_query_i.shape[0], device=coref_logits.device)]))
-            coref_no_i = torch.bmm(coref_logits.transpose(1,2), no_query_i.unsqueeze(0)).transpose(1,2)
-            coref_no_i = torch.sum(torch.softmax(coref_logits, 1) * coref_logits, 1)
-            else_avg.append(coref_no_i)
-        # memory_mask += torch.log(factor*torch.softmax(coref_logits, 1).squeeze() / torch.cat(else_avg))
         memory_mask += torch.log(coref_logits[0])
         return memory_mask
 
