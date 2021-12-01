@@ -126,6 +126,8 @@ def parse_args():
                         help="L1 box coefficient in the matching cost")
     parser.add_argument('--softmax', action='store_true',
                         help="L1 box coefficient in the matching cost")
+    parser.add_argument('--sequential', action='store_true',
+                        help="L1 box coefficient in the matching cost")
     parser.add_argument('--cluster_block', action='store_true',
                         help="L1 box coefficient in the matching cost")
     parser.add_argument('--b3_loss', action='store_true',
