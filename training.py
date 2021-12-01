@@ -87,7 +87,7 @@ def train(args, model, wandb):
 
     logger.info("Training/evaluation parameters %s", args)
     data_model = DETRDataModule(args)
-    trainer = pl.Trainer(max_epochs=args.num_train_epochs, gpus=args.n_gpu, amp_backend='apex',logger= wandb)
+    trainer = pl.Trainer(max_epochs=args.num_train_epochs, gpus=args.n_gpu, amp_backend='apex', logger= wandb, accumulate_grad_batches=args.fake_batch)
     
     if args.resume_from:  #TODO
         pass

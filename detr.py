@@ -30,7 +30,7 @@ from utils import calc_predicted_clusters, create_gold_matrix, tensor_and_remove
 from transformers import AutoConfig, CONFIG_MAPPING
 from misc import NestedTensor, accuracy
 from consts import GENRES
-from eval import print_predictions, error_analysis, calc_best_avg_f1
+from eval import print_predictions, error_analysis
 from data import get_data_objects
 
 logger = logging.getLogger(__name__)

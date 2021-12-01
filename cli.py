@@ -136,15 +136,8 @@ def parse_args():
                         help="L1 box coefficient in the matching cost")
     parser.add_argument('--eos_coef', default=0.1, type=float,
                         help="Relative classification weight of the no-object class")
-
-    parser.add_argument('--is_max', action='store_true',
-                        help="L1 box coefficient in the matching cost")
-    parser.add_argument('--softmax', action='store_true',
-                        help="L1 box coefficient in the matching cost")
-    parser.add_argument('--cluster_block', action='store_true',
-                        help="L1 box coefficient in the matching cost")
-    parser.add_argument('--reduction', default='mean', type=str,
-                        help="L1 box coefficient in the matching cost")
+    parser.add_argument('--fake_batch', default=1, type=float,
+                        help="Relative classification weight of the no-object class")
 
     parser.add_argument('--max_training_sentences', default=3, type=int)
     parser.add_argument('--max_num_speakers', default=20, type=int)
