@@ -66,7 +66,6 @@ def parse_args():
     parser.add_argument("--do_profile", action="store_true", help="Whether to run profiling.")
     parser.add_argument("--is_debug", action="store_true", help="Whether to run profiling.")
     parser.add_argument("--verbose", action="store_true", help="Whether to print debug prints.")
-    parser.add_argument("--speaker", type=str, choices=['before', 'after', 'text'], default='after', help="Whether to add speaker before/after embedding or as text.")
     parser.add_argument("--do_train", action="store_true", help="Whether to run training.")
     parser.add_argument("--add_junk", action="store_true", help="whether to use junk spans")
     parser.add_argument("--eval", type=str, choices=['no', 'specific', 'all', 'vanilla'], default='no')
@@ -123,6 +122,16 @@ def parse_args():
                         help="L1 box coefficient in the matching cost")
     parser.add_argument('--max_ind_example', default=-1, type=float,
                         help="L1 box coefficient in the matching cost")
+    parser.add_argument('--is_max', action='store_true',
+                        help="L1 box coefficient in the matching cost")
+    parser.add_argument('--softmax', action='store_true',
+                        help="L1 box coefficient in the matching cost")
+    parser.add_argument('--cluster_block', action='store_true',
+                        help="L1 box coefficient in the matching cost")
+    parser.add_argument('--b3_loss', action='store_true',
+                        help="L1 box coefficient in the matching cost")
+    parser.add_argument('--reduction', default='mean', type=str,
+                        help="L1 box coefficient in the matching cost")
     parser.add_argument('--eos_coef', default=0.1, type=float,
                         help="Relative classification weight of the no-object class")
 
@@ -173,10 +182,6 @@ def parse_args():
                     help="Max gradient norm.")
     parser.add_argument('--lr_drop_interval', default="step", type=str, choices=['epoch, step'])
 
-
-    args = parser.parse_args()
-    return args
-
     # parser.add_argument(
     #     "--train_file_cache",
     #     default=None,
@@ -191,6 +196,10 @@ def parse_args():
     #     required=True,
     #     help="The output directory where the datasets will be written and read from.",
     # )
+
+    args = parser.parse_args()
+    return args
+
     # parser.add_argument("--nonfreeze_params", default=None, type=str,
     #                     help="named parameters to update while training (separated by ,). The rest will kept frozen. If None or empty - train all")
     # parser.add_argument('--lr_drop', default=200, type=int) #TODO:?

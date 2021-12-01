@@ -82,12 +82,11 @@ class OntonotesDataset(Dataset):
         word_idx_to_start_token_idx = dict()
         for i in range(len(sentence)):
             word = sentence[i]
-            if self.args.speaker == 'text' or i > 0: ##
-                word = ' ' + word
+            word = ' ' + word
             word_speaker = speaker[i]
             token_ids = self.tokenizer.tokenize(word)
             speaker_prefix_token_num = 0
-            if self.args.speaker == 'text' and word_speaker != last_speaker_per_token:
+            if word_speaker != last_speaker_per_token:
                 speaker_prefix = [SPEAKER_START_TOKEN] + self.tokenizer.tokenize(" " + word_speaker, add_special_tokens=False) + [SPEAKER_END_TOKEN]
                 speaker_prefix_token_num = len(speaker_prefix)
                 token_ids = speaker_prefix + token_ids
