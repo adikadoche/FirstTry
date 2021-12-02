@@ -51,6 +51,7 @@ class DETRDataModule(pl.LightningDataModule):
             self.args.num_train_epochs = self.args.max_steps // (self.len_train_loader // self.args.gradient_accumulation_steps) + 1
         else:
             self.args.t_total = self.len_train_loader // self.args.gradient_accumulation_steps * self.args.num_train_epochs
+            self.args.warmup_steps = self.args.warmup_steps // self.args.gradient_accumulation_steps
 
         if self.args.train_batch_size > 1:
             self.args.eval_steps = -1 if self.args.eval_steps == -1 else max(1, int(round(self.args.eval_steps / self.args.train_batch_size)))
