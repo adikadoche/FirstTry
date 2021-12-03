@@ -4,6 +4,13 @@
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
+        {
+            "name": "toy_data",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/toy_data.py",
+            "console": "integratedTerminal"
+        },
         // {
         //     "name": "Python: Current File",
         //     "type": "python",
@@ -66,7 +73,7 @@
                 "1",
                 // "--amp",
                 "--use_gold_mentions",
-                // "--no_cuda",
+                "--no_cuda",
                 "--cluster_block",
                 "--softmax",
                 // "--is_max",
