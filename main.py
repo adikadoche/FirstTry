@@ -42,9 +42,12 @@ def main():
 
     # Setup CUDA, GPU & distributed training
     if args.is_debug:
-        args.n_gpu = 1 
-        os.environ["CUDA_VISIBLE_DEVICES"] = "3"
-        os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+        if args.no_cuda:
+            args.n_gpu = 0
+        else:
+            args.n_gpu = 1 
+            os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+            os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
     if args.local_rank == -1 or args.no_cuda:
         device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
         args.n_gpu = torch.cuda.device_count() if not args.no_cuda else 0
@@ -55,9 +58,12 @@ def main():
         args.n_gpu = 1
     args.device = device
     if args.is_debug:
-        args.n_gpu = 1 
-        os.environ["CUDA_VISIBLE_DEVICES"] = "3"
-        os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+        if args.no_cuda:
+            args.n_gpu = 0
+        else:
+            args.n_gpu = 1 
+            os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+            os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
     # Setup logging
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',

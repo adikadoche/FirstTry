@@ -388,7 +388,7 @@ class DETR(pl.LightningModule):
             for key in sorted(results.keys()):
                 out("eval %s = %s" % (key, str(results[key])))
 
-        if self.args.save_epochs > 0 and (self.epoch + 1) % self.args.save_epochs == 0 or self.epoch + 1 == self.args.num_train_epochs:
+        if self.step_num > 0 and self.args.save_epochs > 0 and (self.epoch + 1) % self.args.save_epochs == 0 or self.epoch + 1 == self.args.num_train_epochs:
             if f1 > self.best_f1:
                 self.trainer.logger.log_metrics({'eval_best_f1': f1}, self.step_num)
                 prev_best_f1 = self.best_f1
