@@ -26,6 +26,11 @@ def parse_args():
         type=str,
         help="run name for w&b",
     )
+    parser.add_argument(
+        "--input_type",
+        default="ontonotes",
+        type=str,
+    )
     parser.add_argument("--tokenizer_name",
                         default="allenai/longformer-base-4096",
                         type=str,

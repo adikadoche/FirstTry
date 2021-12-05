@@ -3,8 +3,11 @@ import random
 import string
 import os
 import json
+import torch
+import numpy as np
 
 from transformers import AutoTokenizer
+from torch.utils.data import Dataset, DataLoader
 
 FUNCTIONS_NAMES = ['letters', 'structural', 'sequences']
 LETTERS = string.ascii_lowercase
@@ -17,7 +20,7 @@ def create_letters_dataset(num_of_texts = 3000):
     clusters = []
     for _ in range(num_of_texts):
         text_len = random.randint(40, 4000)
-        bkgd_text_len = int(random.uniform(0.5, 1) * text_len)
+        bkgd_text_len = int(random.uniform(0.6, 1) * text_len)
         sequence_text_len = text_len - bkgd_text_len
         num_clusters = random.randint(1, len(LETTERS)-5)
         cur_letters = random.sample(LETTERS_LIST, num_clusters)
@@ -44,7 +47,7 @@ def create_letters_dataset(num_of_texts = 3000):
                 if letter not in letters_indices.keys():
                     letters_indices[letter] = len(letters_indices)
                     text_cluster.append([])
-                text_cluster[letters_indices[letter]].append([i, i])
+                text_cluster[letters_indices[letter]].append([i+1, i+1])
         
         clusters.append(text_cluster)
 
@@ -62,10 +65,10 @@ def create_sequences_dataset(num_of_texts = 3000):
     for t in range(num_of_texts):
         clusters.append([])
         text_len = random.randint(40, 4000)
-        bkgd_text_len = int(random.uniform(0.5, 1) * text_len)
+        bkgd_text_len = int(random.uniform(0.6, 1) * text_len)
         sequence_text_len = text_len - bkgd_text_len
-        num_clusters = random.randint(1, min(int(text_len/4), len(SEQUENCES)))
-        cur_sequenceds = random.sample(SEQUENCES, num_clusters)
+        num_clusters = random.choices(list(range(1, min(int(text_len/4), len(SEQUENCES)))), k=1, weights=reversed(list(range(1, min(int(text_len/4), len(SEQUENCES))))))
+        cur_sequenceds = random.sample(SEQUENCES, num_clusters[0])
         sequence_distribution = [random.uniform(0, 1) for _ in range(len(cur_sequenceds))]
         sequence_text_len = int(sequence_text_len / (sum([len(cur_sequenceds[i]) * sequence_distribution[i] for i in range(len(cur_sequenceds))]) / sum(sequence_distribution)))
         line_sequence_list = random.choices(cur_sequenceds, weights=sequence_distribution, k=sequence_text_len)
@@ -84,7 +87,7 @@ def create_sequences_dataset(num_of_texts = 3000):
             sequence_cluster = []
             for j in range(len(line_list) - len(s) + 1):
                 if line_list[j:j+len(s)] == s:
-                    sequence_cluster.append([j, j+len(s)-1])
+                    sequence_cluster.append([j+1, j+len(s)-1+1])
             if len(sequence_cluster) > 0:
                 clusters[t].append(sequence_cluster)
 
@@ -122,10 +125,10 @@ def create_structural_dataset(num_of_texts = 3000):
     for t in range(num_of_texts):
         clusters.append([])
         text_len = random.randint(40, 4000)
-        bkgd_text_len = int(random.uniform(0.5, 1) * text_len)
+        bkgd_text_len = int(random.uniform(0.6, 1) * text_len)
         sequence_text_len = text_len - bkgd_text_len
-        num_clusters = random.randint(1, min(int(text_len/4), len(SEQUENCES)))
-        cur_sequenceds = random.sample(SEQUENCES, num_clusters)
+        num_clusters = random.choices(list(range(1, min(int(text_len/4), len(SEQUENCES)))), k=1, weights=reversed(list(range(1, min(int(text_len/4), len(SEQUENCES))))))
+        cur_sequenceds = random.sample(SEQUENCES, num_clusters[0])
         sequence_distribution = [random.uniform(0, 1) for _ in range(len(cur_sequenceds))]
         sequence_text_len = int(sequence_text_len / (sum([cur_sequenceds[i].total_len * sequence_distribution[i] for i in range(len(cur_sequenceds))]) / sum(sequence_distribution)))
         line_sequence_list = random.choices(cur_sequenceds, weights=sequence_distribution, k=sequence_text_len)
@@ -153,7 +156,7 @@ def create_structural_dataset(num_of_texts = 3000):
             for i in range(len(line_list) - s.total_len + 1):
                 if line_list[i:i+len(s.left.sequence)] == s.left.sequence and \
                     line_list[i+len(s.left.sequence)+s.left.index_delta+1+s.right.index_delta:i+s.total_len] == s.right.sequence:
-                    s_cluster.append([i+len(s.left.sequence)+s.left.index_delta, i+len(s.left.sequence)+s.left.index_delta])
+                    s_cluster.append([i+len(s.left.sequence)+s.left.index_delta+1, i+len(s.left.sequence)+s.left.index_delta+1])
             if len(s_cluster) > 0:
                 clusters[-1].append(s_cluster)
     return text, clusters
@@ -163,9 +166,9 @@ def prepare_batches(text, clusters):
     for i in range(len(text)):
         batch = dict()
         batch['clusters'] = clusters[i]
-        batch['input_ids'] = TOKENIZER.encode(text[i])
-        batch['text_len'] = len(batch['input_ids'])
-        batch['input_mask'] = [1] * batch['text_len']
+        batch['input_ids'] = [TOKENIZER.encode(text[i])]
+        batch['text_len'] = [len(batch['input_ids'][0])]
+        batch['input_mask'] = [[1] * batch['text_len'][0]]
 
         batches.append(batch)
     return batches
@@ -185,8 +188,8 @@ def write_data_file(path, batches):
 FUNCS = {FUNCTIONS_NAMES[0]: create_letters_dataset, FUNCTIONS_NAMES[1]: create_structural_dataset, FUNCTIONS_NAMES[2]: create_sequences_dataset}
 NUM_OF_TEXTS = 20
 
-def get_batches(type, num_of_texts=NUM_OF_TEXTS):
-    path = TOY_DATA_PATH + f'{type}_{num_of_texts}.txt'
+def get_batches(type, is_training, num_of_texts=NUM_OF_TEXTS):
+    path = TOY_DATA_PATH + f'{type}_{num_of_texts}_{is_training}.txt'
     if os.path.isfile(path):
         batches = read_data_file(path)
     else:
@@ -194,4 +197,36 @@ def get_batches(type, num_of_texts=NUM_OF_TEXTS):
         write_data_file(path, batches)
     return batches
 
-get_batches(FUNCTIONS_NAMES[0], 100)
+# get_batches(FUNCTIONS_NAMES[0], 100)
+
+class ToyDataset(Dataset):
+
+    def __init__(self, type, is_training, num_of_texts=NUM_OF_TEXTS) -> None:
+        super().__init__()
+        self.examples = get_batches(type, is_training, num_of_texts)
+
+    def __len__(self):
+        return len(self.examples)
+
+    def __getitem__(self, index):
+        example = self.examples[index]
+        example['input_ids'] = np.array(example['input_ids'])
+        return example
+
+def collate_fn(batch):
+    if batch[0] == []:
+        return []
+    batch_concat = {}
+    for key in batch[0].keys():
+        batch_concat[key] = [0] * len(batch)
+        for i in range(len(batch)):
+            batch_concat[key][i] = batch[i][key]
+    return batch_concat
+
+def get_toy_data_objects(type, is_training, args, num_of_texts=NUM_OF_TEXTS):
+    dataset = ToyDataset(type, is_training, num_of_texts)
+    loader = DataLoader(dataset, batch_size=1,
+                             pin_memory=not args.no_cuda, num_workers=args.num_workers, collate_fn=collate_fn,
+                             worker_init_fn=lambda worker_id: np.random.seed(torch.initial_seed() % 2**32))
+
+    return dataset, loader

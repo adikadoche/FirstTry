@@ -47,6 +47,8 @@
                 // "--resume_from", "/home/gamir/adiz/Code/runs/s2e-coref/output_dir/11_23_2021_23_31_11/checkpoint-5550",
                 "--eval",
                 "all",
+                "--input_type",
+                "structural_400",
                 // "--add_junk",
                 // "--add_profile",
                 "--verbose",

@@ -13,6 +13,7 @@ import pytorch_lightning as pl
 from metrics import CorefEvaluator
 import shutil
 from transformers import AutoTokenizer
+from toy_data import get_toy_data_objects
 
 from optimization import WarmupLinearSchedule, WarmupExponentialSchedule
 import numpy as np
@@ -61,12 +62,21 @@ class DETRDataModule(pl.LightningDataModule):
 
     def val_dataloader(self):
         if self.eval_loader is None:
-            self.eval_dataset, eval_sampler, self.eval_loader, self.args.eval_batch_size = get_data_objects(self.args, self.args.predict_file, False)
+            if self.args.input_type == 'ontonotes':
+                self.eval_dataset, eval_sampler, self.eval_loader, self.args.eval_batch_size = get_data_objects(self.args, self.args.predict_file, False)
+            else:
+                self.args.eval_batch_size = 1
+                self.eval_dataset, self.eval_loader = get_toy_data_objects(self.args.input_type.split('_')[0], False, self.args, int(0.3*int(self.args.input_type.split('_')[1])))
+
         return self.eval_loader
 
     def train_dataloader(self):
         if self.train_loader is None:
-            train_dataset, train_sampler, self.train_loader, self.args.train_batch_size = get_data_objects(self.args, self.args.train_file, True)
+            if self.args.input_type == 'ontonotes':
+                train_dataset, train_sampler, self.train_loader, self.args.train_batch_size = get_data_objects(self.args, self.args.train_file, True)
+            else:
+                self.args.train_batch_size = 1
+                train_dataset, self.train_loader = get_toy_data_objects(self.args.input_type.split('_')[0], True, self.args, int(0.7*int(self.args.input_type.split('_')[1])))
         return self.train_loader
 
 
@@ -135,6 +145,7 @@ class DETR(pl.LightningModule):
         self.all_mention_logits_cuda = []
         self.all_gold_clusters = []
         self.all_gold_mentions = []
+        self.query_cluster_confusion_matrix = np.zeros([args.num_queries, args.num_queries], dtype=int)
 
         self.best_f1 = 0
         self.best_f1_epoch = -1
@@ -306,6 +317,10 @@ class DETR(pl.LightningModule):
 
         outputs = self(input_ids, input_mask, gold_mentions, num_mentions)
         cluster_logits, coref_logits, mention_logits = outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits']
+        targets = {'clusters':gold_matrix, 'mentions':gold_mentions_vector}
+        matched_predicted_cluster_id_real, matched_gold_cluster_id_real, _, _ = self.criterion.matcher(outputs, targets)
+        for i, j in zip(matched_predicted_cluster_id_real[0], matched_gold_cluster_id_real[0]):
+            self.query_cluster_confusion_matrix[i][j] += 1
 
         loss, loss_parts = self.criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
         self.losses.append(loss.mean().detach().cpu())
@@ -350,6 +365,20 @@ class DETR(pl.LightningModule):
             avg_pred_split_without_perfect, avg_pred_split_with_perfect, prec_biggest_gold_in_pred_without_perfect, \
                 prec_biggest_gold_in_pred_with_perfect, prec_biggest_pred_in_gold_without_perfect, prec_biggest_pred_in_gold_with_perfect = \
                     error_analysis(self.all_cluster_logits_cuda, self.all_coref_logits_cuda, self.all_mention_logits_cuda, self.all_gold_clusters, self.all_gold_mentions, self.all_input_ids, self.args.threshold, self.args.is_max)
+    
+        non_zero_rows = np.where(np.sum(self.query_cluster_confusion_matrix, 1) > 0)[0]
+        non_zero_cols = np.where(np.sum(self.query_cluster_confusion_matrix, 0) > 0)[0]
+        print('rows - predict, cols - gt')
+        line_to_print = '   '
+        for i in non_zero_cols:
+            line_to_print += str(i) + ' ' + ('' if i>=10 else ' ')
+        print(line_to_print)
+        for i in non_zero_rows:
+            line_to_print = str(i) + ' ' + ('' if i>=10 else ' ')
+            for j in non_zero_cols:
+                line_to_print += str(self.query_cluster_confusion_matrix[i][j]) + ' ' + ('' if self.query_cluster_confusion_matrix[i][j]>=10 else ' ')
+            print(line_to_print)
+    
 
         results = {'loss': eval_loss,
                 'avg_f1': f1,
@@ -387,9 +416,8 @@ class DETR(pl.LightningModule):
             for key in sorted(results.keys()):
                 out("eval %s = %s" % (key, str(results[key])))
 
-        if self.args.save_epochs > 0 and (self.epoch + 1) % self.args.save_epochs == 0 or self.epoch + 1 == self.args.num_train_epochs:
+        if self.step_num > 0 and self.args.save_epochs > 0 and (self.epoch + 1) % self.args.save_epochs == 0 or self.epoch + 1 == self.args.num_train_epochs:
             if f1 > self.best_f1:
-                self.trainer.logger.log_metrics({'eval_best_f1': f1}, self.step_num)
                 prev_best_f1 = self.best_f1
                 prev_best_f1_epoch = self.best_f1_epoch
                 output_dir = os.path.join(self.args.output_dir, 'checkpoint-{}'.format(self.epoch))
@@ -402,6 +430,7 @@ class DETR(pl.LightningModule):
                     path_to_remove = os.path.join(self.args.output_dir, 'checkpoint-{}'.format(prev_best_f1_epoch))
                     shutil.rmtree(path_to_remove)
                     print(f'removed checkpoint with f1 {prev_best_f1} from {path_to_remove}')
+            self.trainer.logger.log_metrics({'eval_best_f1': self.best_f1}, self.step_num)
         
         self.eval_evaluator = CorefEvaluator()
         self.recent_train_losses = []
@@ -418,7 +447,7 @@ class DETR(pl.LightningModule):
         self.all_mention_logits_cuda = []
         self.all_gold_clusters = []
         self.all_gold_mentions = []
-
+        self.query_cluster_confusion_matrix = np.zeros([self.args.num_queries, self.args.num_queries], dtype=int)
 
     def make_batch_same_len(self, input_ids, mask, sum_text_len):
         input_ids_pads = torch.ones(1, self.args.max_segment_len, dtype=torch.int, device=input_ids[0].device) * TOKENS_PAD
@@ -666,7 +695,7 @@ class MatchingLoss(nn.Module):
 
             coref_logits = torch.index_select(coref_logits, 1, torch.arange(0, targets_clusters[i].shape[1]).to(coref_logits.device))
 
-            cost_coref = 0
+            cost_coref = torch.tensor(0)
             if matched_predicted_cluster_id_real[i] is not False:
                 if self.args.cluster_block:
                     permuted_coref_logits = coref_logits[matched_predicted_cluster_id_real[i]]
