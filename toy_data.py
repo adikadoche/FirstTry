@@ -1,38 +1,49 @@
 from collections import namedtuple
 import random
-import math
 import string
 
 LETTERS = string.ascii_lowercase
 LETTERS_LIST = list(LETTERS)
 
 def create_letters_dataset(num_of_texts = 3000):
-    #להוסיף סתם טקסט
     text = ''
     clusters = []
     for _ in range(num_of_texts):
         text_len = random.randint(40, 4000)
-        num_clusters = random.randint(1, len(LETTERS))
+        bkgd_text_len = int(random.uniform(0.5, 1) * text_len)
+        sequence_text_len = text_len - bkgd_text_len
+        num_clusters = random.randint(1, len(LETTERS)-5)
         cur_letters = random.sample(LETTERS_LIST, num_clusters)
-        distribution = [random.uniform(0, 1) for _ in range(num_clusters)]
-        line_list = random.choices(cur_letters, weights=distribution, k=text_len)
+        bgkd_letters = [l for l in LETTERS if l not in cur_letters]
+        sequence_distribution = [random.uniform(0, 1) for _ in range(num_clusters)]
+        line_sequence_list = random.choices(cur_letters, weights=sequence_distribution, k=sequence_text_len)
+        sequence_indices = random.sample(list(range(bkgd_text_len)), sequence_text_len)
+        bgkd_distribution = [random.uniform(0, 1) for _ in range(len(bgkd_letters))]
+        line_bkgd_list = random.choices(bgkd_letters, weights=bgkd_distribution, k=bkgd_text_len)
+
+        sorted_pairs = [(x, y) for x, y in sorted(zip(line_sequence_list, sequence_indices), key=lambda pair: pair[1])]
+
+        line_list = line_bkgd_list
+
+        for letter, index in reversed(sorted_pairs):
+            line_list.insert(index, letter)        
 
         text += ' '.join(line_list) +'\n'
 
         letters_indices = {}
         text_cluster = []
         for i, letter in enumerate(line_list):
-            if letter not in letters_indices.keys():
-                letters_indices[letter] = len(letters_indices)
-                text_cluster.append([])
-            text_cluster[letters_indices[letter]].append([i, i])
+            if letter in cur_letters:
+                if letter not in letters_indices.keys():
+                    letters_indices[letter] = len(letters_indices)
+                    text_cluster.append([])
+                text_cluster[letters_indices[letter]].append([i, i])
         
         clusters.append(text_cluster)
 
     return text, clusters
 
 def create_sequences_dataset(num_of_texts = 3000):
-    #להוסיף סתם טקסט
     SEQUENCES = []
     for _ in range(70):
         seq_len = random.randint(1, 7)
@@ -44,12 +55,23 @@ def create_sequences_dataset(num_of_texts = 3000):
     for t in range(num_of_texts):
         clusters.append([])
         text_len = random.randint(40, 4000)
+        bkgd_text_len = int(random.uniform(0.5, 1) * text_len)
+        sequence_text_len = text_len - bkgd_text_len
         num_clusters = random.randint(1, min(int(text_len/4), len(SEQUENCES)))
         cur_sequenceds = random.sample(SEQUENCES, num_clusters)
-        text_len = int(text_len / (sum([len(c) for c in cur_sequenceds]) / num_clusters))
         sequence_distribution = [random.uniform(0, 1) for _ in range(len(cur_sequenceds))]
-        line_list = random.choices(cur_sequenceds, weights=sequence_distribution, k=text_len)
-        line_list = [letter for seq in line_list for letter in seq]
+        sequence_text_len = int(sequence_text_len / (sum([len(cur_sequenceds[i]) * sequence_distribution[i] for i in range(len(cur_sequenceds))]) / sum(sequence_distribution)))
+        line_sequence_list = random.choices(cur_sequenceds, weights=sequence_distribution, k=sequence_text_len)
+        sequence_indices = random.sample(list(range(bkgd_text_len)), sequence_text_len)
+        bgkd_distribution = [random.uniform(0, 1) for _ in range(len(LETTERS))]
+        line_bkgd_list = random.choices(LETTERS, weights=bgkd_distribution, k=bkgd_text_len)
+
+        sorted_pairs = [(x, y) for x, y in sorted(zip(line_sequence_list, sequence_indices), key=lambda pair: pair[1])]
+
+        line_list = line_bkgd_list
+
+        for sequence, index in reversed(sorted_pairs):
+            line_list[index:index] = sequence
 
         for s in cur_sequenceds:
             sequence_cluster = []
@@ -64,10 +86,6 @@ def create_sequences_dataset(num_of_texts = 3000):
     return text, clusters
 
 def create_structural_dataset(num_of_texts = 3000):
-    #להחליט האם החוק הוא רק מימין, רק משמאל, גם וגם.
-    #להחליט מה הרווח מימין ומשמאל
-    #להחליט כמה אותיות הרצפים מימין/משמאל
-    #להחליט מה האותיות של הרצפים מימין/משמאל
     OneSideSequencePattern = namedtuple("OneSideSequencePattern", ["index_delta", "sequence"])
     SequencePattern = namedtuple("SequencePattern", ["left", "right", "total_len"])
     SEQUENCES = []
@@ -97,7 +115,6 @@ def create_structural_dataset(num_of_texts = 3000):
     for t in range(num_of_texts):
         clusters.append([])
         text_len = random.randint(40, 4000)
-        print(text_len)
         bkgd_text_len = int(random.uniform(0.5, 1) * text_len)
         sequence_text_len = text_len - bkgd_text_len
         num_clusters = random.randint(1, min(int(text_len/4), len(SEQUENCES)))
@@ -122,12 +139,11 @@ def create_structural_dataset(num_of_texts = 3000):
             cur_sequence += part_of_text
             cur_sequence += sequence.right.sequence if sequence.right.sequence != '' else []
             line_list[index:index] = cur_sequence
-        print(len(line_list))
 
         text += ' '.join(line_list) + '\n'
         for s in cur_sequenceds:
             s_cluster = []
-            for i in range(len(line_list) - s.total_len):
+            for i in range(len(line_list) - s.total_len + 1):
                 if line_list[i:i+len(s.left.sequence)] == s.left.sequence and \
                     line_list[i+len(s.left.sequence)+s.left.index_delta+1+s.right.index_delta:i+s.total_len] == s.right.sequence:
                     s_cluster.append([i+len(s.left.sequence)+s.left.index_delta, i+len(s.left.sequence)+s.left.index_delta])
@@ -136,5 +152,6 @@ def create_structural_dataset(num_of_texts = 3000):
     return text, clusters
         
 
-
+create_letters_dataset(20)
 create_structural_dataset(20)
+create_sequences_dataset(20)
