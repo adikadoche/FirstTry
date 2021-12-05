@@ -1,12 +1,19 @@
 from collections import namedtuple
 import random
 import string
+import os
+import json
 
+from transformers import AutoTokenizer
+
+FUNCTIONS_NAMES = ['letters', 'structural', 'sequences']
 LETTERS = string.ascii_lowercase
 LETTERS_LIST = list(LETTERS)
+TOKENIZER = AutoTokenizer.from_pretrained("allenai/longformer-base-4096", cache_dir="/home/gamir/adiz/Code/runs/firsttry/cache_dir/")
+TOY_DATA_PATH = '/home/gamir/adiz/datasets/ontonotes/toy_data/'
 
 def create_letters_dataset(num_of_texts = 3000):
-    text = ''
+    text = []
     clusters = []
     for _ in range(num_of_texts):
         text_len = random.randint(40, 4000)
@@ -28,7 +35,7 @@ def create_letters_dataset(num_of_texts = 3000):
         for letter, index in reversed(sorted_pairs):
             line_list.insert(index, letter)        
 
-        text += ' '.join(line_list) +'\n'
+        text.append(' '.join(line_list))
 
         letters_indices = {}
         text_cluster = []
@@ -50,7 +57,7 @@ def create_sequences_dataset(num_of_texts = 3000):
         seq = random.choices(LETTERS_LIST, k=seq_len)
         if seq not in SEQUENCES:
             SEQUENCES.append(seq)
-    text = ''
+    text = []
     clusters = []
     for t in range(num_of_texts):
         clusters.append([])
@@ -81,7 +88,7 @@ def create_sequences_dataset(num_of_texts = 3000):
             if len(sequence_cluster) > 0:
                 clusters[t].append(sequence_cluster)
 
-        text += ' '.join(line_list) +'\n'
+        text.append(' '.join(line_list))
 
     return text, clusters
 
@@ -110,7 +117,7 @@ def create_structural_dataset(num_of_texts = 3000):
         if cur_seq_pattern not in SEQUENCES:
             SEQUENCES.append(cur_seq_pattern)
 
-    text = ''
+    text = []
     clusters = []
     for t in range(num_of_texts):
         clusters.append([])
@@ -140,7 +147,7 @@ def create_structural_dataset(num_of_texts = 3000):
             cur_sequence += sequence.right.sequence if sequence.right.sequence != '' else []
             line_list[index:index] = cur_sequence
 
-        text += ' '.join(line_list) + '\n'
+        text.append(' '.join(line_list))
         for s in cur_sequenceds:
             s_cluster = []
             for i in range(len(line_list) - s.total_len + 1):
@@ -150,8 +157,41 @@ def create_structural_dataset(num_of_texts = 3000):
             if len(s_cluster) > 0:
                 clusters[-1].append(s_cluster)
     return text, clusters
-        
 
-create_letters_dataset(20)
-create_structural_dataset(20)
-create_sequences_dataset(20)
+def prepare_batches(text, clusters):
+    batches = []
+    for i in range(len(text)):
+        batch = dict()
+        batch['clusters'] = clusters[i]
+        batch['input_ids'] = TOKENIZER.encode(text[i])
+        batch['text_len'] = len(batch['input_ids'])
+        batch['input_mask'] = [1] * batch['text_len']
+
+        batches.append(batch)
+    return batches
+
+def read_data_file(path):
+    with open(path, "r") as reader:
+        lines = reader.readlines()
+        batches = [json.loads(jsonline) for jsonline in lines]
+    return batches
+
+def write_data_file(path, batches):
+    with open(path, "w") as writer:
+        for i in range(len(batches)):
+            writer.write(json.dumps(batches[i]))
+            writer.write('\n')
+
+FUNCS = {FUNCTIONS_NAMES[0]: create_letters_dataset, FUNCTIONS_NAMES[1]: create_structural_dataset, FUNCTIONS_NAMES[2]: create_sequences_dataset}
+NUM_OF_TEXTS = 20
+
+def get_batches(type, num_of_texts=NUM_OF_TEXTS):
+    path = TOY_DATA_PATH + f'{type}_{num_of_texts}.txt'
+    if os.path.isfile(path):
+        batches = read_data_file(path)
+    else:
+        batches = prepare_batches(*FUNCS[type](num_of_texts))
+        write_data_file(path, batches)
+    return batches
+
+get_batches(FUNCTIONS_NAMES[0], 100)
