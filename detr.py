@@ -120,7 +120,6 @@ class DETR(pl.LightningModule):
         self.query_token_IO_score = nn.Linear(150, 1)  #TODO: change to 3 so it would be BIO instead of IO
 
         self.input_ids_pads = torch.ones(1, self.args.max_segment_len, dtype=torch.int, device=self.args.device) * TOKENS_PAD
-        self.speaker_ids_pads = torch.ones(1, self.args.max_segment_len, self.args.max_num_speakers, dtype=torch.int, device=self.args.device) * SPEAKER_PAD
         self.mask_pads = torch.zeros(1, self.args.max_segment_len, dtype=torch.int, device=self.args.device)
         self.recent_train_losses = []
         self.recent_train_losses_parts = {}
@@ -143,7 +142,7 @@ class DETR(pl.LightningModule):
         self.step_num = 0
         self.tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name, cache_dir=args.cache_dir)
 
-    def forward(self, input_ids, sum_text_len, mask, gold_mentions, num_mentions):
+    def forward(self, input_ids, mask, gold_mentions, num_mentions):
         """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
@@ -236,14 +235,14 @@ class DETR(pl.LightningModule):
             else:
                 gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=self.args.device) for gm in gold_mentions_list]
 
-        input_ids, input_mask, sum_text_len, gold_mentions, num_mentions, speaker_ids, genre = \
-            tensor_and_remove_empty(batch, gold_mentions_list, self.args, self.input_ids_pads, self.mask_pads, self.speaker_ids_pads)
+        input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = \
+            tensor_and_remove_empty(batch, gold_mentions_list, self.args, self.input_ids_pads, self.mask_pads)
         if len(input_ids) == 0:
             return 0
 
         gold_matrix = create_gold_matrix(self.args.device, sum_text_len, self.args.num_queries, gold_clusters, gold_mentions_list)
 
-        outputs = self(input_ids, sum_text_len, input_mask, gold_mentions, num_mentions)
+        outputs = self(input_ids, input_mask, gold_mentions, num_mentions)
         cluster_logits, coref_logits, mention_logits = outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits']
 
         if self.args.add_junk:
@@ -300,12 +299,12 @@ class DETR(pl.LightningModule):
         
         gold_matrix = create_gold_matrix(self.args.device, sum_text_len, self.args.num_queries, gold_clusters, gold_mentions_list)
 
-        input_ids, input_mask, sum_text_len, gold_mentions, num_mentions, speaker_ids, genre = \
-            tensor_and_remove_empty(batch, gold_mentions_list, self.args, self.input_ids_pads, self.mask_pads, self.speaker_ids_pads)
+        input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = \
+            tensor_and_remove_empty(batch, gold_mentions_list, self.args, self.input_ids_pads, self.mask_pads)
         if len(input_ids) == 0:
             return 0
 
-        outputs = self(input_ids, sum_text_len, input_mask, gold_mentions, num_mentions)
+        outputs = self(input_ids, input_mask, gold_mentions, num_mentions)
         cluster_logits, coref_logits, mention_logits = outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits']
 
         loss, loss_parts = self.criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
