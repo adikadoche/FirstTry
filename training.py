@@ -15,6 +15,7 @@ from metrics import CorefEvaluator
 from utils import load_from_checkpoint, save_checkpoint
 from consts import TOKENS_PAD, SPEAKER_PAD
 import pytorch_lightning as pl
+from pytorch_lightning.callbacks import ModelCheckpoint
 from detr import DETRDataModule
 
 from transformers import AdamW, get_constant_schedule_with_warmup
@@ -87,7 +88,8 @@ def train(args, model, wandb):
 
     logger.info("Training/evaluation parameters %s", args)
     data_model = DETRDataModule(args)
-    trainer = pl.Trainer(max_epochs=args.num_train_epochs, gpus=args.n_gpu, amp_backend='apex', logger= wandb, accumulate_grad_batches=args.gradient_accumulation_steps)
+    trainer = pl.Trainer(max_epochs=args.num_train_epochs, gpus=args.n_gpu, amp_backend='apex', logger= wandb, accumulate_grad_batches=args.gradient_accumulation_steps,\
+        callbacks=[ModelCheckpoint(monitor="eval_avg_f1")], default_root_dir=args.output_dir)
     
     if args.resume_from:  #TODO
         pass

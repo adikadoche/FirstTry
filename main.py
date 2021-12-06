@@ -99,7 +99,7 @@ def main():
     # eval_dataset = get_dataset(args, evaluate=True)
     # eval_loader = BucketBatchSampler(eval_dataset, max_total_seq_len=args.max_total_seq_len, batch_size_1=True)
 
-    if args.do_train:
+    # if args.do_train:
         # train_dataset = get_dataset(args, evaluate=False)
         # train_loader = BucketBatchSampler(train_dataset, max_total_seq_len=args.max_total_seq_len)
         # if args.do_profile:
@@ -120,8 +120,9 @@ def main():
         #         f.write(result)
         #         f.close()
         # else:
-        train(args, model, wandb)
-    # make_evaluation(model, criterion, eval_loader, eval_dataset, args) #TODO: report_eval won't work in here because of missing parameters
+    train(args, model, wandb)
+    # else:
+    #     make_evaluation(model, criterion, eval_loader, eval_dataset, args) #TODO: report_eval won't work in here because of missing parameters
 
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':

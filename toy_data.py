@@ -1,6 +1,5 @@
 from collections import namedtuple
 import random
-import string
 import os
 import json
 import torch
@@ -8,10 +7,9 @@ import numpy as np
 
 from transformers import AutoTokenizer
 from torch.utils.data import Dataset, DataLoader
+from consts import LETTERS_LIST
 
 FUNCTIONS_NAMES = ['letters', 'structural', 'sequences']
-LETTERS = string.ascii_lowercase
-LETTERS_LIST = list(LETTERS)
 TOKENIZER = AutoTokenizer.from_pretrained("allenai/longformer-base-4096", cache_dir="/home/gamir/adiz/Code/runs/firsttry/cache_dir/")
 TOY_DATA_PATH = '/home/gamir/adiz/datasets/ontonotes/toy_data/'
 
@@ -22,9 +20,9 @@ def create_letters_dataset(num_of_texts = 3000):
         text_len = random.randint(40, 4000)
         bkgd_text_len = int(random.uniform(0.6, 1) * text_len)
         sequence_text_len = text_len - bkgd_text_len
-        num_clusters = random.randint(1, len(LETTERS)-5)
+        num_clusters = random.randint(1, len(LETTERS_LIST)-5)
         cur_letters = random.sample(LETTERS_LIST, num_clusters)
-        bgkd_letters = [l for l in LETTERS if l not in cur_letters]
+        bgkd_letters = [l for l in LETTERS_LIST if l not in cur_letters]
         sequence_distribution = [random.uniform(0, 1) for _ in range(num_clusters)]
         line_sequence_list = random.choices(cur_letters, weights=sequence_distribution, k=sequence_text_len)
         sequence_indices = random.sample(list(range(bkgd_text_len)), sequence_text_len)
@@ -73,8 +71,8 @@ def create_sequences_dataset(num_of_texts = 3000):
         sequence_text_len = int(sequence_text_len / (sum([len(cur_sequenceds[i]) * sequence_distribution[i] for i in range(len(cur_sequenceds))]) / sum(sequence_distribution)))
         line_sequence_list = random.choices(cur_sequenceds, weights=sequence_distribution, k=sequence_text_len)
         sequence_indices = random.sample(list(range(bkgd_text_len)), sequence_text_len)
-        bgkd_distribution = [random.uniform(0, 1) for _ in range(len(LETTERS))]
-        line_bkgd_list = random.choices(LETTERS, weights=bgkd_distribution, k=bkgd_text_len)
+        bgkd_distribution = [random.uniform(0, 1) for _ in range(len(LETTERS_LIST))]
+        line_bkgd_list = random.choices(LETTERS_LIST, weights=bgkd_distribution, k=bkgd_text_len)
 
         sorted_pairs = [(x, y) for x, y in sorted(zip(line_sequence_list, sequence_indices), key=lambda pair: pair[1])]
 
@@ -114,7 +112,7 @@ def create_structural_dataset(num_of_texts = 3000):
                 sequence_pattern_list[i] = OneSideSequencePattern(index_delta=0, sequence='')
             else:
                 sequence_pattern_list[i] = OneSideSequencePattern(index_delta=random.randint(1, 4), \
-                                                                sequence=random.choices(LETTERS, k=random.randint(1, 3)))
+                                                                sequence=random.choices(LETTERS_LIST, k=random.randint(1, 3)))
                 total_len += sequence_pattern_list[i].index_delta + len(sequence_pattern_list[i].sequence)
         cur_seq_pattern = SequencePattern(left=sequence_pattern_list[0], right=sequence_pattern_list[1], total_len=total_len+1)
         if cur_seq_pattern not in SEQUENCES:
@@ -133,8 +131,8 @@ def create_structural_dataset(num_of_texts = 3000):
         sequence_text_len = int(sequence_text_len / (sum([cur_sequenceds[i].total_len * sequence_distribution[i] for i in range(len(cur_sequenceds))]) / sum(sequence_distribution)))
         line_sequence_list = random.choices(cur_sequenceds, weights=sequence_distribution, k=sequence_text_len)
         sequence_indices = random.sample(list(range(bkgd_text_len)), sequence_text_len)
-        bgkd_distribution = [random.uniform(0, 1) for _ in range(len(LETTERS))]
-        line_bkgd_list = random.choices(LETTERS, weights=bgkd_distribution, k=bkgd_text_len)
+        bgkd_distribution = [random.uniform(0, 1) for _ in range(len(LETTERS_LIST))]
+        line_bkgd_list = random.choices(LETTERS_LIST, weights=bgkd_distribution, k=bkgd_text_len)
 
         sorted_pairs = [(x, y) for x, y in sorted(zip(line_sequence_list, sequence_indices), key=lambda pair: pair[1])]
 

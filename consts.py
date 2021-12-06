@@ -1,3 +1,5 @@
+import string
+
 SPEAKER_START_ID = 49518  # 'Ġ#####'
 SPEAKER_END_ID = 22560  # 'Ġ###'
 SPEAKER_START_TOKEN = ' #####'  # 'Ġ#####'
@@ -21,3 +23,6 @@ PRONOUNS = {'i', 'me', 'my', 'mine', 'myself',
             'this', 'these', 'that', 'those'}
             
 GENRES =  {g: i+1 for i, g in enumerate(["bc", "bn", "mz", "nw", "pt", "tc", "wb"])}
+
+LETTERS = string.ascii_lowercase
+LETTERS_LIST = list(LETTERS)
