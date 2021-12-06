@@ -29,16 +29,17 @@ logger = logging.getLogger(__name__)
 
 def main():
     args = parse_args()
+    if "JOB_NAME" in os.environ:
+        run_name = os.environ["JOB_NAME"]
+    else:
+        run_name = 'vscode'
     if args.resume_from:
         args.output_dir = args.resume_from
     else:
-        args.output_dir = os.path.join(args.output_dir, datetime.now().strftime(f"%m_%d_%Y_%H_%M_%S"))
+        args.output_dir = os.path.join(args.output_dir, datetime.now().strftime(f"%m_%d_%Y_%H_%M_%S")+'_'+run_name)
     transformers_logger = logging.getLogger("transformers")
     transformers_logger.setLevel(logging.ERROR)
-    if "JOB_NAME" in os.environ:
-        wandb = WandbLogger(project='coref-detr', entity='adizicher', name=os.environ["JOB_NAME"])
-    else:
-        wandb = WandbLogger(project='coref-detr', entity='adizicher', name='vscode')
+    wandb = WandbLogger(project='coref-detr', entity='adizicher', name=run_name)
 
     # Setup CUDA, GPU & distributed training
     if args.is_debug:

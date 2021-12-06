@@ -8,6 +8,7 @@ Copy-paste from torch.nn.Transformer with modifications:
     * decoder returns a stack of activations from all decoding layers
 """
 import copy
+import math
 import numpy as np
 from typing import Optional, List
 
@@ -49,7 +50,7 @@ class Transformer(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def forward(self, src, mask, query_embed, is_cluster=None, IO_score=None, pos_embed=None):
+    def forward(self, src, mask, query_embed, is_cluster=None, IO_score=None, is_cluster_block=False, pos_embed=None):
         # flatten NxMxE to ExNxM
         bs, m, e = src.shape
         src = src.permute(1,0,2)
@@ -61,7 +62,7 @@ class Transformer(nn.Module):
         tgt = query_embed
         memory = self.encoder(src, src_key_padding_mask=binary_mask, pos=pos_embed)
 
-        hs = self.decoder(tgt, memory, is_cluster=is_cluster, IO_score=IO_score, memory_key_padding_mask=binary_mask, 
+        hs = self.decoder(tgt, memory, is_cluster=is_cluster, IO_score=IO_score, is_cluster_block=is_cluster_block, memory_key_padding_mask=binary_mask, 
                             pos=pos_embed, query_pos=query_embed)
 
         return hs.transpose(1, 2), memory.transpose(0, 1)
@@ -100,7 +101,7 @@ class TransformerDecoder(nn.Module):
         self.norm = norm
         self.return_intermediate = return_intermediate
 
-    def forward(self, tgt, memory, is_cluster=None, IO_score=None,
+    def forward(self, tgt, memory, is_cluster=None, IO_score=None, is_cluster_block=False,
                 tgt_mask: Optional[Tensor] = None,
                 memory_mask: Optional[Tensor] = None,
                 tgt_key_padding_mask: Optional[Tensor] = None,
@@ -141,7 +142,7 @@ class TransformerSequentialDecoder(nn.Module):
         self.norm = norm
         self.return_intermediate = return_intermediate
 
-    def forward(self, tgt, memory, is_cluster, IO_score,
+    def forward(self, tgt, memory, is_cluster, IO_score, is_cluster_block=False,
                 tgt_mask: Optional[Tensor] = None,
                 memory_mask: Optional[Tensor] = None,
                 tgt_key_padding_mask: Optional[Tensor] = None,
@@ -164,8 +165,11 @@ class TransformerSequentialDecoder(nn.Module):
             if self.return_intermediate:
                 intermediate.append(self.norm(output))
             
-            _, cur_coref_logits = self.create_logits(is_cluster, tmp_memory, memory_key_padding_mask, self.norm(output).transpose(0, 1), IO_score, tgt.shape[0], self.layers[0].multihead_attn.num_heads,)
-            memory_mask += torch.log(cur_coref_logits)
+            cur_cluster_logits, cur_coref_logits = self.create_logits(is_cluster, tmp_memory, memory_key_padding_mask, self.norm(output).transpose(0, 1), IO_score, tgt.shape[0], self.layers[0].multihead_attn.num_heads,)
+            if is_cluster_block:
+                memory_mask += torch.log(math.min(cur_coref_logits * cur_cluster_logits, 1))
+            else:
+                memory_mask += torch.log(cur_coref_logits)
             
         if self.norm is not None:
             output = self.norm(output)

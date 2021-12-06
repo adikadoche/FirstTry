@@ -229,7 +229,7 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, thresh
             coref_logits_after_cluster_bool = np.multiply(cluster_mention_mask, cur_coref_logits.unsqueeze(0))
             max_coref_score, max_coref_cluster_ind = coref_logits_after_cluster_bool[0].max(-2) #[gold_mention] choosing the index of the best cluster per gold mention
             if is_max:
-                coref_bools = max_coref_score > 0
+                coref_bools = max_coref_score >= 0.5
             else:
                 coref_bools = max_coref_score >= threshold #[gold_mention] is the chosen cluster's score passes the threshold
 
