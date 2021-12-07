@@ -145,7 +145,10 @@ class DETR(pl.LightningModule):
         self.all_mention_logits_cuda = []
         self.all_gold_clusters = []
         self.all_gold_mentions = []
-        self.query_cluster_confusion_matrix = np.zeros([args.num_queries, args.num_queries], dtype=int)
+        if self.args.input_type == 'ontonotes':
+            self.query_cluster_confusion_matrix = np.zeros([args.num_queries, args.num_queries], dtype=int)
+        else:
+            self.query_cluster_confusion_matrix = np.zeros([args.num_queries, 26], dtype=int)
 
         self.best_f1 = 0
         self.best_f1_epoch = -1
@@ -153,7 +156,7 @@ class DETR(pl.LightningModule):
         self.step_num = 0
         self.tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name, cache_dir=args.cache_dir)
 
-        self.embedder_toy_data = nn.Linear(len(LETTERS_LIST), args.hidden_dim)
+        self.embedder_toy_data = nn.Embedding(len(LETTERS_LIST), args.hidden_dim)
         self.toy_onehot = torch.eye(len(LETTERS_LIST), device=self.args.device)
         self.toy_onehot_dict = {self.tokenizer.encode(l,add_special_tokens=False)[0]:i for i,l in enumerate(LETTERS_LIST)}
         self.toy_onehot_dict.update({self.tokenizer.encode(' '+l,add_special_tokens=False)[0]:i for i,l in enumerate(LETTERS_LIST)})
@@ -280,11 +283,6 @@ class DETR(pl.LightningModule):
             else:
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
                                                             self.args.threshold, gold_mentions_list, self.args.is_max)
-            # for i in matched_predicted_cluster_id_real[0]:
-            #     print(gold_mentions.shape)
-            #     print(i)
-            #     print(gold_mentions_list[0][i][0])
-            #     self.query_cluster_confusion_matrix[i][self.toy_onehot_dict[input_ids.cpu().numpy()[0][0][gold_mentions_list[0][i][0]]]] += 1
             self.train_evaluator.update(predicted_clusters, gold_clusters)
             loss, loss_parts = self.criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
             
@@ -344,8 +342,15 @@ class DETR(pl.LightningModule):
         targets = {'clusters':gold_matrix, 'mentions':gold_mentions_vector}
         matched_predicted_cluster_id_real, matched_gold_cluster_id_real, _, _ = self.criterion.matcher(outputs, targets)
         if matched_gold_cluster_id_real[0] is not False:
-            for i, j in zip(matched_predicted_cluster_id_real[0], matched_gold_cluster_id_real[0]):
-                self.query_cluster_confusion_matrix[i][j] += 1
+            if self.args.input_type == 'ontonotes':
+                for i, j in zip(matched_predicted_cluster_id_real[0], matched_gold_cluster_id_real[0]):
+                    self.query_cluster_confusion_matrix[i][j] += 1
+            else:
+                mention_ids = input_ids[0][0][[[m[0] for i in range(len(gold_mentions)) for m in gold_mentions[i]]]]
+                for i, j in zip(matched_predicted_cluster_id_real[0], matched_gold_cluster_id_real[0]):
+                    target_letters = [self.toy_onehot_dict[l] for l in mention_ids[targets['clusters'][0][j]==1].cpu().numpy()]
+                    for t in target_letters:
+                        self.query_cluster_confusion_matrix[i][t] += 1
 
         loss, loss_parts = self.criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
         self.losses.append(loss.mean().detach().cpu())
