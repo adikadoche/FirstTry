@@ -157,7 +157,6 @@ class DETR(pl.LightningModule):
         self.tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name, cache_dir=args.cache_dir)
 
         self.embedder_toy_data = nn.Embedding(len(LETTERS_LIST), args.hidden_dim)
-        self.toy_onehot = torch.eye(len(LETTERS_LIST), device=self.args.device)
         self.toy_onehot_dict = {self.tokenizer.encode(l,add_special_tokens=False)[0]:i for i,l in enumerate(LETTERS_LIST)}
         self.toy_onehot_dict.update({self.tokenizer.encode(' '+l,add_special_tokens=False)[0]:i for i,l in enumerate(LETTERS_LIST)})
 
@@ -221,8 +220,7 @@ class DETR(pl.LightningModule):
         else:
             mention_ids = input_ids[0][0][[[m[0] for i in range(len(gold_mentions)) for m in gold_mentions[i]]]].unsqueeze(0)
             span_mask = torch.ones_like(mention_ids)
-            onehot = self.toy_onehot[[self.toy_onehot_dict[i] for i in mention_ids.cpu().numpy()[0]]].to(self.args.device)
-            embedding = self.embedder_toy_data(onehot).unsqueeze(0)
+            embedding = self.embedder_toy_data(torch.tensor([self.toy_onehot_dict[i] for i in mention_ids.cpu().numpy()[0]], device=span_mask.device)).unsqueeze(0)
             hs, memory = self.transformer(embedding, None, raw_query_embed, self.is_cluster, self.IO_score, self.args.cluster_block)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
 
 
