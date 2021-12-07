@@ -137,6 +137,8 @@ def parse_args():
                         help="L1 box coefficient in the matching cost")
     parser.add_argument('--b3_loss', action='store_true',
                         help="L1 box coefficient in the matching cost")
+    parser.add_argument('--no_long', action='store_true',
+                        help="L1 box coefficient in the matching cost")
     parser.add_argument('--reduction', default='mean', type=str,
                         help="L1 box coefficient in the matching cost")
     parser.add_argument('--eos_coef', default=0.1, type=float,

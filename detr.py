@@ -189,7 +189,7 @@ class DETR(pl.LightningModule):
         else:
             raw_query_embed = self.query_embed.weight
 
-        if self.args.input_type == 'ontonotes':
+        if not self.args.no_long:
             bs = input_ids.shape[0]
             input_ids_r = input_ids.reshape(input_ids.shape[0], -1)
             mask_r = mask.reshape(mask.shape[0], -1)
