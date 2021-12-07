@@ -280,6 +280,11 @@ class DETR(pl.LightningModule):
             else:
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
                                                             self.args.threshold, gold_mentions_list, self.args.is_max)
+            # for i in matched_predicted_cluster_id_real[0]:
+            #     print(gold_mentions.shape)
+            #     print(i)
+            #     print(gold_mentions_list[0][i][0])
+            #     self.query_cluster_confusion_matrix[i][self.toy_onehot_dict[input_ids.cpu().numpy()[0][0][gold_mentions_list[0][i][0]]]] += 1
             self.train_evaluator.update(predicted_clusters, gold_clusters)
             loss, loss_parts = self.criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
             
@@ -341,11 +346,6 @@ class DETR(pl.LightningModule):
         if matched_gold_cluster_id_real[0] is not False:
             for i, j in zip(matched_predicted_cluster_id_real[0], matched_gold_cluster_id_real[0]):
                 self.query_cluster_confusion_matrix[i][j] += 1
-            # for i in matched_predicted_cluster_id_real[0]:
-            #     print(gold_mentions.shape)
-            #     print(i)
-            #     print(gold_mentions_list[0][i][0])
-            #     self.query_cluster_confusion_matrix[i][self.toy_onehot_dict[input_ids.cpu().numpy()[0][0][gold_mentions_list[0][i][0]]]] += 1
 
         loss, loss_parts = self.criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
         self.losses.append(loss.mean().detach().cpu())
