@@ -111,9 +111,13 @@ class DETR(pl.LightningModule):
             self.query_mu = nn.Parameter(torch.randn(num_queries, hidden_dim))
             self.query_sigma = nn.Parameter(torch.randn(num_queries, hidden_dim))
 
-        self.word_attn_projection = nn.Linear(backbone.config.hidden_size, 1)
+        if self.args.input_type == 'ontonotes':
+            self.word_attn_projection = nn.Linear(backbone.config.hidden_size, 1)
+            self.span_proj = nn.Linear(3*backbone.config.hidden_size+20, hidden_dim) # TODO config
+        else:
+            self.word_attn_projection = nn.Linear(args.hidden_dim, 1)
+            self.span_proj = nn.Linear(3*args.hidden_dim+20, hidden_dim) # TODO config
         self.span_width_embed = nn.Embedding(30, 20)
-        self.span_proj = nn.Linear(3*backbone.config.hidden_size+20, hidden_dim) # TODO config
              
         self.mention_classifier = nn.Linear(hidden_dim, 1)
 
@@ -159,6 +163,8 @@ class DETR(pl.LightningModule):
         self.embedder_toy_data = nn.Embedding(len(LETTERS_LIST), args.hidden_dim)
         self.toy_onehot_dict = {self.tokenizer.encode(l,add_special_tokens=False)[0]:i for i,l in enumerate(LETTERS_LIST)}
         self.toy_onehot_dict.update({self.tokenizer.encode(' '+l,add_special_tokens=False)[0]:i for i,l in enumerate(LETTERS_LIST)})
+        self.toy_onehot_dict[0]=0
+        self.toy_onehot_dict[2]=0
 
         if self.args.resume_from:
             global_step = self.args.resume_from.rstrip('/').split('-')[-1]
@@ -218,10 +224,12 @@ class DETR(pl.LightningModule):
                 span_emb = self.span_proj(span_emb) # [mentions, emb]
                 hs, memory = self.transformer(span_emb, span_mask, raw_query_embed, self.is_cluster, self.IO_score, self.args.cluster_block)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
         else:
-            mention_ids = input_ids[0][0][[[m[0] for i in range(len(gold_mentions)) for m in gold_mentions[i]]]].unsqueeze(0)
-            span_mask = torch.ones_like(mention_ids)
-            embedding = self.embedder_toy_data(torch.tensor([self.toy_onehot_dict[i] for i in mention_ids.cpu().numpy()[0]], device=span_mask.device)).unsqueeze(0)
-            hs, memory = self.transformer(embedding, None, raw_query_embed, self.is_cluster, self.IO_score, self.args.cluster_block)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
+            span_starts = [torch.tensor([m[0] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
+            span_ends = [torch.tensor([m[1] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
+            embedding = self.embedder_toy_data(torch.tensor([self.toy_onehot_dict[i] for i in input_ids.cpu().numpy()[0][0]], device=input_ids.device)).unsqueeze(0)
+            span_emb, span_mask = self.get_span_emb(embedding, span_starts, span_ends, num_mentions)  # [mentions, emb']
+            span_emb = self.span_proj(span_emb) # [mentions, emb]
+            hs, memory = self.transformer(span_emb, None, raw_query_embed, self.is_cluster, self.IO_score, self.args.cluster_block)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
 
 
         last_hs = hs[-1] # [bs, num_queries, emb]
