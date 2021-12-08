@@ -50,27 +50,22 @@ class Transformer(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def forward(self, src, mask, query_embed, is_cluster=None, IO_score=None, is_cluster_block=False, pos_embed=None):
+    def forward(self, src, mask, query_embed, is_cluster=None, IO_score=None, is_cluster_block=False, is_encoder=True, pos_embed=None):
         # flatten NxMxE to ExNxM
-        if mask is None:
-            query_embed = query_embed.unsqueeze(1).repeat(1, src.shape[0], 1)
-            memory = src.permute(1,0,2)
-            tgt = query_embed
-            hs = self.decoder(tgt, memory, is_cluster=is_cluster, IO_score=IO_score, is_cluster_block=is_cluster_block,  
-                                pos=pos_embed, query_pos=query_embed)
-        else:
-            bs, m, e = src.shape
-            src = src.permute(1,0,2)
-            if pos_embed is not None:
-                pos_embed = pos_embed.transpose(0,1)
-            binary_mask = mask == 0
-            query_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)
-
-            tgt = query_embed
+        bs, m, e = src.shape
+        src = src.permute(1,0,2)
+        if pos_embed is not None:
+            pos_embed = pos_embed.transpose(0,1)
+        binary_mask = mask == 0
+        query_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)
+        tgt = query_embed
+        if is_encoder:
             memory = self.encoder(src, src_key_padding_mask=binary_mask, pos=pos_embed)
+        else:
+            memory = src
 
-            hs = self.decoder(tgt, memory, is_cluster=is_cluster, IO_score=IO_score, is_cluster_block=is_cluster_block, memory_key_padding_mask=binary_mask,
-                                pos=pos_embed, query_pos=query_embed)
+        hs = self.decoder(tgt, memory, is_cluster=is_cluster, IO_score=IO_score, is_cluster_block=is_cluster_block, memory_key_padding_mask=binary_mask,
+                            pos=pos_embed, query_pos=query_embed)
 
         return hs.transpose(1, 2), memory.transpose(0, 1)
 

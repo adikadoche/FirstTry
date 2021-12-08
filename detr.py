@@ -195,42 +195,43 @@ class DETR(pl.LightningModule):
             raw_query_embed = self.query_embed.weight
 
         if not self.args.no_long:
-            bs = input_ids.shape[0]
-            input_ids_r = input_ids.reshape(input_ids.shape[0], -1)
-            mask_r = mask.reshape(mask.shape[0], -1)
-            longfomer_no_pad_list = []
-            for i in range(input_ids_r.shape[0]):
-                masked_ids = input_ids_r[i][mask_r[i]==1].unsqueeze(0)
-                masked_mask = torch.ones_like(masked_ids).unsqueeze(0)
-                if masked_ids.shape[-1] > self.args.max_seq_length:
-                    masked_ids = torch.zeros([2, math.ceil(input_ids.shape[1]/2) * input_ids.shape[-1]], dtype=torch.long)
-                    masked_mask = torch.zeros([2, math.ceil(mask.shape[1]/2) * mask.shape[-1]], dtype=torch.long)
-                    masked_ids[0] = input_ids[i][:math.ceil(input_ids.shape[1]/2)].reshape(1, math.ceil(input_ids.shape[1]/2) * input_ids.shape[-1])
-                    masked_mask[0] = mask[i][:math.ceil(mask.shape[1]/2)].reshape(1, math.ceil(mask.shape[1]/2) * mask.shape[-1])
-                    masked_ids[1][:(input_ids.shape[1]-math.ceil(input_ids.shape[1]/2)) * input_ids.shape[-1]] = \
-                        input_ids[i][math.ceil(input_ids.shape[1]/2):].reshape(1, (input_ids.shape[1]-math.ceil(input_ids.shape[1]/2)) * input_ids.shape[-1])
-                    masked_mask[1][:(mask.shape[1]-math.ceil(mask.shape[1]/2)) * mask.shape[-1]] = \
-                        mask[i][math.ceil(mask.shape[1]/2):].reshape(1, (mask.shape[1]-math.ceil(mask.shape[1]/2)) * mask.shape[-1])
+            if self.args.input_type == 'ontonotes':
+                bs = input_ids.shape[0]
+                input_ids_r = input_ids.reshape(input_ids.shape[0], -1)
+                mask_r = mask.reshape(mask.shape[0], -1)
+                longfomer_no_pad_list = []
+                for i in range(input_ids_r.shape[0]):
+                    masked_ids = input_ids_r[i][mask_r[i]==1].unsqueeze(0)
+                    masked_mask = torch.ones_like(masked_ids).unsqueeze(0)
+                    if masked_ids.shape[-1] > self.args.max_seq_length:
+                        masked_ids = torch.zeros([2, math.ceil(input_ids.shape[1]/2) * input_ids.shape[-1]], dtype=torch.long)
+                        masked_mask = torch.zeros([2, math.ceil(mask.shape[1]/2) * mask.shape[-1]], dtype=torch.long)
+                        masked_ids[0] = input_ids[i][:math.ceil(input_ids.shape[1]/2)].reshape(1, math.ceil(input_ids.shape[1]/2) * input_ids.shape[-1])
+                        masked_mask[0] = mask[i][:math.ceil(mask.shape[1]/2)].reshape(1, math.ceil(mask.shape[1]/2) * mask.shape[-1])
+                        masked_ids[1][:(input_ids.shape[1]-math.ceil(input_ids.shape[1]/2)) * input_ids.shape[-1]] = \
+                            input_ids[i][math.ceil(input_ids.shape[1]/2):].reshape(1, (input_ids.shape[1]-math.ceil(input_ids.shape[1]/2)) * input_ids.shape[-1])
+                        masked_mask[1][:(mask.shape[1]-math.ceil(mask.shape[1]/2)) * mask.shape[-1]] = \
+                            mask[i][math.ceil(mask.shape[1]/2):].reshape(1, (mask.shape[1]-math.ceil(mask.shape[1]/2)) * mask.shape[-1])
 
-                longformer_emb = self.backbone(masked_ids, attention_mask=masked_mask)[0]
-                longfomer_no_pad_list.append(longformer_emb.reshape(-1, longformer_emb.shape[-1]))
+                    longformer_emb = self.backbone(masked_ids, attention_mask=masked_mask)[0]
+                    longfomer_no_pad_list.append(longformer_emb.reshape(-1, longformer_emb.shape[-1]))
+            else:
+                longfomer_no_pad_list = self.embedder_toy_data(torch.tensor([self.toy_onehot_dict[i] for i in input_ids.cpu().numpy()[0][0]], device=input_ids.device)).unsqueeze(0)
+
 
             if not self.args.use_gold_mentions:
                 hs, memory = self.transformer(self.input_proj(longfomer_no_pad_list), mask, raw_query_embed) # [dec_layers, 1, num_queries, emb], [1, seg*seq, emb]
-            else:
+            else:   #TODO: not good for sequences because only takes first and last letters and doesnt have a representation of the surrounding
                 span_starts = [torch.tensor([m[0] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
                 span_ends = [torch.tensor([m[1] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
                 span_emb, span_mask = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends, num_mentions)  # [mentions, emb']
                 span_emb = self.span_proj(span_emb) # [mentions, emb]
-                hs, memory = self.transformer(span_emb, span_mask, raw_query_embed, self.is_cluster, self.IO_score, self.args.cluster_block)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
+                hs, memory = self.transformer(span_emb, span_mask, raw_query_embed, self.is_cluster, self.IO_score, self.args.cluster_block, self.args.input_type == 'ontonotes')  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
         else:
-            span_starts = [torch.tensor([m[0] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
-            span_ends = [torch.tensor([m[1] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
-            embedding = self.embedder_toy_data(torch.tensor([self.toy_onehot_dict[i] for i in input_ids.cpu().numpy()[0][0]], device=input_ids.device)).unsqueeze(0)
-            span_emb, span_mask = self.get_span_emb(embedding, span_starts, span_ends, num_mentions)  # [mentions, emb']
-            span_emb = self.span_proj(span_emb) # [mentions, emb]
-            hs, memory = self.transformer(span_emb, None, raw_query_embed, self.is_cluster, self.IO_score, self.args.cluster_block)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
-
+            mention_ids = input_ids[0][0][[[m[0] for i in range(len(gold_mentions)) for m in gold_mentions[i]]]].unsqueeze(0)
+            span_mask = torch.ones_like(mention_ids)
+            embedding = self.embedder_toy_data(torch.tensor([self.toy_onehot_dict[i] for i in mention_ids.cpu().numpy()[0]], device=input_ids.device)).unsqueeze(0)
+            hs, memory = self.transformer(embedding, span_mask, raw_query_embed, self.is_cluster, self.IO_score, self.args.cluster_block, self.args.input_type == 'ontonotes')  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
 
         last_hs = hs[-1] # [bs, num_queries, emb]
         cluster_logits, coref_logits, mention_logits = self.calc_cluster_and_coref_logits(last_hs, memory, gold_mentions is not None, span_mask, gold_mentions.shape[1])
@@ -269,7 +270,10 @@ class DETR(pl.LightningModule):
                 # if len(gold_clusters) > 0:  #TODO: create junk clusters even if 0 gold clusters
                 gold_mentions_list = [list(set([tuple(m) for c in gc for m in c])) for gc in gold_clusters]
                 if self.args.add_junk:
-                    gold_mentions_list, gold_mentions_vector = create_junk_gold_mentions(gold_mentions_list, sum_text_len, self.args.device)
+                    if self.args.input_type == 'ontonotes':
+                        gold_mentions_list, gold_mentions_vector = create_junk_gold_mentions(gold_mentions_list, sum_text_len, self.args.device)
+                    else:
+                        gold_mentions_list, gold_mentions_vector = create_junk_gold_mentions(gold_mentions_list, sum_text_len, self.args.device, 0)
                 else:
                     gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=self.args.device) for gm in gold_mentions_list]
 
@@ -332,7 +336,10 @@ class DETR(pl.LightningModule):
 
         gold_mentions_list = [list(set([tuple(m) for c in gc for m in c])) for gc in gold_clusters]
         if self.args.add_junk:
-            gold_mentions_list, gold_mentions_vector = create_junk_gold_mentions(gold_mentions_list, sum_text_len, self.args.device)
+            if self.args.input_type == 'ontonotes':
+                gold_mentions_list, gold_mentions_vector = create_junk_gold_mentions(gold_mentions_list, sum_text_len, self.args.device)
+            else:
+                gold_mentions_list, gold_mentions_vector = create_junk_gold_mentions(gold_mentions_list, sum_text_len, self.args.device, 0)
         else:
             gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=self.args.device) for gm in gold_mentions_list]
         
