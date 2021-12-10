@@ -71,7 +71,7 @@ class HungarianMatcher(nn.Module):
             coref_logits = outputs["coref_logits"][i].squeeze(0) # [num_queries, tokens]
             cluster_logits = outputs["cluster_logits"][i] # [num_queries, 1]
             if self.args.add_junk:
-                mention_logits = outputs["mention_logits"][i].squeeze(-1) # [1, tokens]
+                mention_logits = outputs["mention_logits"][i].squeeze(-1).unsqueeze(0) # [1, tokens]
 
             if not self.args.use_gold_mentions:  #TODO: implement
                 # real_cluster_target_rows = torch.sum(targets, -1) > 0
@@ -99,11 +99,13 @@ class HungarianMatcher(nn.Module):
                     torch.cat([torch.ones([num_queries, num_of_gold_clusters], device=coref_logits.device), \
                         torch.zeros([num_queries, num_queries - num_of_gold_clusters], device=coref_logits.device)], 1), reduction='none') # [num_queries, num_queries]
 
+                if self.args.add_junk:
+                    mention_logits = mention_logits.repeat(num_queries, 1) # [num_queries, tokens]
+                    coref_logits = coref_logits * mention_logits
 
                 coref_logits = torch.index_select(coref_logits, 1, torch.arange(0, real_cluster_target.shape[1]).to(coref_logits.device))
 
                 cost_coref = []
-                cost_mention = []
                 for cluster in real_cluster_target:
                     gold_per_token_repeated = cluster.repeat(num_queries, 1) # [num_queries, tokens]
                     if self.args.multiclass_ce:
@@ -116,10 +118,7 @@ class HungarianMatcher(nn.Module):
                     if self.args.cluster_block:
                         losses_for_current_gold_cluster = F.binary_cross_entropy(cluster_logits * coref_logits, gold_per_token_repeated, reduction='none').mean(1)
                     else:
-                        losses_for_current_gold_cluster = F.binary_cross_entropy(coref_logits, gold_per_token_repeated, reduction='none').mean(1)           
-                    if self.args.add_junk:
-                        cur_cost_is_mention = F.binary_cross_entropy(mention_logits[cluster==1], targets_mentions[i][cluster==1], reduction='none') # [num_queries, num_queries]
-                        cost_mention.append(cur_cost_is_mention) # [num_queries]
+                        losses_for_current_gold_cluster = F.binary_cross_entropy(coref_logits, gold_per_token_repeated, reduction='none').mean(1)
                     cost_coref.append(losses_for_current_gold_cluster) # [num_queries]
                 if num_of_gold_clusters < num_queries:
                     zero_cluster = torch.zeros([num_queries, real_cluster_target.shape[1]], device=coref_logits.device)
@@ -127,19 +126,10 @@ class HungarianMatcher(nn.Module):
                         junk_cluster_score = F.binary_cross_entropy(cluster_logits * coref_logits, zero_cluster, reduction='none').mean(1)
                     else:
                         junk_cluster_score = F.binary_cross_entropy(coref_logits, zero_cluster, reduction='none').mean(1)
-                    
-                    if self.args.add_junk:
-                        junk_mention_score = F.binary_cross_entropy(mention_logits[cluster], zero_cluster[cluster], reduction='none') # [num_queries, num_queries]
-                        cost_mention += (num_queries-num_of_gold_clusters) * [junk_mention_score]
                     cost_coref += (num_queries-num_of_gold_clusters) * [junk_cluster_score]
                 cost_coref = torch.stack(cost_coref, 1) # [num_queries, num_queries]
 
-                if self.args.add_junk:
-                    cost_mention = torch.stack(cost_mention, 1) # [num_queries, num_queries]
-                    total_cost = self.cost_is_cluster * cost_is_cluster + self.cost_coref * cost_coref + self.cost_is_mention * cost_mention
-                else:
-                    total_cost = self.cost_is_cluster * cost_is_cluster + self.cost_coref * cost_coref
-                # total_cost = self.cost_coref * cost_coref
+                total_cost = self.cost_is_cluster * cost_is_cluster + self.cost_coref * cost_coref
             
             total_cost = total_cost.cpu()
             indices = linear_sum_assignment(total_cost)

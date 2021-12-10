@@ -13,16 +13,25 @@ FUNCTIONS_NAMES = ['letters', 'structural', 'sequences']
 TOKENIZER = AutoTokenizer.from_pretrained("allenai/longformer-base-4096", cache_dir="/home/gamir/adiz/Code/runs/firsttry/cache_dir/")
 TOY_DATA_PATH = '/home/gamir/adiz/datasets/ontonotes/toy_data/'
 
-def create_letters_dataset(num_of_texts = 3000):
+def create_letters_dataset(is_add_junk=False, num_of_texts = 3000):
+    if is_add_junk:
+        letters_list = random.sample(LETTERS_LIST, 20)
+        junk_letters_list = [l for l in LETTERS_LIST if l not in letters_list]
+    else:
+        letters_list = LETTERS_LIST
+        junk_letters_list = []
     text = []
     clusters = []
     for _ in range(num_of_texts):
         text_len = random.randint(40, 4000)
         bkgd_text_len = int(random.uniform(0.6, 1) * text_len)
         sequence_text_len = text_len - bkgd_text_len
-        num_clusters = random.randint(1, len(LETTERS_LIST)-5)
-        cur_letters = random.sample(LETTERS_LIST, num_clusters)
-        bgkd_letters = [l for l in LETTERS_LIST if l not in cur_letters]
+        num_clusters = random.randint(1, len(letters_list)-5)
+        cur_letters = random.sample(letters_list, num_clusters)
+        if len(junk_letters_list) > 0:
+            bgkd_letters = junk_letters_list
+        else:
+            bgkd_letters = [l for l in letters_list if l not in cur_letters]
         sequence_distribution = [random.uniform(0, 1) for _ in range(num_clusters)]
         line_sequence_list = random.choices(cur_letters, weights=sequence_distribution, k=sequence_text_len)
         sequence_indices = random.sample(list(range(bkgd_text_len)), sequence_text_len)
@@ -51,7 +60,7 @@ def create_letters_dataset(num_of_texts = 3000):
 
     return text, clusters
 
-def create_sequences_dataset(num_of_texts = 3000):
+def create_sequences_dataset(is_add_junk=False, num_of_texts = 3000):
     SEQUENCES = []
     for _ in range(70):
         seq_len = random.randint(1, 7)
@@ -93,7 +102,7 @@ def create_sequences_dataset(num_of_texts = 3000):
 
     return text, clusters
 
-def create_structural_dataset(num_of_texts = 3000):
+def create_structural_dataset(is_add_junk=False, num_of_texts = 3000):
     OneSideSequencePattern = namedtuple("OneSideSequencePattern", ["index_delta", "sequence"])
     SequencePattern = namedtuple("SequencePattern", ["left", "right", "total_len"])
     SEQUENCES = []
@@ -186,12 +195,15 @@ def write_data_file(path, batches):
 FUNCS = {FUNCTIONS_NAMES[0]: create_letters_dataset, FUNCTIONS_NAMES[1]: create_structural_dataset, FUNCTIONS_NAMES[2]: create_sequences_dataset}
 NUM_OF_TEXTS = 20
 
-def get_batches(type, is_training, num_of_texts=NUM_OF_TEXTS):
-    path = TOY_DATA_PATH + f'{type}_{num_of_texts}_{is_training}.txt'
+def get_batches(type, is_training, is_add_junk, num_of_texts=NUM_OF_TEXTS):
+    path = TOY_DATA_PATH + f'{type}_{num_of_texts}_{is_training}'
+    if type == FUNCTIONS_NAMES[0] and is_add_junk:
+        path += '_junk'
+    path += '.txt'
     if os.path.isfile(path):
         batches = read_data_file(path)
     else:
-        batches = prepare_batches(*FUNCS[type](num_of_texts))
+        batches = prepare_batches(*FUNCS[type](is_add_junk, num_of_texts))
         write_data_file(path, batches)
     return batches
 
@@ -199,9 +211,9 @@ def get_batches(type, is_training, num_of_texts=NUM_OF_TEXTS):
 
 class ToyDataset(Dataset):
 
-    def __init__(self, type, is_training, num_of_texts=NUM_OF_TEXTS) -> None:
+    def __init__(self, type, is_training, is_add_junk=False, num_of_texts=NUM_OF_TEXTS) -> None:
         super().__init__()
-        self.examples = get_batches(type, is_training, num_of_texts)
+        self.examples = get_batches(type, is_training, is_add_junk, num_of_texts)
 
     def __len__(self):
         return len(self.examples)
@@ -222,7 +234,7 @@ def collate_fn(batch):
     return batch_concat
 
 def get_toy_data_objects(type, is_training, args, num_of_texts=NUM_OF_TEXTS):
-    dataset = ToyDataset(type, is_training, num_of_texts)
+    dataset = ToyDataset(type, is_training, args.add_junk, num_of_texts)
     loader = DataLoader(dataset, batch_size=1,
                              pin_memory=not args.no_cuda, num_workers=args.num_workers, collate_fn=collate_fn,
                              worker_init_fn=lambda worker_id: np.random.seed(torch.initial_seed() % 2**32))
