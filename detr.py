@@ -215,12 +215,15 @@ class DETR(pl.LightningModule):
 
                     longformer_emb = self.backbone(masked_ids, attention_mask=masked_mask)[0]
                     longfomer_no_pad_list.append(longformer_emb.reshape(-1, longformer_emb.shape[-1]))
+                    longfomer_no_pad = self.input_proj(longfomer_no_pad_list)   #TODO:BUG
+                    span_mask = mask.reshape(longfomer_no_pad.shape[:-1])
             else:
-                longfomer_no_pad_list = self.embedder_toy_data(torch.tensor([self.toy_onehot_dict[i] for i in input_ids.cpu().numpy()[0][0]], device=input_ids.device)).unsqueeze(0)
+                longfomer_no_pad = self.embedder_toy_data(torch.tensor([self.toy_onehot_dict[i] for i in input_ids.cpu().numpy()[0][0]], device=input_ids.device)).unsqueeze(0)
+                span_mask = mask.reshape(longfomer_no_pad.shape[:-1])
 
 
             if not self.args.use_gold_mentions:
-                hs, memory = self.transformer(self.input_proj(longfomer_no_pad_list), mask, raw_query_embed, self.is_cluster, self.IO_score, self.args.cluster_block, self.args.input_type == 'ontonotes') # [dec_layers, 1, num_queries, emb], [1, seg*seq, emb]
+                hs, memory = self.transformer(longfomer_no_pad, span_mask, raw_query_embed, self.is_cluster, self.IO_score, self.args.cluster_block, self.args.input_type == 'ontonotes') # [dec_layers, 1, num_queries, emb], [1, seg*seq, emb]
             else:   #TODO: not good for sequences because only takes first and last letters and doesnt have a representation of the surrounding
                 span_starts = [torch.tensor([m[0] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
                 span_ends = [torch.tensor([m[1] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
