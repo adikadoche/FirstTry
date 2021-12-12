@@ -155,17 +155,15 @@ def create_gold_matrix(device, doc_len, num_queries, gold_clusters, gold_mention
     if not use_gold_mentions:
         gold_per_token_batch = []
         for i in range(len(gold_clusters)):
-            gold_per_token = torch.cat([torch.zeros(num_queries, doc_len[i], 2, device=device), \
-                torch.ones(num_queries, doc_len[i], 1, device=device)], 2)
+            gold_per_token = torch.ones(num_queries, doc_len[i], device=device, dtype=torch.long) * 2
             if num_queries < len(gold_clusters[i]):
                 logger.info("in utils, exceeds num_queries with length {}".format(len(gold_clusters[i])))
             for cluster_id, cluster in enumerate(gold_clusters[i]):
                 if cluster_id >= num_queries:
                     continue
                 for start, end in cluster:
-                    gold_per_token[cluster_id, start: end + 1, 2] = 0
-                    gold_per_token[cluster_id, start, 0] = 1
-                    gold_per_token[cluster_id, start + 1: end + 1, 1] = 1            
+                    gold_per_token[cluster_id, start] = 0
+                    gold_per_token[cluster_id, start + 1: end + 1] = 1            
         gold_per_token_batch.append(gold_per_token)
     else:
         gold_per_token_batch = []

@@ -449,6 +449,7 @@ class DETR(pl.LightningModule):
 
         for key, value in results.items():
             self.trainer.logger.log_metrics({'eval_{}'.format(key): value}, self.step_num)
+        self.log('eval_avg_f1', results['avg_f1'])
 
         output_eval_file = os.path.join(self.args.output_dir, "eval_results.txt")
         with open(output_eval_file, "a") as writer:
@@ -739,7 +740,9 @@ class MatchingLoss(nn.Module):
                 permuted_coref_logits = coref_logits[torch.cat([matched_predicted_cluster_id_real[i],matched_predicted_cluster_id_junk[i]])]
                 permuted_gold = targets_clusters[i][torch.cat([matched_gold_cluster_id_real[i],matched_gold_cluster_id_junk[i]])]
 
-                if self.args.cluster_block:
+                if not self.args.use_gold_mentions:
+                    cost_coref = F.cross_entropy(permuted_coref_logits.reshape([-1, 3]), permuted_gold.reshape([-1]), reduction=self.args.reduction) / coref_logits.shape[1]
+                elif self.args.cluster_block:
                     premuted_cluster_logits = cluster_logits[torch.cat([matched_predicted_cluster_id_real[i],matched_predicted_cluster_id_junk[i]])]
                     cost_coref = F.binary_cross_entropy(premuted_cluster_logits.unsqueeze(1)*permuted_coref_logits, permuted_gold, reduction=self.args.reduction) / coref_logits.shape[1]
                 else:
@@ -747,8 +750,6 @@ class MatchingLoss(nn.Module):
             elif coref_logits.shape[1] > 0:
                 cost_coref = F.binary_cross_entropy(coref_logits, torch.zeros_like(coref_logits), reduction=self.args.reduction) / coref_logits.shape[1]
 
-            if not self.args.use_gold_mentions:
-                cost_coref /= coref_logits.shape[2]
             if self.args.b3_loss:
                 # b3_loss
                 real_coref_logits = coref_logits

@@ -87,7 +87,10 @@ def train(args, model, wandb):
     # output_dir = Path(args.output_dir)
 
     logger.info("Training/evaluation parameters %s", args)
-    data_model = DETRDataModule(args)
+    if args.resume_from:
+        data_model = DETRDataModule.load_from_checkpoint(args.resume_from)
+    else:
+        data_model = DETRDataModule(args)
     trainer = pl.Trainer(max_epochs=args.num_train_epochs, gpus=args.n_gpu, amp_backend='apex', logger= wandb, accumulate_grad_batches=args.gradient_accumulation_steps,\
         callbacks=[ModelCheckpoint(monitor="eval_avg_f1")], default_root_dir=args.output_dir)
     
