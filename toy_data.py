@@ -212,6 +212,7 @@ def get_batches(type, is_training, is_add_junk, factor, num_of_texts=NUM_OF_TEXT
     path += '.txt'
     if os.path.isfile(path):
         batches = read_data_file(path)
+        return batches
     else:
         batches = prepare_batches(*FUNCS[type](is_add_junk, num_of_texts), factor)
         write_data_file(path, batches[int(factor*num_of_texts)])
@@ -220,7 +221,7 @@ def get_batches(type, is_training, is_add_junk, factor, num_of_texts=NUM_OF_TEXT
             path += '_junk'
         path += '.txt'
         write_data_file(path, batches[num_of_texts-int(factor*num_of_texts)])
-    return batches[int(factor*num_of_texts)]
+        return batches[int(factor*num_of_texts)]
 
 # get_batches(FUNCTIONS_NAMES[0], 100)
 
