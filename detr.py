@@ -291,10 +291,10 @@ class DETR(pl.LightningModule):
 
             if self.args.add_junk:
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), mention_logits.cpu().detach(),
-                                                            self.args.threshold, gold_mentions_list, self.args.is_max, self.args.use_gold_mentions)
+                                                            self.args.threshold, gold_mentions_list, self.args.is_max, self.args.use_gold_mentions, self.args.is_cluster)
             else:
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
-                                                            self.args.threshold, gold_mentions_list, self.args.is_max, self.args.use_gold_mentions)
+                                                            self.args.threshold, gold_mentions_list, self.args.is_max, self.args.use_gold_mentions, self.args.is_cluster)
             self.train_evaluator.update(predicted_clusters, gold_clusters)
             loss, loss_parts = self.criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
             
@@ -319,6 +319,7 @@ class DETR(pl.LightningModule):
             return {'loss': loss}
 
     def training_epoch_end(self, train_step_outputs):
+        self.log('epoch', self.epoch)
         if self.args.do_train:
             t_p, t_r, t_f1 = self.train_evaluator.get_prf()
             if self.args.local_rank in [-1, 0]:
@@ -399,9 +400,9 @@ class DETR(pl.LightningModule):
                 zip(self.all_cluster_logits_cpu, self.all_coref_logits_cpu, self.all_gold_clusters, self.all_gold_mentions)):
             if len(self.all_mention_logits_cpu) > 0:
                 mention_logits = self.all_mention_logits_cpu[i]
-                predicted_clusters = calc_predicted_clusters(cluster_logits.unsqueeze(0), coref_logits.unsqueeze(0), mention_logits.unsqueeze(0), self.args.threshold, [gold_mentions], self.args.is_max, self.args.use_gold_mentions)
+                predicted_clusters = calc_predicted_clusters(cluster_logits.unsqueeze(0), coref_logits.unsqueeze(0), mention_logits.unsqueeze(0), self.args.threshold, [gold_mentions], self.args.is_max, self.args.use_gold_mentions, self.args.is_cluster)
             else:
-                predicted_clusters = calc_predicted_clusters(cluster_logits.unsqueeze(0), coref_logits.unsqueeze(0), [], self.args.threshold, [gold_mentions], self.args.is_max, self.args.use_gold_mentions)
+                predicted_clusters = calc_predicted_clusters(cluster_logits.unsqueeze(0), coref_logits.unsqueeze(0), [], self.args.threshold, [gold_mentions], self.args.is_max, self.args.use_gold_mentions, self.args.is_cluster)
             self.eval_evaluator.update(predicted_clusters, [gold_clusters])
         p, r, f1 = self.eval_evaluator.get_prf()
 
@@ -410,7 +411,7 @@ class DETR(pl.LightningModule):
             avg_pred_split_without_perfect, avg_pred_split_with_perfect, prec_biggest_gold_in_pred_without_perfect, \
                 prec_biggest_gold_in_pred_with_perfect, prec_biggest_pred_in_gold_without_perfect, prec_biggest_pred_in_gold_with_perfect = \
                     error_analysis(self.all_cluster_logits_cuda, self.all_coref_logits_cuda, self.all_mention_logits_cuda, self.all_gold_clusters, self.all_gold_mentions, \
-                        self.all_input_ids, self.args.threshold, self.args.is_max, self.args.use_gold_mentions)
+                        self.all_input_ids, self.args.threshold, self.args.is_max, self.args.use_gold_mentions, self.args.is_cluster)
     
         non_zero_rows = np.where(np.sum(self.query_cluster_confusion_matrix, 1) > 0)[0]
         non_zero_cols = np.where(np.sum(self.query_cluster_confusion_matrix, 0) > 0)[0]
@@ -716,12 +717,15 @@ class MatchingLoss(nn.Module):
             #     torch.distributed.all_reduce(num_of_gold_clusters)
             # num_of_gold_clusters = torch.clamp(num_of_gold_clusters / get_world_size(), min=1).item()
 
-            gold_is_cluster = torch.zeros_like(cluster_logits)
-            weight_cluster = self.eos_coef * torch.ones_like(cluster_logits)
-            if matched_predicted_cluster_id_real[i] is not False:
-                gold_is_cluster[matched_predicted_cluster_id_real[i]] = 1
-                weight_cluster[matched_predicted_cluster_id_real[i]] = 1
-            cost_is_cluster = F.binary_cross_entropy(cluster_logits, gold_is_cluster, weight=weight_cluster, reduction=self.args.reduction) / len(cluster_logits)
+            if not self.args.is_cluster:
+                cost_is_cluster = torch.tensor(0)
+            else:
+                gold_is_cluster = torch.zeros_like(cluster_logits)
+                weight_cluster = self.eos_coef * torch.ones_like(cluster_logits)
+                if matched_predicted_cluster_id_real[i] is not False:
+                    gold_is_cluster[matched_predicted_cluster_id_real[i]] = 1
+                    weight_cluster[matched_predicted_cluster_id_real[i]] = 1
+                cost_is_cluster = F.binary_cross_entropy(cluster_logits, gold_is_cluster, weight=weight_cluster, reduction=self.args.reduction) / len(cluster_logits)
                 
             if not self.args.add_junk or sum(targets_mentions[i].shape) == 0:
                 cost_is_mention = torch.tensor(0)

@@ -81,9 +81,12 @@ class HungarianMatcher(nn.Module):
             num_of_gold_clusters = int(real_cluster_target.shape[0])
             num_queries = coref_logits.shape[0]
 
-            cost_is_cluster = F.binary_cross_entropy(cluster_logits.repeat(1, num_queries), \
-                torch.cat([torch.ones([num_queries, num_of_gold_clusters], device=coref_logits.device), \
-                    torch.zeros([num_queries, num_queries - num_of_gold_clusters], device=coref_logits.device)], 1), reduction='none') # [num_queries, num_queries]
+            if self.args.is_cluster:
+                cost_is_cluster = F.binary_cross_entropy(cluster_logits.repeat(1, num_queries), \
+                    torch.cat([torch.ones([num_queries, num_of_gold_clusters], device=coref_logits.device), \
+                        torch.zeros([num_queries, num_queries - num_of_gold_clusters], device=coref_logits.device)], 1), reduction='none') # [num_queries, num_queries]
+            else:
+                cost_is_cluster = torch.tensor(0)
 
             if self.args.add_junk:
                 mention_logits = mention_logits.repeat(num_queries, 1) # [num_queries, tokens]
