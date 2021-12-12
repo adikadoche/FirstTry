@@ -66,7 +66,7 @@ class DETRDataModule(pl.LightningDataModule):
                 self.eval_dataset, eval_sampler, self.eval_loader, self.args.eval_batch_size = get_data_objects(self.args, self.args.predict_file, False)
             else:
                 self.args.eval_batch_size = 1
-                self.eval_dataset, self.eval_loader = get_toy_data_objects(self.args.input_type.split('_')[0], False, self.args, int(0.1*int(self.args.input_type.split('_')[1])))
+                self.eval_dataset, self.eval_loader = get_toy_data_objects(self.args.input_type.split('_')[0], False, self.args, 0.1, int(self.args.input_type.split('_')[1]))
 
         return self.eval_loader
 
@@ -76,7 +76,7 @@ class DETRDataModule(pl.LightningDataModule):
                 train_dataset, train_sampler, self.train_loader, self.args.train_batch_size = get_data_objects(self.args, self.args.train_file, True)
             else:
                 self.args.train_batch_size = 1
-                train_dataset, self.train_loader = get_toy_data_objects(self.args.input_type.split('_')[0], True, self.args, int(0.9*int(self.args.input_type.split('_')[1])))
+                train_dataset, self.train_loader = get_toy_data_objects(self.args.input_type.split('_')[0], True, self.args, 0.9, int(self.args.input_type.split('_')[1]))
         return self.train_loader
 
 

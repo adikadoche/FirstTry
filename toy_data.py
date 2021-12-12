@@ -168,17 +168,27 @@ def create_structural_dataset(is_add_junk=False, num_of_texts = 3000):
                 clusters[-1].append(s_cluster)
     return text, clusters
 
-def prepare_batches(text, clusters):
+def prepare_batches(text, clusters, factor):
+    batches_dict = {}
     batches = []
-    for i in range(len(text)):
+    for i in range(int(factor*len(text))):
         batch = dict()
         batch['clusters'] = clusters[i]
         batch['input_ids'] = [TOKENIZER.encode(text[i])]
         batch['text_len'] = [len(batch['input_ids'][0])]
         batch['input_mask'] = [[1] * batch['text_len'][0]]
-
         batches.append(batch)
-    return batches
+    batches_dict[int(factor*len(text))] = batches
+    batches = []
+    for i in range(int(factor*len(text)), len(text)):
+        batch = dict()
+        batch['clusters'] = clusters[i]
+        batch['input_ids'] = [TOKENIZER.encode(text[i])]
+        batch['text_len'] = [len(batch['input_ids'][0])]
+        batch['input_mask'] = [[1] * batch['text_len'][0]]
+        batches.append(batch)
+    batches_dict[len(text)-int(factor*len(text))] = batches
+    return batches_dict
 
 def read_data_file(path):
     with open(path, "r") as reader:
@@ -195,25 +205,30 @@ def write_data_file(path, batches):
 FUNCS = {FUNCTIONS_NAMES[0]: create_letters_dataset, FUNCTIONS_NAMES[1]: create_structural_dataset, FUNCTIONS_NAMES[2]: create_sequences_dataset}
 NUM_OF_TEXTS = 20
 
-def get_batches(type, is_training, is_add_junk, num_of_texts=NUM_OF_TEXTS):
-    path = TOY_DATA_PATH + f'{type}_{num_of_texts}_{is_training}'
+def get_batches(type, is_training, is_add_junk, factor, num_of_texts=NUM_OF_TEXTS):
+    path = TOY_DATA_PATH + f'{type}_{int(factor*num_of_texts)}_{is_training}'
     if type == FUNCTIONS_NAMES[0] and is_add_junk:
         path += '_junk'
     path += '.txt'
     if os.path.isfile(path):
         batches = read_data_file(path)
     else:
-        batches = prepare_batches(*FUNCS[type](is_add_junk, num_of_texts))
-        write_data_file(path, batches)
+        batches = prepare_batches(*FUNCS[type](is_add_junk, num_of_texts), factor)
+        write_data_file(path, batches[int(factor*num_of_texts)])
+        path = TOY_DATA_PATH + f'{type}_{num_of_texts-int(factor*num_of_texts)}_{not is_training}'
+        if type == FUNCTIONS_NAMES[0] and is_add_junk:
+            path += '_junk'
+        path += '.txt'
+        write_data_file(path, batches[num_of_texts-int(factor*num_of_texts)])
     return batches
 
 # get_batches(FUNCTIONS_NAMES[0], 100)
 
 class ToyDataset(Dataset):
 
-    def __init__(self, type, is_training, is_add_junk=False, num_of_texts=NUM_OF_TEXTS) -> None:
+    def __init__(self, type, is_training, is_add_junk=False, factor=0.8, num_of_texts=NUM_OF_TEXTS) -> None:
         super().__init__()
-        self.examples = get_batches(type, is_training, is_add_junk, num_of_texts)
+        self.examples = get_batches(type, is_training, is_add_junk, factor, num_of_texts)
 
     def __len__(self):
         return len(self.examples)
@@ -233,8 +248,8 @@ def collate_fn(batch):
             batch_concat[key][i] = batch[i][key]
     return batch_concat
 
-def get_toy_data_objects(type, is_training, args, num_of_texts=NUM_OF_TEXTS):
-    dataset = ToyDataset(type, is_training, args.add_junk or not args.use_gold_mentions, num_of_texts)
+def get_toy_data_objects(type, is_training, args, factor, num_of_texts=NUM_OF_TEXTS):
+    dataset = ToyDataset(type, is_training, args.add_junk or not args.use_gold_mentions, factor, num_of_texts)
     loader = DataLoader(dataset, batch_size=1,
                              pin_memory=not args.no_cuda, num_workers=args.num_workers, collate_fn=collate_fn,
                              worker_init_fn=lambda worker_id: np.random.seed(torch.initial_seed() % 2**32))
