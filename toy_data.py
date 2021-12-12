@@ -234,7 +234,7 @@ def collate_fn(batch):
     return batch_concat
 
 def get_toy_data_objects(type, is_training, args, num_of_texts=NUM_OF_TEXTS):
-    dataset = ToyDataset(type, is_training, args.add_junk, num_of_texts)
+    dataset = ToyDataset(type, is_training, args.add_junk or not args.use_gold_mentions, num_of_texts)
     loader = DataLoader(dataset, batch_size=1,
                              pin_memory=not args.no_cuda, num_workers=args.num_workers, collate_fn=collate_fn,
                              worker_init_fn=lambda worker_id: np.random.seed(torch.initial_seed() % 2**32))
