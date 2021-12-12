@@ -140,15 +140,9 @@ class DETR(pl.LightningModule):
         self.losses = []
         self.losses_parts = {}
         self.batch_sizes = []
-        self.all_cluster_logits_cpu = []
-        self.all_coref_logits_cpu = []
-        self.all_mention_logits_cpu = []
-        self.all_cluster_logits_cuda = []
+        self.all_predicted_clusters = []
         self.all_input_ids = []
-        self.all_coref_logits_cuda = []
-        self.all_mention_logits_cuda = []
         self.all_gold_clusters = []
-        self.all_gold_mentions = []
         if self.args.input_type == 'letters':
             self.query_cluster_confusion_matrix = np.zeros([args.num_queries, 26], dtype=int)
         else:
@@ -368,6 +362,13 @@ class DETR(pl.LightningModule):
                     for t in target_letters:
                         self.query_cluster_confusion_matrix[i][t] += 1
 
+        if self.args.add_junk:
+            predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), mention_logits.cpu().detach(),
+                                                        self.args.threshold, gold_mentions_list, self.args.is_max, self.args.use_gold_mentions, self.args.is_cluster)
+        else:
+            predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
+                                                        self.args.threshold, gold_mentions_list, self.args.is_max, self.args.use_gold_mentions, self.args.is_cluster)
+        self.eval_evaluator.update(predicted_clusters, gold_clusters)
         loss, loss_parts = self.criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
         self.losses.append(loss.mean().detach().cpu())
         for key in loss_parts.keys():
@@ -377,15 +378,8 @@ class DETR(pl.LightningModule):
                 self.losses_parts[key] = loss_parts[key]
         self.batch_sizes.append(loss.shape[0]) 
 
-        if self.args.add_junk:
-            self.all_mention_logits_cuda += [ml.detach().clone() for ml in mention_logits]
-            self.all_mention_logits_cpu += [ml.detach().cpu() for ml in mention_logits]
-        self.all_cluster_logits_cuda += [cl.detach().clone() for cl in cluster_logits]
-        self.all_coref_logits_cuda += [cl.detach().clone() for cl in coref_logits]
-        self.all_cluster_logits_cpu += [cl.detach().cpu() for cl in cluster_logits]
-        self.all_coref_logits_cpu += [cl.detach().cpu() for cl in coref_logits]        
+        self.all_predicted_clusters += predicted_clusters  
         
-        self.all_gold_mentions += gold_mentions_list
         self.all_input_ids += input_ids    
         self.all_gold_clusters += gold_clusters
 
@@ -396,22 +390,13 @@ class DETR(pl.LightningModule):
         losses_parts = {key:np.average(self.losses_parts[key]) for key in self.losses_parts.keys()}
 
         metrics = [0] * 5
-        for i, (cluster_logits, coref_logits, gold_clusters, gold_mentions) in enumerate(
-                zip(self.all_cluster_logits_cpu, self.all_coref_logits_cpu, self.all_gold_clusters, self.all_gold_mentions)):
-            if len(self.all_mention_logits_cpu) > 0:
-                mention_logits = self.all_mention_logits_cpu[i]
-                predicted_clusters = calc_predicted_clusters(cluster_logits.unsqueeze(0), coref_logits.unsqueeze(0), mention_logits.unsqueeze(0), self.args.threshold, [gold_mentions], self.args.is_max, self.args.use_gold_mentions, self.args.is_cluster)
-            else:
-                predicted_clusters = calc_predicted_clusters(cluster_logits.unsqueeze(0), coref_logits.unsqueeze(0), [], self.args.threshold, [gold_mentions], self.args.is_max, self.args.use_gold_mentions, self.args.is_cluster)
-            self.eval_evaluator.update(predicted_clusters, [gold_clusters])
         p, r, f1 = self.eval_evaluator.get_prf()
 
-        print_predictions(self.all_cluster_logits_cuda, self.all_coref_logits_cuda, self.all_mention_logits_cuda, self.all_gold_clusters, self.all_gold_mentions, self.all_input_ids, self.args.threshold, self.args, self.tokenizer)
+        print_predictions(self.all_predicted_clusters, self.all_gold_clusters, self.all_input_ids, self.args, self.tokenizer)
         prec_gold_to_one_pred, prec_pred_to_one_gold, avg_gold_split_without_perfect, avg_gold_split_with_perfect, \
             avg_pred_split_without_perfect, avg_pred_split_with_perfect, prec_biggest_gold_in_pred_without_perfect, \
                 prec_biggest_gold_in_pred_with_perfect, prec_biggest_pred_in_gold_without_perfect, prec_biggest_pred_in_gold_with_perfect = \
-                    error_analysis(self.all_cluster_logits_cuda, self.all_coref_logits_cuda, self.all_mention_logits_cuda, self.all_gold_clusters, self.all_gold_mentions, \
-                        self.all_input_ids, self.args.threshold, self.args.is_max, self.args.use_gold_mentions, self.args.is_cluster)
+                    error_analysis(self.all_predicted_clusters, self.all_gold_clusters)
     
         non_zero_rows = np.where(np.sum(self.query_cluster_confusion_matrix, 1) > 0)[0]
         non_zero_cols = np.where(np.sum(self.query_cluster_confusion_matrix, 0) > 0)[0]
@@ -487,15 +472,9 @@ class DETR(pl.LightningModule):
         self.losses = []
         self.losses_parts = {}
         self.batch_sizes = []
-        self.all_cluster_logits_cpu = []
-        self.all_coref_logits_cpu = []
-        self.all_mention_logits_cpu = []
-        self.all_cluster_logits_cuda = []
         self.all_input_ids = []
-        self.all_coref_logits_cuda = []
-        self.all_mention_logits_cuda = []
         self.all_gold_clusters = []
-        self.all_gold_mentions = []
+        self.all_predicted_clusters = []
         self.query_cluster_confusion_matrix = np.zeros([self.args.num_queries, self.args.num_queries], dtype=int)
         # self.query_cluster_confusion_matrix = np.zeros([self.args.num_queries, 26], dtype=int)
 
