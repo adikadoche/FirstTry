@@ -4,13 +4,6 @@
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
-        {
-            "name": "toy_data",
-            "type": "python",
-            "request": "launch",
-            "program": "${workspaceFolder}/toy_data.py",
-            "console": "integratedTerminal"
-        },
         // {
         //     "name": "Python: Current File",
         //     "type": "python",
@@ -43,12 +36,12 @@
                 "/home/gamir/adiz/datasets/ontonotes/overfit/trainveryshort.english.jsonlines",
                 "--predict_file",
                 "/home/gamir/adiz/datasets/ontonotes/overfit/devveryshort.english.jsonlines",
-                // "--do_train",
-                "--resume_from", "/home/gamir/adiz/Code/runs/firsttry/output_dir/12_06_2021_12_21_12_letters3500_sum_eos1_nolong/checkpoint-8",
+                "--do_train",
+                "--resume_from", "/home/gamir/adiz/Code/runs/firsttry/output_dir/12_13_2021_15_09_09_slots_nolong_cluster_letters5000_50/checkpoint-0",
                 "--eval",
                 "all",
                 "--input_type",
-                "letters_3500",
+                "letters_90",
                 // "--add_junk",
                 // "--add_profile",
                 "--verbose",
@@ -74,12 +67,18 @@
                 "--gradient_accumulation_steps",
                 "1",
                 // "--amp",
-                "--softmax",
+                // "--softmax",
                 // "--sequential",
-                "--use_gold_mentions",
-                // "--no_cuda",
+                // "--use_gold_mentions",
+                "--no_cuda",
+                "--slots",
+                "--no_long",
+                "--is_cluster",
+                "--is_encoding",
                 // "--cluster_block",
-                // "--is_max",
+                "--is_max",
+                "--BIO",
+                "1",
                 "--reduction",
                 "sum",
                 "--max_total_seq_len",
@@ -103,6 +102,13 @@
                 "OUTPUT_DIR": "/home/gamir/adiz/Code/runs/s2e-coref/output_dir",
                 "CACHE_DIR": "/home/gamir/adiz/Code/runs/s2e-coref/cache_dir"
             }
+        },
+        {
+            "name": "toy_data",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/toy_data.py",
+            "console": "integratedTerminal"
         }
     ]
 }

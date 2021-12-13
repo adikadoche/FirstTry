@@ -16,7 +16,7 @@ from utils import load_from_checkpoint, save_checkpoint
 from consts import TOKENS_PAD, SPEAKER_PAD
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
-from detr import DETRDataModule
+from detr import DETRDataModule, DETR
 
 from transformers import AdamW, get_constant_schedule_with_warmup
 
@@ -87,23 +87,14 @@ def train(args, model, wandb):
     # output_dir = Path(args.output_dir)
 
     logger.info("Training/evaluation parameters %s", args)
-    if args.resume_from:
-        data_model = DETRDataModule.load_from_checkpoint(args.resume_from)
-    else:
-        data_model = DETRDataModule(args)
+    # if args.resume_from:
+    #     model = DETR.load_from_checkpoint(args.resume_from)
+    data_model = DETRDataModule(args)
         
-    # data_model = DETRDataModule(args)
     trainer = pl.Trainer(max_epochs=args.num_train_epochs, gpus=args.n_gpu, amp_backend='apex', logger= wandb, accumulate_grad_batches=args.gradient_accumulation_steps,\
         callbacks=[ModelCheckpoint(monitor="eval_avg_f1"), ModelCheckpoint(monitor="epoch")], default_root_dir=args.output_dir)
     
-    if args.resume_from:  #TODO
-        pass
-        # logger.info("Loading from checkpoint {}".format(args.resume_from))
-        # loaded_args = load_from_checkpoint(model, args.resume_from, args, optimizer)
-        # args.resume_global_step = int(loaded_args['global_step'])
-        # if not args.do_train:
-        #     return args.resume_global_step
-                                 
+                             
     # global_step = 0 if not args.resume_from else args.resume_global_step
     # if args.local_rank in [-1, 0]:
     #     purge_step = None if not args.resume_from else args.resume_global_step

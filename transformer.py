@@ -57,17 +57,20 @@ class Transformer(nn.Module):
         if pos_embed is not None:
             pos_embed = pos_embed.transpose(0,1)
         binary_mask = mask == 0
-        query_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)
-        tgt = query_embed
         if is_encoder:
             memory = self.encoder(src, src_key_padding_mask=binary_mask, pos=pos_embed)
         else:
             memory = src
 
-        hs = self.decoder(tgt, memory, is_cluster=is_cluster, IO_score=IO_score, is_cluster_block=is_cluster_block, memory_key_padding_mask=binary_mask,
-                            pos=pos_embed, query_pos=query_embed)
+        if query_embed is not None:
+            query_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)
+            tgt = query_embed
+            hs = self.decoder(tgt, memory, is_cluster=is_cluster, IO_score=IO_score, is_cluster_block=is_cluster_block, memory_key_padding_mask=binary_mask,
+                                pos=pos_embed, query_pos=query_embed)
 
-        return hs.transpose(1, 2), memory.transpose(0, 1)
+            return hs.transpose(1, 2), memory.transpose(0, 1)
+        else:
+            return None, memory.transpose(0, 1)
 
 
 class TransformerEncoder(nn.Module):
@@ -194,9 +197,12 @@ class TransformerSequentialDecoder(nn.Module):
             last_hs_tiled = cur_last_hs.unsqueeze(2).repeat(1, 1, num_tokens_or_mentions, 1) # [bs, num_queries, tokens/mentions, emb]
             memory_tiled = cur_memory.unsqueeze(1).repeat(1, num_queries, 1, 1) # [bs, num_queries, tokens/mentions, emb]
             coref_features = torch.cat([last_hs_tiled, memory_tiled], -1) # [bs, num_queries, tokens/mentions, 2 * emb]
-            coref_logits_unnorm = IO_score(coref_features) # [bs, num_queries, tokens/mentions, 3]
-            cur_coref_logits = coref_logits_unnorm.softmax(-1)
-            cur_coref_logits = torch.sum(torch.index_select(cur_coref_logits, -1, torch.tensor([0,1], device=cur_coref_logits.device)), dim=-1)
+            coref_logits_unnorm = IO_score(coref_features) # [bs, num_queries, tokens/mentions, BIO(1/3)]
+            if coref_logits_unnorm.shape[-1] == 1:
+                cur_coref_logits = coref_logits_unnorm.sigmoid().squeeze(-1)
+            else:
+                cur_coref_logits = coref_logits_unnorm.softmax(-1)
+                cur_coref_logits = torch.sum(torch.index_select(cur_coref_logits, -1, torch.tensor([0,1], device=cur_coref_logits.device)), dim=-1)
             coref_logits.append(torch.cat([cur_coref_logits, \
                 torch.zeros(1, cur_coref_logits.shape[1], memory.shape[1]-cur_coref_logits.shape[2], device=cur_coref_logits.device)], 2).repeat([nheads,1,1]))
         return cluster_logits, torch.cat(coref_logits)

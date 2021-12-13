@@ -73,7 +73,7 @@ class HungarianMatcher(nn.Module):
             if self.args.add_junk:
                 mention_logits = outputs["mention_logits"][i].squeeze(-1).unsqueeze(0) # [1, tokens]
 
-            if self.args.use_gold_mentions:
+            if self.args.BIO == 1:
                 real_cluster_target_rows = torch.sum(targets_clusters[i], -1) > 0
             else:
                 real_cluster_target_rows = torch.sum(targets_clusters[i]==2, 1) != targets_clusters[i].shape[1]
@@ -100,7 +100,7 @@ class HungarianMatcher(nn.Module):
             cost_coref = []
             for cluster in real_cluster_target:
                 gold_per_token_repeated = cluster.repeat(num_queries, 1) # [num_queries, tokens]
-                if not self.args.use_gold_mentions:
+                if self.args.BIO == 3:
                     losses_for_current_gold_cluster = F.cross_entropy(coref_logits.reshape([-1, 3]), gold_per_token_repeated.reshape([-1]), reduction='none').reshape([coref_logits.shape[0], -1]).mean(1)
                 elif self.args.cluster_block:
                     losses_for_current_gold_cluster = F.binary_cross_entropy(cluster_logits * coref_logits, gold_per_token_repeated, reduction='none').mean(1)
@@ -108,7 +108,7 @@ class HungarianMatcher(nn.Module):
                     losses_for_current_gold_cluster = F.binary_cross_entropy(coref_logits, gold_per_token_repeated, reduction='none').mean(1)
                 cost_coref.append(losses_for_current_gold_cluster) # [num_queries]
             if num_of_gold_clusters < num_queries:
-                if not self.args.use_gold_mentions: 
+                if self.args.BIO == 3: 
                     zero_cluster = torch.ones_like(targets_clusters[i]) * 2
                     junk_cluster_score = F.cross_entropy(coref_logits.reshape([-1, 3]), zero_cluster.reshape([-1]), reduction='none').reshape([coref_logits.shape[0], -1]).mean(-1)
                 else:

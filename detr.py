@@ -6,6 +6,7 @@ import logging
 import os
 import torch
 import torch.nn.functional as F
+from torch.nn import init
 from torch import nn, Tensor
 from consts import OUT_KEYS, TOKENS_PAD, LETTERS_LIST
 import math
@@ -127,7 +128,7 @@ class DETR(pl.LightningModule):
             nn.ReLU(),
             nn.Linear(300, 100),
             nn.ReLU(),
-            nn.Linear(100, 3),
+            nn.Linear(100, self.args.BIO),
         ) #query and token concatenated, resulting in IO score
 
         self.query_head = nn.Linear(hidden_dim, 75)
@@ -160,11 +161,47 @@ class DETR(pl.LightningModule):
         self.toy_onehot_dict[0]=0
         self.toy_onehot_dict[2]=0
 
+        if self.args.slots:  
+            dim = args.hidden_dim      
+            self.num_slots = num_queries
+            self.iters = 3
+            self.eps = 1e-8
+            self.scale = dim ** -0.5
+
+            self.slots_mu = nn.Parameter(torch.randn(1, 1, dim))
+
+            self.slots_logsigma = nn.Parameter(torch.zeros(1, 1, dim))
+            init.xavier_uniform_(self.slots_logsigma)
+
+            self.to_q = nn.Linear(dim, dim)
+            self.to_k = nn.Linear(dim, dim)
+            self.to_v = nn.Linear(dim, dim)
+
+            self.gru = nn.GRUCell(dim, dim)
+
+            self.mlp = nn.Sequential(
+                nn.Linear(dim, dim*2),
+                nn.ReLU(inplace = True),
+                nn.Linear(dim*2, dim)
+            )
+
+            self.norm_input  = nn.LayerNorm(dim)
+            self.norm_slots  = nn.LayerNorm(dim)
+            self.norm_pre_ff = nn.LayerNorm(dim)
+                
+            self.mlp_classifier = nn.Sequential(
+                nn.Linear(dim, int(dim/2)),
+                nn.ReLU(inplace = True),
+                nn.Linear(int(dim/2), 1),
+                nn.Sigmoid()
+            )
+
         if self.args.resume_from:
             global_step = self.args.resume_from.rstrip('/').split('-')[-1]
             checkpoint = torch.load(self.args.resume_from + '/model.step-' + global_step + '.pt', map_location=args.device)
             model_to_load = self.module if hasattr(self, 'module') else self  # Take care of distributed/parallel training
             model_to_load.load_state_dict(checkpoint['model'])
+            x=1
 
     def forward(self, input_ids, mask, gold_mentions, num_mentions):
         """ The forward expects a NestedTensor, which consists of:
@@ -183,7 +220,9 @@ class DETR(pl.LightningModule):
         """
         # input_ids_cat = torch.cat(input_ids, dim=1).squeeze(0)
         # mask_cat = torch.cat(mask, dim=1).squeeze(0)
-        if self.args.random_queries:
+        if self.args.slots:
+            raw_query_embed = None
+        elif self.args.random_queries:
             raw_query_embed = torch.normal(torch.zeros_like(self.query_embed.weight), 1) * self.query_sigma + self.query_mu #raw_query_embed = torch.normal(torch.zeros_like(self.query_embed.weight), 0.5)
         else:
             raw_query_embed = self.query_embed.weight
@@ -217,13 +256,17 @@ class DETR(pl.LightningModule):
 
 
             if not self.args.use_gold_mentions:
-                hs, memory = self.transformer(longfomer_no_pad, span_mask, raw_query_embed, self.is_cluster, self.IO_score, self.args.cluster_block, self.args.input_type == 'ontonotes') # [dec_layers, 1, num_queries, emb], [1, seg*seq, emb]
+                hs, memory = self.transformer(longfomer_no_pad, span_mask, raw_query_embed, self.is_cluster, self.IO_score, self.args.cluster_block, self.args.is_encoding) # [dec_layers, 1, num_queries, emb], [1, seg*seq, emb]
             else:   #TODO: not good for sequences because only takes first and last letters and doesnt have a representation of the surrounding
                 span_starts = [torch.tensor([m[0] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
                 span_ends = [torch.tensor([m[1] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
                 span_emb, span_mask = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends, num_mentions)  # [mentions, emb']
                 span_emb = self.span_proj(span_emb) # [mentions, emb]
-                hs, memory = self.transformer(span_emb, span_mask, raw_query_embed, self.is_cluster, self.IO_score, self.args.cluster_block, self.args.input_type == 'ontonotes')  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
+                hs, memory = self.transformer(span_emb, span_mask, raw_query_embed, self.is_cluster, self.IO_score, self.args.cluster_block, self.args.is_encoding)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
+            
+            if self.args.slots:
+                cluster_logits, coref_logits, mention_logits = self.slot_attention(memory)
+
         else:
             if not self.args.use_gold_mentions:
                 input_to_embed = input_ids.squeeze(0)
@@ -231,15 +274,59 @@ class DETR(pl.LightningModule):
                 input_to_embed = input_ids[0][0][[[m[0] for i in range(len(gold_mentions)) for m in gold_mentions[i]]]].unsqueeze(0)
             span_mask = torch.ones_like(input_to_embed)
             embedding = self.embedder_toy_data(torch.tensor([self.toy_onehot_dict[i] for i in input_to_embed.cpu().numpy()[0]], device=input_ids.device)).unsqueeze(0)
-            hs, memory = self.transformer(embedding, span_mask, raw_query_embed, self.is_cluster, self.IO_score, self.args.cluster_block, self.args.input_type == 'ontonotes')  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
+            if self.args.slots:
+                cluster_logits, coref_logits, mention_logits = self.slot_attention(embedding)
+            else:
+                hs, memory = self.transformer(embedding, span_mask, raw_query_embed, self.is_cluster, self.IO_score, self.args.cluster_block, self.args.is_encoding)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
 
-        last_hs = hs[-1] # [bs, num_queries, emb]
-        cluster_logits, coref_logits, mention_logits = self.calc_cluster_and_coref_logits(last_hs, memory, span_mask)
+        if not self.args.slots:
+            last_hs = hs[-1] # [bs, num_queries, emb]
+            cluster_logits, coref_logits, mention_logits = self.calc_cluster_and_coref_logits(last_hs, memory, span_mask)
 
         out = {"coref_logits": coref_logits,
                 "cluster_logits": cluster_logits,
                 "mention_logits": mention_logits}
         return out
+
+    def slot_attention(self, input_emb):
+        bs, doc_len, emb, device = *input_emb.shape, input_emb.device
+        
+        mu = self.slots_mu.expand(bs, self.num_slots, -1)
+        sigma = self.slots_logsigma.exp().expand(bs, self.num_slots, -1)
+
+        slots = mu + sigma * torch.randn(mu.shape, device = device)
+
+        inputs = self.norm_input(input_emb)        
+        k, v = self.to_k(inputs), self.to_v(inputs)
+
+        for _ in range(self.iters):
+            slots_prev = slots
+
+            slots = self.norm_slots(slots)
+            q = self.to_q(slots)
+
+            dots = torch.einsum('bid,bjd->bij', q, k) * self.scale
+            attn = dots.softmax(dim=1) + self.eps
+            attn = attn / attn.sum(dim=-1, keepdim=True)
+
+            updates = torch.einsum('bjd,bij->bid', v, attn)
+
+            slots = self.gru(
+                updates.reshape(-1, emb),
+                slots_prev.reshape(-1, emb)
+            )
+
+            slots = slots.reshape(bs, -1, emb)
+            slots = slots + self.mlp(self.norm_pre_ff(slots))
+
+        slots = self.norm_slots(slots)
+        q = self.to_q(slots)
+
+        dots = torch.einsum('bid,bjd->bij', q, k) * self.scale
+        coref_logits = dots.softmax(dim=1) + self.eps
+        cluster_logits = self.mlp_classifier(slots)
+
+        return cluster_logits, coref_logits, torch.tensor([])
 
     def configure_optimizers(self):
         param_dicts = [
@@ -278,7 +365,7 @@ class DETR(pl.LightningModule):
             if len(input_ids) == 0:
                 return 0
 
-            gold_matrix = create_gold_matrix(self.args.device, sum_text_len, self.args.num_queries, gold_clusters, gold_mentions_list, self.args.use_gold_mentions)
+            gold_matrix = create_gold_matrix(self.args.device, sum_text_len, self.args.num_queries, gold_clusters, gold_mentions_list, self.args.use_gold_mentions, self.args.BIO)
 
             outputs = self(input_ids, input_mask, gold_mentions, num_mentions)
             cluster_logits, coref_logits, mention_logits = outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits']
@@ -340,7 +427,7 @@ class DETR(pl.LightningModule):
         else:
             gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=self.args.device) for gm in gold_mentions_list]
         
-        gold_matrix = create_gold_matrix(self.args.device, sum_text_len, self.args.num_queries, gold_clusters, gold_mentions_list, self.args.use_gold_mentions)
+        gold_matrix = create_gold_matrix(self.args.device, sum_text_len, self.args.num_queries, gold_clusters, gold_mentions_list, self.args.use_gold_mentions, self.args.BIO)
 
         input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = \
             tensor_and_remove_empty(batch, gold_mentions_list, self.args, self.input_ids_pads, self.mask_pads)
@@ -550,15 +637,18 @@ class DETR(pl.LightningModule):
             last_hs_tiled = cur_last_hs.unsqueeze(2).repeat(1, 1, num_tokens_or_mentions, 1) # [bs, num_queries, tokens/mentions, emb]
             memory_tiled = cur_memory.unsqueeze(1).repeat(1, self.num_queries, 1, 1) # [bs, num_queries, tokens/mentions, emb]
             coref_features = torch.cat([last_hs_tiled, memory_tiled], -1) # [bs, num_queries, tokens/mentions, 2 * emb]
-            coref_logits_unnorm = self.IO_score(coref_features) # [bs, num_queries, tokens/mentions, 3]
+            coref_logits_unnorm = self.IO_score(coref_features) # [bs, num_queries, tokens/mentions, BIO(3/1)]
 
             if coref_logits_unnorm.shape[-1] > 1:
                 cur_coref_logits = coref_logits_unnorm.softmax(-1)
             elif self.args.softmax: 
                 cur_coref_logits = coref_logits_unnorm.softmax(dim=1)
             else:
-                cur_coref_logits = coref_logits_unnorm.sigmoid()
-            coref_logits.append(torch.cat([cur_coref_logits, (torch.ones(cur_coref_logits.shape[0], cur_coref_logits.shape[1], memory.shape[1]-cur_coref_logits.shape[2], cur_coref_logits.shape[3]) * -1).to(cur_coref_logits.device)], dim=2))
+                cur_coref_logits = coref_logits_unnorm.sigmoid().squeeze(-1)
+            if len(cur_coref_logits.shape) > 3:
+                coref_logits.append(torch.cat([cur_coref_logits, (torch.ones(cur_coref_logits.shape[0], cur_coref_logits.shape[1], memory.shape[1]-cur_coref_logits.shape[2], cur_coref_logits.shape[3]) * -1).to(cur_coref_logits.device)], dim=2))
+            else:
+                coref_logits.append(torch.cat([cur_coref_logits, (torch.ones(cur_coref_logits.shape[0], cur_coref_logits.shape[1], memory.shape[1]-cur_coref_logits.shape[2]) * -1).to(cur_coref_logits.device)], dim=2))
 
             if self.args.add_junk:
                 mention_logits_masked.append(torch.cat([mention_logits[i][span_mask[i]==1].unsqueeze(0), (torch.ones(1, memory.shape[1]-cur_coref_logits.shape[2], 1) * -1).to(mention_logits.device)], dim=1))
@@ -674,7 +764,8 @@ class MatchingLoss(nn.Module):
         """
 
         # Retrieve the matching between the outputs of the last layer and the targets
-        matched_predicted_cluster_id_real, matched_gold_cluster_id_real, matched_predicted_cluster_id_junk, matched_gold_cluster_id_junk = self.matcher(outputs, targets)
+        matched_predicted_cluster_id_real, matched_gold_cluster_id_real, matched_predicted_cluster_id_junk, matched_gold_cluster_id_junk \
+            = self.matcher(outputs, targets)
 
         targets_clusters = targets['clusters']
         targets_mentions = targets['mentions']
@@ -683,7 +774,7 @@ class MatchingLoss(nn.Module):
         costs_parts = {'loss_is_cluster':[], 'loss_is_mention':[], 'loss_coref':[]}
         for i in range(bs):
             # Compute the average number of target boxes accross all nodes, for normalization purposes
-            coref_logits = outputs["coref_logits"][i].squeeze(0)  # [num_queries, tokens, 3]
+            coref_logits = outputs["coref_logits"][i].squeeze(0)  # [num_queries, tokens, BIO(3/1)]
             cluster_logits = outputs["cluster_logits"][i].squeeze() # [num_queries]
 
             if self.args.add_junk:
@@ -723,7 +814,7 @@ class MatchingLoss(nn.Module):
                 permuted_coref_logits = coref_logits[torch.cat([matched_predicted_cluster_id_real[i],matched_predicted_cluster_id_junk[i]])]
                 permuted_gold = targets_clusters[i][torch.cat([matched_gold_cluster_id_real[i],matched_gold_cluster_id_junk[i]])]
 
-                if not self.args.use_gold_mentions:
+                if self.args.BIO == 3:
                     cost_coref = F.cross_entropy(permuted_coref_logits.reshape([-1, 3]), permuted_gold.reshape([-1]), reduction=self.args.reduction) / coref_logits.shape[1]
                 elif self.args.cluster_block:
                     premuted_cluster_logits = cluster_logits[torch.cat([matched_predicted_cluster_id_real[i],matched_predicted_cluster_id_junk[i]])]

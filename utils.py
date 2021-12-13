@@ -151,19 +151,25 @@ def reduce_dict(input_dict, average=True):
         reduced_dict = {k: v for k, v in zip(names, values)}
     return reduced_dict
 
-def create_gold_matrix(device, doc_len, num_queries, gold_clusters, gold_mentions: List, use_gold_mentions):
+def create_gold_matrix(device, doc_len, num_queries, gold_clusters, gold_mentions: List, use_gold_mentions, BIO=1):
     if not use_gold_mentions:
         gold_per_token_batch = []
         for i in range(len(gold_clusters)):
-            gold_per_token = torch.ones(num_queries, doc_len[i], device=device, dtype=torch.long) * 2
+            if BIO == 3:
+                gold_per_token = torch.ones(num_queries, doc_len[i], device=device, dtype=torch.long) * 2
+            else:
+                gold_per_token = torch.zeros(num_queries, doc_len[i], device=device)
             if num_queries < len(gold_clusters[i]):
                 logger.info("in utils, exceeds num_queries with length {}".format(len(gold_clusters[i])))
             for cluster_id, cluster in enumerate(gold_clusters[i]):
                 if cluster_id >= num_queries:
                     continue
                 for start, end in cluster:
-                    gold_per_token[cluster_id, start] = 0
-                    gold_per_token[cluster_id, start + 1: end + 1] = 1            
+                    if BIO == 3:
+                        gold_per_token[cluster_id, start] = 0
+                        gold_per_token[cluster_id, start + 1: end + 1] = 1    
+                    else:
+                        gold_per_token[cluster_id, start:end+1] = 1
         gold_per_token_batch.append(gold_per_token)
     else:
         gold_per_token_batch = []
@@ -191,38 +197,58 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, thresh
     # when we are using gold mentions, we get coref_logits at the size of the gold mentions ([bs, clusters, gold_mentions]) (because we know they are mentions, what we are predicting is the clustering)
     
     bs = coref_logits.shape[0]
+    BIO = coref_logits.shape[-1] if len(coref_logits.shape) == 4 else 1
 
-    if is_max:
-        cluster_bools = cluster_logits.squeeze(-1).numpy() >= 0.5
-    else: 
-        cluster_bools = cluster_logits.squeeze(-1).numpy() >= threshold #TODO: should the cluster and coref share the same threshold?
+    cluster_bools = cluster_logits.squeeze(-1).numpy() >= threshold #TODO: should the cluster and coref share the same threshold?
     clusters = []
     for i in range(bs):
         cur_cluster_bool = cluster_bools[i]
         cur_coref_logits = coref_logits[i]
-        cluster_mention_mask = np.ones([1, cur_coref_logits.shape[0], cur_coref_logits.shape[1]])
+        cluster_mention_mask = np.ones([cur_coref_logits.shape[0], cur_coref_logits.shape[1]])
         if is_cluster:
-            cur_cluster_bool = np.tile(cur_cluster_bool.reshape([1, -1, 1]), (1, 1, cur_coref_logits.shape[1]))
+            cur_cluster_bool = np.tile(cur_cluster_bool.reshape([-1, 1]), (1, cur_coref_logits.shape[1]))
             cluster_mention_mask = cur_cluster_bool
     
         if not use_gold_mentions:
             cluster_mention_mask = cluster_mention_mask.astype(int)
-            cluster_mention_mask = np.stack([cluster_mention_mask, cluster_mention_mask, ones_like(cluster_mention_mask)], -1)
-            coref_logits_after_cluster_bool = np.multiply(cluster_mention_mask, cur_coref_logits.unsqueeze(0))
+            if BIO == 3:
+                cluster_mention_mask = np.stack([cluster_mention_mask, cluster_mention_mask, ones_like(cluster_mention_mask)], -1)
+            coref_logits_after_cluster_bool = np.multiply(cluster_mention_mask, cur_coref_logits)
 
-            BIO_max_score = torch.argmax(coref_logits_after_cluster_bool, -1).squeeze(0)
+            if BIO == 3:
+                BIO_max_score = torch.argmax(coref_logits_after_cluster_bool, -1)
+            else:
+                if is_max:
+                    coref_bools = torch.max(coref_logits_after_cluster_bool,0)[1].reshape([-1,1]).repeat([1, coref_logits_after_cluster_bool.shape[0]]) == torch.arange(coref_logits_after_cluster_bool.shape[0], device=coref_logits_after_cluster_bool.device).reshape([1, -1]).repeat(coref_logits_after_cluster_bool.shape[1], 1)
+                    coref_bools = coref_bools.transpose(0, 1)
+                else:
+                    coref_bools = (coref_logits_after_cluster_bool >= threshold) #[gold_mention] is the chosen cluster's score passes the threshold
 
             b_clusters = []
-            for i in range(BIO_max_score.shape[0]): 
-                B_indices = (BIO_max_score[i] == 0).nonzero()
-                current_cluster = []
-                for index in B_indices.detach().cpu().numpy():
-                    index = index[0]
-                    start_ind = index
-                    end_ind = index
-                    while end_ind+1 < len(BIO_max_score[i]) and BIO_max_score[i][end_ind+1] == 1:
-                        end_ind += 1
-                    current_cluster.append((start_ind, end_ind))
+            for i in range(coref_logits_after_cluster_bool.shape[0]): 
+                if BIO == 3:
+                    B_indices = (BIO_max_score[i] == 0).nonzero()
+                    current_cluster = []
+                    for index in B_indices.detach().cpu().numpy():
+                        index = index[0]
+                        start_ind = index
+                        end_ind = index
+                        while end_ind+1 < len(BIO_max_score[i]) and BIO_max_score[i][end_ind+1] == 1:
+                            end_ind += 1
+                        current_cluster.append((start_ind, end_ind))
+                else:
+                    true_coref_indices = coref_bools[i].nonzero().detach().cpu().numpy()
+                    current_cluster = []
+                    k = 0
+                    while k < len(true_coref_indices):
+                        start_ind = true_coref_indices[k][0]
+                        end_ind = start_ind
+                        while k+1 < len(true_coref_indices) and true_coref_indices[k+1][0] == true_coref_indices[k][0]+1:
+                            k += 1
+                            end_ind += 1
+                        current_cluster.append((start_ind, end_ind))
+                        if end_ind == true_coref_indices[k][0]:
+                            k += 1
 
                 if len(current_cluster) > 0:
                     b_clusters.append(current_cluster)

@@ -141,7 +141,13 @@ def parse_args():
                         help="L1 box coefficient in the matching cost")
     parser.add_argument('--no_long', action='store_true',
                         help="L1 box coefficient in the matching cost")
+    parser.add_argument('--slots', action='store_true',
+                        help="L1 box coefficient in the matching cost")
+    parser.add_argument('--is_encoding', action='store_true',
+                        help="L1 box coefficient in the matching cost")
     parser.add_argument('--reduction', default='mean', type=str,
+                        help="L1 box coefficient in the matching cost")
+    parser.add_argument('--BIO', default=1, type=int, choices=[3, 1],
                         help="L1 box coefficient in the matching cost")
     parser.add_argument('--eos_coef', default=0.1, type=float,
                         help="Relative classification weight of the no-object class")

@@ -366,7 +366,7 @@ def error_analysis(all_predicted_clusters, all_gold_clusters):
         num_gold_clusters_in_one_pred_cluster, num_pred_clusters_in_one_gold_cluster, \
         sum_num_split_gold_clusters, sum_num_split_pred_clusters, sum_biggest_prec_gold_cluster_in_pred_cluster, \
             sum_biggest_prec_pred_cluster_in_gold_cluster, total_gold_clusters, total_pred_clusters = clusters_error_analysis(
-            all_gold_clusters[i], all_predicted_clusters[i][0])
+            all_gold_clusters[i], all_predicted_clusters[i])
         total_sub_clusters_gold += total_gold_clusters
         total_sub_clusters_pred += total_pred_clusters
         total_num_gold_clusters_in_one_pred_cluster += num_gold_clusters_in_one_pred_cluster
