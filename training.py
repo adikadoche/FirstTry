@@ -117,7 +117,7 @@ def train(args, model, wandb):
     # train_iterator = tqdm(train_iterator, desc="Epoch", disable=args.local_rank not in [-1, 0])
     set_seed(args)  # Added here for reproducibility (even between python 2 and 3)
     skip_steps = args.skip_steps
-    args.threshold = 0.05 # starting threshold, later fixed by eval
+    args.threshold = 0.5 # starting threshold, later fixed by eval
 
     if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]:
         print(args.output_dir)

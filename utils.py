@@ -218,12 +218,11 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, thresh
             if BIO == 3:
                 BIO_max_score = torch.argmax(coref_logits_after_cluster_bool, -1)
             else:
+                coref_bools = coref_logits_after_cluster_bool >= threshold #[gold_mention] is the chosen cluster's score passes the threshold
                 if is_max:
-                    coref_bools = torch.max(coref_logits_after_cluster_bool,0)[1].reshape([-1,1]).repeat([1, coref_logits_after_cluster_bool.shape[0]]) == torch.arange(coref_logits_after_cluster_bool.shape[0], device=coref_logits_after_cluster_bool.device).reshape([1, -1]).repeat(coref_logits_after_cluster_bool.shape[1], 1)
-                    coref_bools = coref_bools.transpose(0, 1)
-                else:
-                    coref_bools = (coref_logits_after_cluster_bool >= threshold) #[gold_mention] is the chosen cluster's score passes the threshold
-
+                    max_bools = torch.max(coref_logits_after_cluster_bool,0)[1].reshape([-1,1]).repeat([1, coref_logits_after_cluster_bool.shape[0]]) == torch.arange(coref_logits_after_cluster_bool.shape[0], device=coref_logits_after_cluster_bool.device).reshape([1, -1]).repeat(coref_logits_after_cluster_bool.shape[1], 1)
+                    max_bools = max_bools.transpose(0, 1)
+                    coref_bools = coref_bools & max_bools
             b_clusters = []
             for i in range(coref_logits_after_cluster_bool.shape[0]): 
                 if BIO == 3:
