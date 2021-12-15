@@ -83,7 +83,7 @@ class DETRDataModule(pl.LightningDataModule):
 
 class DETR(pl.LightningModule):
     """ This is the DETR module that performs object detection """
-    def __init__(self, backbone, criterion, transformer, num_queries, args, aux_loss=False):
+    def __init__(self, backbone, criterion, transformer, position_embedding, num_queries, args, aux_loss=False):
         """ Initializes the model.
         Parameters:
             backbone: torch module of the backbone to be used. See backbone.py
@@ -95,6 +95,7 @@ class DETR(pl.LightningModule):
         super().__init__()
         self.num_queries = num_queries
         self.transformer = transformer
+        self.position_embedding = position_embedding
         hidden_dim = transformer.d_model
         self.query_embed = nn.Embedding(num_queries, hidden_dim)
         self.is_cluster = nn.Linear(hidden_dim, 1)
@@ -253,6 +254,8 @@ class DETR(pl.LightningModule):
             else:
                 longfomer_no_pad = self.embedder_toy_data(torch.tensor([self.toy_onehot_dict[i] for i in input_ids.cpu().numpy()[0][0]], device=input_ids.device)).unsqueeze(0)
                 span_mask = mask.reshape(longfomer_no_pad.shape[:-1])
+                if self.args.is_encoding:
+                    longfomer_no_pad = self.position_embedding(longfomer_no_pad)
 
 
             if not self.args.use_gold_mentions:
@@ -274,6 +277,7 @@ class DETR(pl.LightningModule):
                 input_to_embed = input_ids[0][0][[[m[0] for i in range(len(gold_mentions)) for m in gold_mentions[i]]]].unsqueeze(0)
             span_mask = torch.ones_like(input_to_embed)
             embedding = self.embedder_toy_data(torch.tensor([self.toy_onehot_dict[i] for i in input_to_embed.cpu().numpy()[0]], device=input_ids.device)).unsqueeze(0)
+            embedding = self.position_embedding(embedding)
             if self.args.slots:
                 cluster_logits, coref_logits, mention_logits = self.slot_attention(embedding)
             else:
@@ -852,6 +856,25 @@ class MatchingLoss(nn.Module):
             costs.append(total_cost)
         return torch.stack(costs), costs_parts
 
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model: int, max_len: int = 5000): #TODO: replace magic number with text length?
+        super().__init__()
+        position = torch.arange(max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
+        pe = torch.zeros(max_len, 1, d_model)
+        pe[:, 0, 0::2] = torch.sin(position * div_term)
+        pe[:, 0, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x: Tensor) -> Tensor:
+        """
+        Args:
+            x: Tensor, shape [batch_size, seq_len, embedding_dim]
+        """
+        x = x.transpose(0, 1)
+        x = x + self.pe[:x.size(0)]
+        x = x.transpose(0, 1)
+        return x
 
 def build_backbone(args, config):
     # position_embedding = PositionalEncoding(config.hidden_size)
@@ -885,6 +908,8 @@ def build_DETR(args):
 
     backbone = build_backbone(args, config)
 
+    position_embedding = PositionalEncoding(256)
+
     transformer = build_transformer(args)
 
     matcher = build_matcher(args)
@@ -898,6 +923,7 @@ def build_DETR(args):
         backbone,
         criterion,
         transformer,
+        position_embedding,
         num_queries=args.num_queries,
         args=args,
         aux_loss=args.aux_loss
