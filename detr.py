@@ -156,11 +156,11 @@ class DETR(pl.LightningModule):
         self.step_num = 0
         self.tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name, cache_dir=args.cache_dir)
 
-        self.embedder_toy_data = nn.Embedding(len(LETTERS_LIST), args.hidden_dim)
+        self.embedder_toy_data = nn.Embedding(len(LETTERS_LIST)+1, args.hidden_dim)
         self.toy_onehot_dict = {self.tokenizer.encode(l,add_special_tokens=False)[0]:i for i,l in enumerate(LETTERS_LIST)}
         self.toy_onehot_dict.update({self.tokenizer.encode(' '+l,add_special_tokens=False)[0]:i for i,l in enumerate(LETTERS_LIST)})
-        self.toy_onehot_dict[0]=0
-        self.toy_onehot_dict[2]=0
+        self.toy_onehot_dict[0]=len(LETTERS_LIST)
+        self.toy_onehot_dict[2]=len(LETTERS_LIST)
 
         if self.args.slots:  
             dim = args.hidden_dim      
@@ -791,15 +791,15 @@ class MatchingLoss(nn.Module):
             #     torch.distributed.all_reduce(num_of_gold_clusters)
             # num_of_gold_clusters = torch.clamp(num_of_gold_clusters / get_world_size(), min=1).item()
 
-            if not self.args.is_cluster:
-                cost_is_cluster = torch.tensor(0)
-            else:
+            if self.args.is_cluster and not self.args.cluster_block:
                 gold_is_cluster = torch.zeros_like(cluster_logits)
                 weight_cluster = self.eos_coef * torch.ones_like(cluster_logits)
                 if matched_predicted_cluster_id_real[i] is not False:
                     gold_is_cluster[matched_predicted_cluster_id_real[i]] = 1
                     weight_cluster[matched_predicted_cluster_id_real[i]] = 1
                 cost_is_cluster = F.binary_cross_entropy(cluster_logits, gold_is_cluster, weight=weight_cluster, reduction=self.args.reduction) / len(cluster_logits)
+            else:
+                cost_is_cluster = torch.tensor(0)
                 
             if not self.args.add_junk or sum(targets_mentions[i].shape) == 0:
                 cost_is_mention = torch.tensor(0)
@@ -815,16 +815,16 @@ class MatchingLoss(nn.Module):
 
             cost_coref = torch.tensor(0)
             if matched_predicted_cluster_id_real[i] is not False:
-                permuted_coref_logits = coref_logits[torch.cat([matched_predicted_cluster_id_real[i],matched_predicted_cluster_id_junk[i]])]
-                permuted_gold = targets_clusters[i][torch.cat([matched_gold_cluster_id_real[i],matched_gold_cluster_id_junk[i]])]
-
-                if self.args.BIO == 3:
-                    cost_coref = F.cross_entropy(permuted_coref_logits.reshape([-1, 3]), permuted_gold.reshape([-1]), reduction=self.args.reduction) / coref_logits.shape[1]
-                elif self.args.cluster_block:
+                if self.args.cluster_block:
+                    permuted_coref_logits = coref_logits[torch.cat([matched_predicted_cluster_id_real[i],matched_predicted_cluster_id_junk[i]])]
+                    permuted_gold = targets_clusters[i][torch.cat([matched_gold_cluster_id_real[i],matched_gold_cluster_id_junk[i]])]
                     premuted_cluster_logits = cluster_logits[torch.cat([matched_predicted_cluster_id_real[i],matched_predicted_cluster_id_junk[i]])]
                     cost_coref = F.binary_cross_entropy(premuted_cluster_logits.unsqueeze(1)*permuted_coref_logits, permuted_gold, reduction=self.args.reduction) / coref_logits.shape[1]
+                # if self.args.BIO == 3:
+                #     cost_coref = F.cross_entropy(permuted_coref_logits.reshape([-1, 3]), permuted_gold.reshape([-1]), reduction=self.args.reduction) / coref_logits.shape[1]
                 else:
-                    cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_gold, reduction=self.args.reduction) / coref_logits.shape[1]
+                    cost_coref = F.binary_cross_entropy(coref_logits[matched_predicted_cluster_id_real[i]], \
+                        targets_clusters[i][matched_gold_cluster_id_real[i]], reduction=self.args.reduction) / coref_logits.shape[1]
             elif coref_logits.shape[1] > 0:
                 cost_coref = F.binary_cross_entropy(coref_logits, torch.zeros_like(coref_logits), reduction=self.args.reduction) / coref_logits.shape[1]
 

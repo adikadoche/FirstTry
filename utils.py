@@ -203,8 +203,8 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, thresh
     clusters = []
     for i in range(bs):
         cur_cluster_bool = cluster_bools[i]
-        cur_coref_logits = coref_logits[i]
-        cluster_mention_mask = torch.ones_like(cur_coref_logits)
+        cur_coref_logits = coref_logits[i].detach().clone()
+        cluster_mention_mask = torch.ones_like(cur_coref_logits) == 1
         if is_cluster:
             cur_cluster_bool = cur_cluster_bool.reshape([-1, 1]).repeat((1, cur_coref_logits.shape[1]))
             cluster_mention_mask = cur_cluster_bool
@@ -213,16 +213,16 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, thresh
             # cluster_mention_mask = cluster_mention_mask.astype(int)
             # if BIO == 3:
             #     cluster_mention_mask = np.stack([cluster_mention_mask, cluster_mention_mask, ones_like(cluster_mention_mask)], -1)
-            # coref_logits_after_cluster_bool = np.multiply(cluster_mention_mask, cur_coref_logits)
 
             if BIO == 3:
                 BIO_max_score = torch.argmax(cur_coref_logits, -1)  ##TODO: wrong, fix
             else:
-                # coref_bools = coref_logits_after_cluster_bool >= threshold #[gold_mention] is the chosen cluster's score passes the threshold
-                if is_max:
-                    max_bools = torch.max(cur_coref_logits,0)[1].reshape([-1,1]).repeat([1, cur_coref_logits.shape[0]]) == torch.arange(cur_coref_logits.shape[0], device=cur_coref_logits.device).reshape([1, -1]).repeat(cur_coref_logits.shape[1], 1)
-                    max_bools = max_bools.transpose(0, 1)
-                    coref_bools = cluster_mention_mask & max_bools
+                if not is_max:
+                    cluster_mention_mask = cluster_mention_mask & (cur_coref_logits >= threshold)
+                    cur_coref_logits[~cluster_mention_mask] = 0
+                max_bools = torch.max(cur_coref_logits,0)[1].reshape([-1,1]).repeat([1, cur_coref_logits.shape[0]]) == torch.arange(cur_coref_logits.shape[0], device=cur_coref_logits.device).reshape([1, -1]).repeat(cur_coref_logits.shape[1], 1)
+                max_bools = max_bools.transpose(0, 1)
+                coref_bools = cluster_mention_mask & max_bools
             b_clusters = []
             for i in range(coref_bools.shape[0]): 
                 if BIO == 3:
