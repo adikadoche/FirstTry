@@ -172,7 +172,7 @@ class TransformerSequentialDecoder(nn.Module):
             
             cur_cluster_logits, cur_coref_logits = self.create_logits(is_cluster, tmp_memory, memory_key_padding_mask, self.norm(output).transpose(0, 1), IO_score, tgt.shape[0], self.layers[0].multihead_attn.num_heads,)
             if is_cluster_block:
-                memory_mask += torch.log(math.min(cur_coref_logits * cur_cluster_logits, 1))
+                memory_mask += torch.log(cur_coref_logits * cur_cluster_logits)
             else:
                 memory_mask += torch.log(cur_coref_logits)
             
