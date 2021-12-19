@@ -249,8 +249,9 @@ class DETR(pl.LightningModule):
 
                     longformer_emb = self.backbone(masked_ids, attention_mask=masked_mask)[0]
                     longfomer_no_pad_list.append(longformer_emb.reshape(-1, longformer_emb.shape[-1]))
-                    longfomer_no_pad = self.input_proj(longfomer_no_pad_list)   #TODO:BUG
-                    span_mask = mask.reshape(longfomer_no_pad.shape[:-1])
+                if not self.args.use_gold_mentions:
+                    longfomer_no_pad = self.input_proj(torch.stack(longfomer_no_pad_list,0))
+                    span_mask = masked_mask.reshape(longfomer_no_pad.shape[:-1])
             else:
                 longfomer_no_pad = self.embedder_toy_data(torch.tensor([self.toy_onehot_dict[i] for i in input_ids.cpu().numpy()[0][0]], device=input_ids.device)).unsqueeze(0)
                 span_mask = mask.reshape(longfomer_no_pad.shape[:-1])
@@ -376,10 +377,10 @@ class DETR(pl.LightningModule):
 
             if self.args.add_junk:
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), mention_logits.cpu().detach(),
-                                                            self.args.threshold, gold_mentions_list, self.args.is_max, self.args.use_gold_mentions, self.args.is_cluster)
+                                                            self.args.threshold, gold_mentions_list, self.args.is_max, self.args.use_gold_mentions, self.args.is_cluster, self.args.slots)
             else:
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
-                                                            self.args.threshold, gold_mentions_list, self.args.is_max, self.args.use_gold_mentions, self.args.is_cluster)
+                                                            self.args.threshold, gold_mentions_list, self.args.is_max, self.args.use_gold_mentions, self.args.is_cluster, self.args.slots)
             self.train_evaluator.update(predicted_clusters, gold_clusters)
             loss, loss_parts = self.criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
             
@@ -455,10 +456,10 @@ class DETR(pl.LightningModule):
 
         if self.args.add_junk:
             predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), mention_logits.cpu().detach(),
-                                                        self.args.threshold, gold_mentions_list, self.args.is_max, self.args.use_gold_mentions, self.args.is_cluster)
+                                                        self.args.threshold, gold_mentions_list, self.args.is_max, self.args.use_gold_mentions, self.args.is_cluster, self.args.slots)
         else:
             predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
-                                                        self.args.threshold, gold_mentions_list, self.args.is_max, self.args.use_gold_mentions, self.args.is_cluster)
+                                                        self.args.threshold, gold_mentions_list, self.args.is_max, self.args.use_gold_mentions, self.args.is_cluster, self.args.slots)
         self.eval_evaluator.update(predicted_clusters, gold_clusters)
         loss, loss_parts = self.criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
         self.losses.append(loss.mean().detach().cpu())

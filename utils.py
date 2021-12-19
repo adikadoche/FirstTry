@@ -193,9 +193,9 @@ def create_gold_matrix(device, doc_len, num_queries, gold_clusters, gold_mention
 def make_mentions_from_clustered_tokens(self, coref_logits):
     pass
 
-def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, threshold, gold_mentions: List, is_max, use_gold_mentions, is_cluster):
+def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, threshold, gold_mentions: List, is_max, use_gold_mentions, is_cluster, slots):
     # when we are using gold mentions, we get coref_logits at the size of the gold mentions ([bs, clusters, gold_mentions]) (because we know they are mentions, what we are predicting is the clustering)
-    
+
     bs = coref_logits.shape[0]
     BIO = coref_logits.shape[-1] if len(coref_logits.shape) == 4 else 1
 
@@ -209,20 +209,25 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, thresh
             cur_cluster_bool = cur_cluster_bool.reshape([-1, 1]).repeat((1, cur_coref_logits.shape[1]))
             cluster_mention_mask = cur_cluster_bool
     
-        if not use_gold_mentions:
-            # cluster_mention_mask = cluster_mention_mask.astype(int)
-            # if BIO == 3:
-            #     cluster_mention_mask = np.stack([cluster_mention_mask, cluster_mention_mask, ones_like(cluster_mention_mask)], -1)
-
-            if BIO == 3:
-                BIO_max_score = torch.argmax(cur_coref_logits, -1)  ##TODO: wrong, fix
+        if not use_gold_mentions:  
+            if slots:
+                if BIO == 3:
+                    BIO_max_score = torch.argmax(cur_coref_logits, -1)  ##TODO: wrong, fix
+                else:
+                    max_bools = torch.max(cur_coref_logits,0)[1].reshape([-1,1]).repeat([1, cur_coref_logits.shape[0]]) == \
+                        torch.arange(cur_coref_logits.shape[0], device=cur_coref_logits.device).reshape([1, -1]).repeat(cur_coref_logits.shape[1], 1)
+                    max_bools = max_bools.transpose(0, 1)
+                    coref_bools = cluster_mention_mask & max_bools
             else:
-                if not is_max:
-                    cluster_mention_mask = cluster_mention_mask & (cur_coref_logits >= threshold)
-                    cur_coref_logits[~cluster_mention_mask] = 0
-                max_bools = torch.max(cur_coref_logits,0)[1].reshape([-1,1]).repeat([1, cur_coref_logits.shape[0]]) == torch.arange(cur_coref_logits.shape[0], device=cur_coref_logits.device).reshape([1, -1]).repeat(cur_coref_logits.shape[1], 1)
-                max_bools = max_bools.transpose(0, 1)
-                coref_bools = cluster_mention_mask & max_bools
+                if len(mention_logits) > 0:
+                    cur_mention_bools = mention_logits[i].squeeze(-1).numpy() >= threshold
+                    cur_mention_bools = np.tile(cur_mention_bools.reshape([1, 1, -1]), (1, cur_cluster_bool.shape[1], 1))
+                    cluster_mention_mask = cur_mention_bools & cluster_mention_mask             
+                coref_logits_after_cluster_bool = np.multiply(cluster_mention_mask, cur_coref_logits)
+                if is_max:
+                    coref_bools = coref_logits_after_cluster_bool >= 0.5
+                else:
+                    coref_bools = coref_logits_after_cluster_bool >= threshold #[gold_mention] is the chosen cluster's score passes the threshold
             b_clusters = []
             for i in range(coref_bools.shape[0]): 
                 if BIO == 3:
@@ -252,18 +257,28 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, thresh
                 if len(current_cluster) > 0:
                     b_clusters.append(current_cluster)
         else:
-            if len(mention_logits) > 0:
-                cur_mention_bools = mention_logits[i].squeeze(-1).numpy() >= threshold
-                cur_mention_bools = np.tile(cur_mention_bools.reshape([1, 1, -1]), (1, cur_cluster_bool.shape[1], 1))
-                cluster_mention_mask = cur_mention_bools & cluster_mention_mask             
-            cluster_mention_mask = cluster_mention_mask.astype(int)
-            coref_logits_after_cluster_bool = np.multiply(cluster_mention_mask, cur_coref_logits.unsqueeze(0))
-            max_coref_score, max_coref_cluster_ind = coref_logits_after_cluster_bool[0].max(-2) #[gold_mention] choosing the index of the best cluster per gold mention
-            if is_max:
-                coref_bools = max_coref_score >= 0.5
+            if slots:
+                if BIO == 3:
+                    BIO_max_score = torch.argmax(cur_coref_logits, -1)  ##TODO: wrong, fix
+                else:
+                    max_bools = torch.max(cur_coref_logits,0)[1].reshape([-1,1]).repeat([1, cur_coref_logits.shape[0]]) == \
+                        torch.arange(cur_coref_logits.shape[0], device=cur_coref_logits.device).reshape([1, -1]).repeat(cur_coref_logits.shape[1], 1)
+                    max_bools = max_bools.transpose(0, 1)
+                    coref_bools = cluster_mention_mask & max_bools
+                    coref_logits_after_cluster_bool = np.multiply(coref_bools, cur_coref_logits)
+                    max_coref_score, max_coref_cluster_ind = coref_logits_after_cluster_bool.max(-2) #[gold_mention] choosing the index of the best cluster per gold mention
+                    coref_bools = max_coref_score > 0
             else:
-                coref_bools = max_coref_score >= threshold #[gold_mention] is the chosen cluster's score passes the threshold
-
+                if len(mention_logits) > 0:
+                    cur_mention_bools = mention_logits[i].squeeze(-1).numpy() >= threshold
+                    cur_mention_bools = np.tile(cur_mention_bools.reshape([1, 1, -1]), (1, cur_cluster_bool.shape[1], 1))
+                    cluster_mention_mask = cur_mention_bools & cluster_mention_mask             
+                coref_logits_after_cluster_bool = np.multiply(cluster_mention_mask, cur_coref_logits)
+                max_coref_score, max_coref_cluster_ind = coref_logits_after_cluster_bool.max(-2) #[gold_mention] choosing the index of the best cluster per gold mention
+                if is_max:
+                    coref_bools = max_coref_score >= 0.5
+                else:
+                    coref_bools = max_coref_score >= threshold #[gold_mention] is the chosen cluster's score passes the threshold
             true_coref_indices = np.where(coref_bools)[0] #indices of the gold mention that their clusters pass threshold
             max_coref_cluster_ind_filtered = max_coref_cluster_ind[coref_bools] #index of the best clusters per gold mention, if it passes the threshold
 
