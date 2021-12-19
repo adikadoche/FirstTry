@@ -63,10 +63,16 @@ def create_letters_dataset(is_add_junk=False, num_of_texts = 3000):
 def create_sequences_dataset(is_add_junk=False, num_of_texts = 3000):
     SEQUENCES = []
     for _ in range(70):
-        seq_len = random.randint(1, 7)
+        seq_len = random.randint(2, 5)
         seq = random.choices(LETTERS_LIST, k=seq_len)
         if seq not in SEQUENCES:
-            SEQUENCES.append(seq)
+            is_contained = False
+            for s in SEQUENCES:
+                if ' '.join(s) in ' '.join(seq) or ' '.join(seq) in ' '.join(s):
+                    is_contained = True
+                    break
+            if not is_contained:
+                SEQUENCES.append(seq)
     text = []
     clusters = []
     for t in range(num_of_texts):
@@ -87,10 +93,13 @@ def create_sequences_dataset(is_add_junk=False, num_of_texts = 3000):
 
         line_list = line_bkgd_list
 
-        for sequence, index in reversed(sorted_pairs):
+        for i, (sequence, index) in enumerate(reversed(sorted_pairs)):
+            i = len(sorted_pairs)-1 - i
+            if i < len(sorted_pairs)-1 and sorted_pairs[i][0] == sorted_pairs[i+1][0] and sorted_pairs[i+1][1]-sorted_pairs[i][1] == 1:
+                continue
             line_list[index:index] = sequence
 
-        for s in cur_sequenceds:
+        for s in SEQUENCES:
             sequence_cluster = []
             for j in range(len(line_list) - len(s) + 1):
                 if line_list[j:j+len(s)] == s:
