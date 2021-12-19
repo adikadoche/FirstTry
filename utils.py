@@ -202,13 +202,15 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, thresh
     cluster_bools = cluster_logits.squeeze(-1) >= threshold #TODO: should the cluster and coref share the same threshold?
     clusters = []
     for i in range(bs):
+        b_clusters = []
+        ind_clusters = []
         cur_cluster_bool = cluster_bools[i]
         cur_coref_logits = coref_logits[i].detach().clone()
         cluster_mention_mask = torch.ones_like(cur_coref_logits) == 1
-        if is_cluster:
+        if is_cluster and not use_gold_mentions:
             cur_cluster_bool = cur_cluster_bool.reshape([-1, 1]).repeat((1, cur_coref_logits.shape[1]))
             cluster_mention_mask = cur_cluster_bool
-    
+
         if not use_gold_mentions:  
             if slots:
                 if BIO == 3:
@@ -228,7 +230,6 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, thresh
                     coref_bools = coref_logits_after_cluster_bool >= 0.5
                 else:
                     coref_bools = coref_logits_after_cluster_bool >= threshold #[gold_mention] is the chosen cluster's score passes the threshold
-            b_clusters = []
             for i in range(coref_bools.shape[0]): 
                 if BIO == 3:
                     B_indices = (BIO_max_score[i] == 0).nonzero()
@@ -256,6 +257,7 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, thresh
 
                 if len(current_cluster) > 0:
                     b_clusters.append(current_cluster)
+                    ind_clusters.append(i)
         else:
             if slots:
                 if BIO == 3:
@@ -284,9 +286,7 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, thresh
 
             cluster_id_to_tokens = {k: list(v) for k, v in itertools.groupby(sorted(list(zip(true_coref_indices, max_coref_cluster_ind_filtered.numpy())), key=lambda x: x[-1]), lambda x: x[-1])}
 
-            b_clusters = []
-
-            for gold_mentions_inds in cluster_id_to_tokens.values():
+            for cluster_ind, gold_mentions_inds in cluster_id_to_tokens.items():
                 current_cluster = []
                 for mention_id in gold_mentions_inds:
                     try:
@@ -294,6 +294,17 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, thresh
                     except:
                         print('here')
                 b_clusters.append(current_cluster)
+                ind_clusters.append(cluster_ind)
+        
+        all_predicted_mentions = [l for m in b_clusters for l in m]
+        if len(all_predicted_mentions) != len(set(all_predicted_mentions)):
+            duplicate_mentions = set([m for m in all_predicted_mentions if all_predicted_mentions.count(m) > 1])
+            for m in duplicate_mentions:
+                avg_score = cluster_logits.squeeze() * torch.sum(coref_logits_after_cluster_bool.transpose(0,1)[m[0]:m[1]+1], 0) / (m[1]-m[0]+1)
+                max_cluster_ind = torch.argmax(avg_score)
+                for i, c in enumerate(b_clusters):
+                    if m in c and i != max_cluster_ind:
+                        b_clusters[i].remove(m)
         clusters.append(b_clusters)
 
     return clusters

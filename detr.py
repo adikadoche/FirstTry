@@ -249,6 +249,7 @@ class DETR(pl.LightningModule):
 
                     longformer_emb = self.backbone(masked_ids, attention_mask=masked_mask)[0]
                     longfomer_no_pad_list.append(longformer_emb.reshape(-1, longformer_emb.shape[-1]))
+                    self.args.is_encoding = False
                 if not self.args.use_gold_mentions:
                     longfomer_no_pad = self.input_proj(torch.stack(longfomer_no_pad_list,0))
                     span_mask = masked_mask.reshape(longfomer_no_pad.shape[:-1])
@@ -646,8 +647,8 @@ class DETR(pl.LightningModule):
 
             if coref_logits_unnorm.shape[-1] > 1:
                 cur_coref_logits = coref_logits_unnorm.softmax(-1)
-            elif self.args.softmax: 
-                cur_coref_logits = coref_logits_unnorm.softmax(dim=1)
+            elif self.args.use_gold_mentions or self.args.softmax: 
+                cur_coref_logits = coref_logits_unnorm.softmax(dim=1).squeeze(-1)
             else:
                 cur_coref_logits = coref_logits_unnorm.sigmoid().squeeze(-1)
             if len(cur_coref_logits.shape) > 3:
@@ -793,7 +794,7 @@ class MatchingLoss(nn.Module):
             #     torch.distributed.all_reduce(num_of_gold_clusters)
             # num_of_gold_clusters = torch.clamp(num_of_gold_clusters / get_world_size(), min=1).item()
 
-            if self.args.is_cluster:
+            if self.args.is_cluster and not self.args.use_gold_mentions:
                 gold_is_cluster = torch.zeros_like(cluster_logits)
                 weight_cluster = self.eos_coef * torch.ones_like(cluster_logits)
                 if matched_predicted_cluster_id_real[i] is not False:
