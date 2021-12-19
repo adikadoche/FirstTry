@@ -305,6 +305,7 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, thresh
                 for i, c in enumerate(b_clusters):
                     if m in c and i != max_cluster_ind:
                         b_clusters[i].remove(m)
+        b_clusters = [b for b in b_clusters if len(b) > 0]
         clusters.append(b_clusters)
 
     return clusters

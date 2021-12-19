@@ -85,7 +85,7 @@ class HungarianMatcher(nn.Module):
 
             if self.args.is_cluster and not self.args.use_gold_mentions:
                 weight_cluster = torch.cat([torch.ones(num_of_gold_clusters, device=cluster_logits.device), \
-                    self.eos_coef * torch.ones(num_queries - num_of_gold_clusters, device=cluster_logits.device)])
+                    self.args.eos_coef * torch.ones(num_queries - num_of_gold_clusters, device=cluster_logits.device)])
                 cost_is_cluster = F.binary_cross_entropy(cluster_logits.repeat(1, num_queries), \
                     torch.cat([torch.ones([num_queries, num_of_gold_clusters], device=coref_logits.device), \
                         torch.zeros([num_queries, num_queries - num_of_gold_clusters], device=coref_logits.device)], 1), weight=weight_cluster, reduction='none') # [num_queries, num_queries]
