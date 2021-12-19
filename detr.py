@@ -781,6 +781,7 @@ class MatchingLoss(nn.Module):
             # Compute the average number of target boxes accross all nodes, for normalization purposes
             coref_logits = outputs["coref_logits"][i].squeeze(0)  # [num_queries, tokens, BIO(3/1)]
             cluster_logits = outputs["cluster_logits"][i].squeeze() # [num_queries]
+            real_token_target_cols = torch.sum(targets_clusters[i], -2) > 0
 
             if self.args.add_junk:
                 mention_logits = outputs["mention_logits"][i].squeeze() # [tokens]
@@ -792,7 +793,7 @@ class MatchingLoss(nn.Module):
             #     torch.distributed.all_reduce(num_of_gold_clusters)
             # num_of_gold_clusters = torch.clamp(num_of_gold_clusters / get_world_size(), min=1).item()
 
-            if self.args.is_cluster and not self.args.cluster_block:
+            if self.args.is_cluster:
                 gold_is_cluster = torch.zeros_like(cluster_logits)
                 weight_cluster = self.eos_coef * torch.ones_like(cluster_logits)
                 if matched_predicted_cluster_id_real[i] is not False:
@@ -816,16 +817,23 @@ class MatchingLoss(nn.Module):
 
             cost_coref = torch.tensor(0)
             if matched_predicted_cluster_id_real[i] is not False:
-                if self.args.cluster_block:
-                    permuted_coref_logits = coref_logits[torch.cat([matched_predicted_cluster_id_real[i],matched_predicted_cluster_id_junk[i]])]
+                permuted_coref_logits = coref_logits[torch.cat([matched_predicted_cluster_id_real[i],matched_predicted_cluster_id_junk[i]])]
+                if not self.args.cluster_block and self.args.slots:
+                    junk_cluster = torch.zeros_like(targets_clusters[i][matched_gold_cluster_id_junk[i]].transpose(0,1)[real_token_target_cols].transpose(0,1))
+                    cost_coref = F.binary_cross_entropy(coref_logits[matched_predicted_cluster_id_real[i]], \
+                        targets_clusters[i][matched_gold_cluster_id_real[i]], reduction=self.args.reduction) / coref_logits.shape[1] + \
+                            F.binary_cross_entropy(coref_logits[matched_predicted_cluster_id_junk[i]].transpose(0,1)[real_token_target_cols].transpose(0,1), \
+                        junk_cluster, reduction=self.args.reduction) / len(real_token_target_cols)
+                else:
                     permuted_gold = targets_clusters[i][torch.cat([matched_gold_cluster_id_real[i],matched_gold_cluster_id_junk[i]])]
                     premuted_cluster_logits = cluster_logits[torch.cat([matched_predicted_cluster_id_real[i],matched_predicted_cluster_id_junk[i]])]
-                    cost_coref = F.binary_cross_entropy(premuted_cluster_logits.unsqueeze(1)*permuted_coref_logits, permuted_gold, reduction=self.args.reduction) / coref_logits.shape[1]
-                # if self.args.BIO == 3:
-                #     cost_coref = F.cross_entropy(permuted_coref_logits.reshape([-1, 3]), permuted_gold.reshape([-1]), reduction=self.args.reduction) / coref_logits.shape[1]
-                else:
-                    cost_coref = F.binary_cross_entropy(coref_logits[matched_predicted_cluster_id_real[i]], \
-                        targets_clusters[i][matched_gold_cluster_id_real[i]], reduction=self.args.reduction) / coref_logits.shape[1]
+
+                    if self.args.cluster_block:
+                        cost_coref = F.binary_cross_entropy(premuted_cluster_logits.unsqueeze(1)*permuted_coref_logits, permuted_gold, reduction=self.args.reduction) / coref_logits.shape[1]
+                    # if self.args.BIO == 3:
+                    #     cost_coref = F.cross_entropy(permuted_coref_logits.reshape([-1, 3]), permuted_gold.reshape([-1]), reduction=self.args.reduction) / coref_logits.shape[1]
+                    else:
+                        cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_gold, reduction=self.args.reduction) / coref_logits.shape[1]
             elif coref_logits.shape[1] > 0:
                 cost_coref = F.binary_cross_entropy(coref_logits, torch.zeros_like(coref_logits), reduction=self.args.reduction) / coref_logits.shape[1]
 

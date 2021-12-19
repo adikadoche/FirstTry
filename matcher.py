@@ -75,20 +75,18 @@ class HungarianMatcher(nn.Module):
 
             if self.args.BIO == 1:
                 real_cluster_target_rows = torch.sum(targets_clusters[i], -1) > 0
+                real_token_target_cols = torch.sum(targets_clusters[i], -2) > 0
             else:
                 real_cluster_target_rows = torch.sum(targets_clusters[i]==2, 1) != targets_clusters[i].shape[1]
+                real_token_target_cols = torch.sum(targets_clusters[i]==2, 0) != targets_clusters[i].shape[0]
             real_cluster_target = targets_clusters[i][real_cluster_target_rows]
             num_of_gold_clusters = int(real_cluster_target.shape[0])
             num_queries = coref_logits.shape[0]
 
-            if self.args.is_cluster and not self.args.cluster_block:
-                # if self.args.cluster_block:
-                #     cost_is_cluster = F.binary_cross_entropy(cluster_logits.repeat(1, num_queries), \
-                #         torch.cat([torch.ones([num_queries, num_of_gold_clusters], device=coref_logits.device), \
-                #             torch.zeros([num_queries, num_queries - num_of_gold_clusters], device=coref_logits.device)], 1), reduction='none') # [num_queries, num_queries]
-                # else:
-                    cost_is_cluster = F.binary_cross_entropy(cluster_logits.repeat(1, num_of_gold_clusters), \
-                        torch.ones([num_queries, num_of_gold_clusters], device=coref_logits.device), reduction='none') # [num_queries, num_of_gold_clusters]
+            if self.args.is_cluster:
+                cost_is_cluster = F.binary_cross_entropy(cluster_logits.repeat(1, num_queries), \
+                    torch.cat([torch.ones([num_queries, num_of_gold_clusters], device=coref_logits.device), \
+                        torch.zeros([num_queries, num_queries - num_of_gold_clusters], device=coref_logits.device)], 1), reduction='none') # [num_queries, num_queries]
             else:
                 cost_is_cluster = torch.tensor(0)
 
@@ -111,14 +109,22 @@ class HungarianMatcher(nn.Module):
                 else:
                     losses_for_current_gold_cluster = F.binary_cross_entropy(coref_logits, gold_per_token_repeated, reduction='none').mean(1)
                 cost_coref.append(losses_for_current_gold_cluster) # [num_queries]
-            if num_of_gold_clusters < num_queries and self.args.cluster_block:
+            if num_of_gold_clusters < num_queries:
                 if self.args.BIO == 3: 
                     # zero_cluster = torch.ones_like(targets_clusters[i]) * 2
                     # junk_cluster_score = F.cross_entropy(coref_logits.reshape([-1, 3]), zero_cluster.reshape([-1]), reduction='none').reshape([coref_logits.shape[0], -1]).mean(-1)
                     pass
                 else:
-                    zero_cluster = torch.zeros_like(targets_clusters[i])
-                    junk_cluster_score = F.binary_cross_entropy(cluster_logits * coref_logits, zero_cluster, reduction='none').mean(-1)    
+                    if self.args.cluster_block:
+                        zero_cluster = torch.zeros_like(targets_clusters[i])
+                        junk_cluster_score = F.binary_cross_entropy(cluster_logits * coref_logits, zero_cluster, reduction='none').mean(-1)    
+                    else:
+                        if self.args.slots:
+                            zero_cluster = torch.zeros_like(targets_clusters[i].transpose(0,1)[real_token_target_cols].transpose(0,1))
+                            junk_cluster_score = F.binary_cross_entropy(coref_logits.transpose(0,1)[real_token_target_cols].transpose(0,1), zero_cluster, reduction='none').mean(-1)
+                        else:
+                            zero_cluster = torch.zeros_like(targets_clusters[i])
+                            junk_cluster_score = F.binary_cross_entropy(coref_logits, zero_cluster, reduction='none').mean(-1) 
                 cost_coref += (num_queries-num_of_gold_clusters) * [junk_cluster_score]
             cost_coref = torch.stack(cost_coref, 1) # [num_queries, num_queries/num_of_gold_clusters]
 
