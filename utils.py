@@ -255,7 +255,7 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, thresh
                         if end_ind == true_coref_indices[k][0]:
                             k += 1
 
-                if len(current_cluster) > 0:
+                if len(current_cluster) > 1:
                     b_clusters.append(current_cluster)
                     ind_clusters.append(i)
         else:
@@ -293,8 +293,9 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, thresh
                         current_cluster.append(gold_mentions[i][mention_id[0]])
                     except:
                         print('here')
-                b_clusters.append(current_cluster)
-                ind_clusters.append(cluster_ind)
+                if len(current_cluster) > 1:
+                    b_clusters.append(current_cluster)
+                    ind_clusters.append(cluster_ind)
         
         all_predicted_mentions = [l for m in b_clusters for l in m]
         if len(all_predicted_mentions) != len(set(all_predicted_mentions)):
@@ -305,7 +306,7 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, thresh
                 for i, c in enumerate(b_clusters):
                     if m in c and i != max_cluster_ind:
                         b_clusters[i].remove(m)
-        b_clusters = [b for b in b_clusters if len(b) > 0]
+        b_clusters = [b for b in b_clusters if len(b) > 1]
         clusters.append(b_clusters)
 
     return clusters
