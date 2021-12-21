@@ -26,7 +26,7 @@ import numpy as np
 # from .backbone import build_backbone
 from matcher import build_matcher
 from transformer import build_transformer
-from transformers import LongformerModel
+from transformers import LongformerConfig, LongformerModel
 from typing import List
 from utils import calc_predicted_clusters, create_gold_matrix, tensor_and_remove_empty, create_junk_gold_mentions, save_checkpoint
 from transformers import AutoConfig, CONFIG_MAPPING
@@ -83,7 +83,7 @@ class DETRDataModule(pl.LightningDataModule):
 
 class DETR(pl.LightningModule):
     """ This is the DETR module that performs object detection """
-    def __init__(self, backbone, criterion, transformer, position_embedding, num_queries, args, aux_loss=False):
+    def __init__(self, backbone, criterion, transformer, num_queries, args, aux_loss=False):
         """ Initializes the model.
         Parameters:
             backbone: torch module of the backbone to be used. See backbone.py
@@ -95,7 +95,6 @@ class DETR(pl.LightningModule):
         super().__init__()
         self.num_queries = num_queries
         self.transformer = transformer
-        self.position_embedding = position_embedding
         hidden_dim = transformer.d_model
         self.query_embed = nn.Embedding(num_queries, hidden_dim)
         self.is_cluster = nn.Linear(hidden_dim, 1)
@@ -145,7 +144,7 @@ class DETR(pl.LightningModule):
         self.all_predicted_clusters = []
         self.all_input_ids = []
         self.all_gold_clusters = []
-        if self.args.input_type == 'letters':
+        if self.args.input_type.split('_')[0] == 'letters':
             self.query_cluster_confusion_matrix = np.zeros([args.num_queries, 26], dtype=int)
         else:
             self.query_cluster_confusion_matrix = np.zeros([args.num_queries, args.num_queries], dtype=int)
@@ -165,7 +164,7 @@ class DETR(pl.LightningModule):
         if self.args.slots:  
             dim = args.hidden_dim      
             self.num_slots = num_queries
-            self.iters = 3
+            self.iters = 6
             self.eps = 1e-8
             self.scale = dim ** -0.5
 
@@ -196,6 +195,8 @@ class DETR(pl.LightningModule):
                 nn.Linear(int(dim/2), 1),
                 nn.Sigmoid()
             )
+        configuration = LongformerConfig(10, max_position_embeddings=4096, num_attention_heads=4, num_hidden_layers=4, hidden_size=args.hidden_dim)
+        self.longformer = LongformerModel(configuration)
 
         if self.args.resume_from:
             global_step = self.args.resume_from.rstrip('/').split('-')[-1]
@@ -256,18 +257,19 @@ class DETR(pl.LightningModule):
             else:
                 longfomer_no_pad = self.embedder_toy_data(torch.tensor([self.toy_onehot_dict[i] for i in input_ids.cpu().numpy()[0][0]], device=input_ids.device)).unsqueeze(0)
                 span_mask = mask.reshape(longfomer_no_pad.shape[:-1])
-                if self.args.is_encoding:
-                    longfomer_no_pad = self.position_embedding(longfomer_no_pad)
 
-
+            encoding = self.args.is_encoding
+            if self.args.input_type.split('_')[0] == 'sequences':
+                memory = self.longformer(inputs_embeds=longfomer_no_pad)[0]
+                encoding = False
             if not self.args.use_gold_mentions:
-                hs, memory = self.transformer(longfomer_no_pad, span_mask, raw_query_embed, self.is_cluster, self.IO_score, self.args.cluster_block, self.args.is_encoding) # [dec_layers, 1, num_queries, emb], [1, seg*seq, emb]
+                hs, memory = self.transformer(longfomer_no_pad, span_mask, raw_query_embed, self.is_cluster, self.IO_score, self.args.cluster_block, encoding) # [dec_layers, 1, num_queries, emb], [1, seg*seq, emb]
             else:   #TODO: not good for sequences because only takes first and last letters and doesnt have a representation of the surrounding
                 span_starts = [torch.tensor([m[0] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
                 span_ends = [torch.tensor([m[1] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
                 span_emb, span_mask = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends, num_mentions)  # [mentions, emb']
                 span_emb = self.span_proj(span_emb) # [mentions, emb]
-                hs, memory = self.transformer(span_emb, span_mask, raw_query_embed, self.is_cluster, self.IO_score, self.args.cluster_block, self.args.is_encoding)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
+                hs, memory = self.transformer(span_emb, span_mask, raw_query_embed, self.is_cluster, self.IO_score, self.args.cluster_block, encoding)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
             
             if self.args.slots:
                 cluster_logits, coref_logits, mention_logits = self.slot_attention(memory)
@@ -291,7 +293,8 @@ class DETR(pl.LightningModule):
 
         out = {"coref_logits": coref_logits,
                 "cluster_logits": cluster_logits,
-                "mention_logits": mention_logits}
+                "mention_logits": mention_logits,
+                "memory": memory}
         return out
 
     def slot_attention(self, input_emb):
@@ -445,7 +448,7 @@ class DETR(pl.LightningModule):
         targets = {'clusters':gold_matrix, 'mentions':gold_mentions_vector}
         matched_predicted_cluster_id_real, matched_gold_cluster_id_real, _, _ = self.criterion.matcher(outputs, targets)
         if matched_gold_cluster_id_real[0] is not False:
-            if self.args.input_type != 'letters':
+            if self.args.input_type.split('_')[0] != 'letters':
                 for i, j in zip(matched_predicted_cluster_id_real[0], matched_gold_cluster_id_real[0]):
                     self.query_cluster_confusion_matrix[i][j] += 1
             else:
@@ -777,7 +780,7 @@ class MatchingLoss(nn.Module):
         targets_mentions = targets['mentions']
         bs = outputs["coref_logits"].shape[0]
         costs = []
-        costs_parts = {'loss_is_cluster':[], 'loss_is_mention':[], 'loss_coref':[]}
+        costs_parts = {'loss_is_cluster':[], 'loss_is_mention':[], 'loss_coref':[], 'loss_embedding':[]}
         for i in range(bs):
             # Compute the average number of target boxes accross all nodes, for normalization purposes
             coref_logits = outputs["coref_logits"][i].squeeze(0)  # [num_queries, tokens, BIO(3/1)]
@@ -817,6 +820,7 @@ class MatchingLoss(nn.Module):
             coref_logits = torch.index_select(coref_logits, 1, torch.arange(0, targets_clusters[i].shape[1]).to(coref_logits.device))
 
             cost_coref = torch.tensor(0)
+            embedding_loss = torch.tensor(0)
             if matched_predicted_cluster_id_real[i] is not False:
                 permuted_coref_logits = coref_logits[torch.cat([matched_predicted_cluster_id_real[i],matched_predicted_cluster_id_junk[i]])]
                 if not self.args.cluster_block and self.args.slots:
@@ -835,6 +839,21 @@ class MatchingLoss(nn.Module):
                     #     cost_coref = F.cross_entropy(permuted_coref_logits.reshape([-1, 3]), permuted_gold.reshape([-1]), reduction=self.args.reduction) / coref_logits.shape[1]
                     else:
                         cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_gold, reduction=self.args.reduction) / coref_logits.shape[1]
+
+                if self.args.input_type.split('_')[0] == 'sequences':
+                    memory = outputs["memory"][i].squeeze(0)
+                    cluster_inds = targets_clusters[i][matched_gold_cluster_id_real[i]]
+                    junk_cluster = 1 - torch.sum(cluster_inds, 0)
+                    if torch.sum(junk_cluster) > 0:
+                        cluster_inds = torch.cat([cluster_inds, junk_cluster.unsqueeze(0)])
+                    avg_vector = torch.matmul(cluster_inds, memory) / torch.sum(cluster_inds, 1).reshape(-1, 1)
+                    center_clusters_distances = torch.cdist(avg_vector, avg_vector)
+                    diffs = 0
+                    for x in range(cluster_inds.shape[0]):
+                        diffs += torch.sqrt(torch.sum(torch.pow((memory - avg_vector[x]) * cluster_inds[x].unsqueeze(-1), 2))) / torch.sum(cluster_inds[x])
+                    embedding_loss = (torch.max(torch.tensor(1, device=diffs.device),diffs)/cluster_inds.shape[0])\
+                        / (torch.sum(center_clusters_distances)/(center_clusters_distances.shape[0]*center_clusters_distances.shape[1]))
+                        
             elif coref_logits.shape[1] > 0:
                 cost_coref = F.binary_cross_entropy(coref_logits, torch.zeros_like(coref_logits), reduction=self.args.reduction) / coref_logits.shape[1]
 
@@ -862,29 +881,10 @@ class MatchingLoss(nn.Module):
             costs_parts['loss_is_cluster'].append(self.cost_is_cluster * cost_is_cluster.detach().cpu())
             costs_parts['loss_is_mention'].append(self.cost_is_mention * cost_is_mention.detach().cpu())
             costs_parts['loss_coref'].append(self.cost_coref * cost_coref.detach().cpu())
-            total_cost = self.cost_coref * cost_coref + self.cost_is_cluster * cost_is_cluster + self.cost_is_mention * cost_is_mention
+            costs_parts['loss_embedding'].append(self.cost_coref * 5*embedding_loss.detach().cpu())
+            total_cost = self.cost_coref * cost_coref + self.cost_is_cluster * cost_is_cluster + self.cost_is_mention * cost_is_mention + 5*self.cost_coref * embedding_loss
             costs.append(total_cost)
         return torch.stack(costs), costs_parts
-
-class PositionalEncoding(nn.Module):
-    def __init__(self, d_model: int, max_len: int = 5000): #TODO: replace magic number with text length?
-        super().__init__()
-        position = torch.arange(max_len).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
-        pe = torch.zeros(max_len, 1, d_model)
-        pe[:, 0, 0::2] = torch.sin(position * div_term)
-        pe[:, 0, 1::2] = torch.cos(position * div_term)
-        self.register_buffer('pe', pe)
-
-    def forward(self, x: Tensor) -> Tensor:
-        """
-        Args:
-            x: Tensor, shape [batch_size, seq_len, embedding_dim]
-        """
-        x = x.transpose(0, 1)
-        x = x + self.pe[:x.size(0)]
-        x = x.transpose(0, 1)
-        return x
 
 def build_backbone(args, config):
     # position_embedding = PositionalEncoding(config.hidden_size)
@@ -918,8 +918,6 @@ def build_DETR(args):
 
     backbone = build_backbone(args, config)
 
-    position_embedding = PositionalEncoding(256)
-
     transformer = build_transformer(args)
 
     matcher = build_matcher(args)
@@ -933,7 +931,6 @@ def build_DETR(args):
         backbone,
         criterion,
         transformer,
-        position_embedding,
         num_queries=args.num_queries,
         args=args,
         aux_loss=args.aux_loss
