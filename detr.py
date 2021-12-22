@@ -9,6 +9,7 @@ import torch.nn.functional as F
 from torch.nn import init
 from torch import nn, Tensor
 from consts import OUT_KEYS, TOKENS_PAD, LETTERS_LIST
+from tqdm import tqdm
 import math
 import pytorch_lightning as pl
 from metrics import CorefEvaluator
@@ -102,6 +103,9 @@ class DETR(pl.LightningModule):
         self.criterion = criterion
         self.aux_loss = aux_loss
         self.args = args
+        self.threshold = self.args.threshold if self.args.threshold > 0 else 0.5
+        self.same_thresh_count = 0
+        self.thresh_delta = 0.2
         self.train_evaluator = CorefEvaluator()
         self.eval_evaluator = CorefEvaluator()
         if args.single_distribution_queries:
@@ -381,10 +385,10 @@ class DETR(pl.LightningModule):
 
             if self.args.add_junk:
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), mention_logits.cpu().detach(),
-                                                            self.args.threshold, gold_mentions_list, self.args.is_max, self.args.use_gold_mentions, self.args.is_cluster, self.args.slots)
+                                                            self.threshold, gold_mentions_list, self.args.use_gold_mentions, self.args.is_cluster, self.args.slots, self.args.min_cluster_size)
             else:
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
-                                                            self.args.threshold, gold_mentions_list, self.args.is_max, self.args.use_gold_mentions, self.args.is_cluster, self.args.slots)
+                                                            self.threshold, gold_mentions_list, self.args.use_gold_mentions, self.args.is_cluster, self.args.slots, self.args.min_cluster_size)
             self.train_evaluator.update(predicted_clusters, gold_clusters)
             loss, loss_parts = self.criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
             
@@ -458,13 +462,13 @@ class DETR(pl.LightningModule):
                     for t in target_letters:
                         self.query_cluster_confusion_matrix[i][t] += 1
 
-        if self.args.add_junk:
-            predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), mention_logits.cpu().detach(),
-                                                        self.args.threshold, gold_mentions_list, self.args.is_max, self.args.use_gold_mentions, self.args.is_cluster, self.args.slots)
-        else:
-            predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
-                                                        self.args.threshold, gold_mentions_list, self.args.is_max, self.args.use_gold_mentions, self.args.is_cluster, self.args.slots)
-        self.eval_evaluator.update(predicted_clusters, gold_clusters)
+        # if self.args.add_junk:
+        #     predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), mention_logits.cpu().detach(),
+        #                                                 self.threshold, gold_mentions_list, self.args.use_gold_mentions, self.args.is_cluster, self.args.slots, self.args.min_cluster_size)
+        # else:
+        #     predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
+        #                                                 self.threshold, gold_mentions_list, self.args.use_gold_mentions, self.args.is_cluster, self.args.slots, self.args.min_cluster_size)
+        # self.eval_evaluator.update(predicted_clusters, gold_clusters)
         loss, loss_parts = self.criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
         self.losses.append(loss.mean().detach().cpu())
         for key in loss_parts.keys():
@@ -474,19 +478,58 @@ class DETR(pl.LightningModule):
                 self.losses_parts[key] = loss_parts[key]
         self.batch_sizes.append(loss.shape[0]) 
 
-        self.all_predicted_clusters += predicted_clusters  
+        # self.all_predicted_clusters += predicted_clusters  
         
         self.all_input_ids += input_ids    
         self.all_gold_clusters += gold_clusters
 
         return {'loss': loss}
 
+    def eval_by_thresh(self, threshold):
+        evaluator = CorefEvaluator()
+        all_predicted_clusters = []
+        metrics = [0] * 5    
+        for i, (cluster_logits, coref_logits, gold_clusters, gold_mentions) in enumerate(
+                zip(self.all_cluster_logits, self.all_coref_logits, self.all_gold_clusters, self.all_gold_mentions)):                
+            predicted_clusters = calc_predicted_clusters(cluster_logits.unsqueeze(0), coref_logits.unsqueeze(0), [], \
+                threshold, [gold_mentions], self.args.use_gold_mentions, self.args.is_cluster, self.args.slots, self.args.min_cluster_size)
+            all_predicted_clusters += predicted_clusters
+            evaluator.update(predicted_clusters, gold_clusters)
+        p, r, f1 = evaluator.get_prf()
+        return p, r, f1, metrics, all_predicted_clusters
+
     def validation_epoch_end(self, val_step_outputs):
         eval_loss = np.average(self.losses, weights=self.batch_sizes)
         losses_parts = {key:np.average(self.losses_parts[key]) for key in self.losses_parts.keys()}
 
-        metrics = [0] * 5
-        p, r, f1 = self.eval_evaluator.get_prf()
+        if self.args.threshold > 0 or (self.thresh_delta < 0.2 and self.same_thresh_count > 3):
+            p, r, f1, best_metrics, self.all_predicted_clusters = self.eval_by_thresh(self.threshold)
+        else:
+            if self.thresh_delta == 0.2:
+                thresh_start = 0.05
+                thresh_end = thresh_start + self.thresh_delta * int((1-thresh_start)/self.thresh_delta)
+            else:
+                thresh_start = self.threshold - 2*self.thresh_delta
+                thresh_end = self.threshold + 2*self.thresh_delta
+                
+            best = [-1, -1, -1]
+            best_metrics = []
+            best_threshold = None
+            for threshold in tqdm(np.arange(thresh_start, thresh_end, self.thresh_delta), desc='Searching for best threshold'):
+                p, r, f1, metrics, all_predicted_clusters = self.eval_by_thresh(threshold)
+                if f1 > best[-1]:
+                    best = p,r,f1
+                    best_metrics = metrics
+                    best_threshold = threshold
+                    self.all_predicted_clusters = all_predicted_clusters
+            p,r,f1 = best
+            if best_threshold == self.threshold:
+                self.same_thresh_count += 1
+                if self.same_thresh_count == 3 and self.thresh_delta == 0.2:
+                    self.thresh_delta == 0.02
+                    self.same_thresh_count = 0
+            else:
+                self.same_thresh_count = 0
 
         print_predictions(self.all_predicted_clusters, self.all_gold_clusters, self.all_input_ids, self.args, self.tokenizer)
         prec_gold_to_one_pred, prec_pred_to_one_gold, avg_gold_split_without_perfect, avg_gold_split_with_perfect, \
@@ -510,7 +553,7 @@ class DETR(pl.LightningModule):
 
         results = {'loss': eval_loss,
                 'avg_f1': f1,
-                'threshold': self.args.threshold,
+                'threshold': self.threshold,
                 'precision': p,
                 'recall': r,  
                 'prec_gold_to_one_pred': prec_gold_to_one_pred,  
@@ -523,11 +566,11 @@ class DETR(pl.LightningModule):
                 'prec_biggest_gold_in_pred_with_perfect': prec_biggest_gold_in_pred_with_perfect,  
                 'prec_biggest_pred_in_gold_without_perfect': prec_biggest_pred_in_gold_without_perfect,  
                 'prec_biggest_pred_in_gold_with_perfect': prec_biggest_pred_in_gold_with_perfect,  
-                'prec_correct_mentions': metrics[0],
-                'prec_gold': metrics[1],
-                'prec_junk': metrics[2],
-                'prec_correct_gold_clusters': metrics[3],
-                'prec_correct_predict_clusters': metrics[4]} | losses_parts
+                'prec_correct_mentions': best_metrics[0],
+                'prec_gold': best_metrics[1],
+                'prec_junk': best_metrics[2],
+                'prec_correct_gold_clusters': best_metrics[3],
+                'prec_correct_predict_clusters': best_metrics[4]} | losses_parts
 
         for key, value in results.items():
             self.trainer.logger.log_metrics({'eval_{}'.format(key): value}, self.step_num)
@@ -550,7 +593,7 @@ class DETR(pl.LightningModule):
                 prev_best_f1 = self.best_f1
                 prev_best_f1_epoch = self.best_f1_epoch
                 output_dir = os.path.join(self.args.output_dir, 'checkpoint-{}'.format(self.epoch))
-                save_checkpoint(self.args, self.epoch, self.args.threshold, self, self.optimizer, output_dir)
+                save_checkpoint(self.args, self.epoch, self.threshold, self, self.optimizer, output_dir)
                 print(f'previous checkpoint with f1 {prev_best_f1} was {prev_best_f1_epoch}')
                 self.best_f1 = f1
                 self.best_f1_epoch = self.epoch

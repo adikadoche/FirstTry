@@ -193,7 +193,7 @@ def create_gold_matrix(device, doc_len, num_queries, gold_clusters, gold_mention
 def make_mentions_from_clustered_tokens(self, coref_logits):
     pass
 
-def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, threshold, gold_mentions: List, is_max, use_gold_mentions, is_cluster, slots):
+def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, threshold, gold_mentions: List, use_gold_mentions, is_cluster, slots, min_cluster_size):
     # when we are using gold mentions, we get coref_logits at the size of the gold mentions ([bs, clusters, gold_mentions]) (because we know they are mentions, what we are predicting is the clustering)
 
     bs = coref_logits.shape[0]
@@ -226,10 +226,7 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, thresh
                     cur_mention_bools = np.tile(cur_mention_bools.reshape([1, 1, -1]), (1, cur_cluster_bool.shape[1], 1))
                     cluster_mention_mask = cur_mention_bools & cluster_mention_mask             
                 coref_logits_after_cluster_bool = np.multiply(cluster_mention_mask, cur_coref_logits)
-                if is_max:
-                    coref_bools = coref_logits_after_cluster_bool >= 0.5
-                else:
-                    coref_bools = coref_logits_after_cluster_bool >= threshold #[gold_mention] is the chosen cluster's score passes the threshold
+                coref_bools = coref_logits_after_cluster_bool >= threshold #[gold_mention] is the chosen cluster's score passes the threshold
             for i in range(coref_bools.shape[0]): 
                 if BIO == 3:
                     B_indices = (BIO_max_score[i] == 0).nonzero()
@@ -255,7 +252,7 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, thresh
                         if end_ind == true_coref_indices[k][0]:
                             k += 1
 
-                if len(current_cluster) > 1:
+                if len(current_cluster) > min_cluster_size:
                     b_clusters.append(current_cluster)
                     ind_clusters.append(i)
         else:
@@ -277,10 +274,7 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, thresh
                     cluster_mention_mask = cur_mention_bools & cluster_mention_mask             
                 coref_logits_after_cluster_bool = np.multiply(cluster_mention_mask, cur_coref_logits)
                 max_coref_score, max_coref_cluster_ind = coref_logits_after_cluster_bool.max(-2) #[gold_mention] choosing the index of the best cluster per gold mention
-                if is_max:
-                    coref_bools = max_coref_score >= 0.5
-                else:
-                    coref_bools = max_coref_score >= threshold #[gold_mention] is the chosen cluster's score passes the threshold
+                coref_bools = max_coref_score >= threshold #[gold_mention] is the chosen cluster's score passes the threshold
             true_coref_indices = np.where(coref_bools)[0] #indices of the gold mention that their clusters pass threshold
             max_coref_cluster_ind_filtered = max_coref_cluster_ind[coref_bools] #index of the best clusters per gold mention, if it passes the threshold
 
@@ -293,7 +287,7 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, thresh
                         current_cluster.append(gold_mentions[i][mention_id[0]])
                     except:
                         print('here')
-                if len(current_cluster) > 1:
+                if len(current_cluster) > min_cluster_size:
                     b_clusters.append(current_cluster)
                     ind_clusters.append(cluster_ind)
         
@@ -306,7 +300,7 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, thresh
                 for i, c in enumerate(b_clusters):
                     if m in c and i != max_cluster_ind:
                         b_clusters[i].remove(m)
-        b_clusters = [b for b in b_clusters if len(b) > 1]
+        b_clusters = [b for b in b_clusters if len(b) > min_cluster_size]
         clusters.append(b_clusters)
 
     return clusters
