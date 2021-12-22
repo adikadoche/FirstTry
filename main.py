@@ -39,7 +39,8 @@ def main():
         args.output_dir = os.path.join(args.output_dir, datetime.now().strftime(f"%m_%d_%Y_%H_%M_%S")+'_'+run_name)
     transformers_logger = logging.getLogger("transformers")
     transformers_logger.setLevel(logging.ERROR)
-    wandb = WandbLogger(project='coref-detr', entity='adizicher', name=run_name)
+    if not args.is_debug:
+        wandb = WandbLogger(project='coref-detr', entity='adizicher', name=run_name)
 
     # Setup CUDA, GPU & distributed training
     if args.is_debug:
@@ -76,7 +77,8 @@ def main():
         wb_config[key] = val
     if "GIT_HASH" in os.environ:
         wb_config["GIT_HASH"] = os.environ["GIT_HASH"]
-    wandb.experiment.config.update(wb_config)
+    if not args.is_debug:
+        wandb.experiment.config.update(wb_config)
     set_seed(args)
 
     # Load pretrained model and tokenizer
@@ -88,7 +90,8 @@ def main():
     # config_class = LongformerConfig
     # base_model_prefix = "longformer"
     model = build_DETR(args)
-    wandb.watch(model, log="all")
+    if not args.is_debug:
+        wandb.watch(model, log="all")
 
     if args.local_rank == 0:
         torch.distributed.barrier()  # Make sure only the first process in distributed training will download model & vocab
@@ -120,7 +123,10 @@ def main():
         #         f.write(result)
         #         f.close()
         # else:
-    train(args, model, wandb)
+    if not args.is_debug:
+        train(args, model, wandb)
+    else:
+        train(args, model)
     # else:
     #     make_evaluation(model, criterion, eval_loader, eval_dataset, args) #TODO: report_eval won't work in here because of missing parameters
 
