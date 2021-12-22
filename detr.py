@@ -531,7 +531,7 @@ class DETR(pl.LightningModule):
 
         for key, value in results.items():
             self.trainer.logger.log_metrics({'eval_{}'.format(key): value}, self.step_num)
-        self.log('eval_avg_f1', results['avg_f1'])
+        self.log('eval_avg_f1', torch.tensor(results['avg_f1']))
 
         output_eval_file = os.path.join(self.args.output_dir, "eval_results.txt")
         with open(output_eval_file, "a") as writer:

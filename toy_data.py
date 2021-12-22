@@ -140,7 +140,7 @@ def create_structural_dataset(is_add_junk=False, num_of_texts = 3000):
     clusters = []
     for t in range(num_of_texts):
         clusters.append([])
-        text_len = random.randint(40, 4000)
+        text_len = random.randint(40, 3500)
         bkgd_text_len = int(random.uniform(0.6, 1) * text_len)
         sequence_text_len = text_len - bkgd_text_len
         num_clusters = random.choices(list(range(1, min(int(text_len/4), len(SEQUENCES)))), k=1, weights=reversed(list(range(1, min(int(text_len/4), len(SEQUENCES))))))

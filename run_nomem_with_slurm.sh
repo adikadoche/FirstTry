@@ -45,6 +45,7 @@ sbatch \
   --gpus=1  \
   --export GIT_HASH \
   --export JOB_NAME \
+  --exclude="n-301"  \
   ${SCRIPT_PATH} ${SCRIPT_PARAMS}  |  tee ${TEMPFILE_PATH}
 
 JOB_ID=$(grep -oP '\d+' ${TEMPFILE_PATH})
