@@ -120,7 +120,7 @@ class DETR(pl.LightningModule):
             self.word_attn_projection = nn.Linear(backbone.config.hidden_size, 1)
             self.span_proj = nn.Linear(3*backbone.config.hidden_size+20, hidden_dim) # TODO config
         else:
-            self.input_proj = nn.Linear(args.hidden_dim, hidden_dim)
+            self.input_proj = nn.Linear(backbone.config.hidden_size, hidden_dim)
             self.word_attn_projection = nn.Linear(args.hidden_dim, 1)
             self.span_proj = nn.Linear(3*args.hidden_dim+20, hidden_dim) # TODO config
         self.span_width_embed = nn.Embedding(30, 20)
@@ -262,18 +262,19 @@ class DETR(pl.LightningModule):
                     longfomer_no_pad = self.input_proj(torch.stack(longfomer_no_pad_list,0))
                     span_mask = masked_mask.reshape(longfomer_no_pad.shape[:-1])
             else:
-                longfomer_no_pad = self.embedder_toy_data(torch.tensor([self.toy_onehot_dict[i] for i in input_ids.cpu().numpy()[0][0]], device=input_ids.device)).unsqueeze(0)
-                span_mask = mask.reshape(longfomer_no_pad.shape[:-1])
+                # toy_emb = self.embedder_toy_data(torch.tensor([self.toy_onehot_dict[i] for i in input_ids.cpu().numpy()[0][0]], device=input_ids.device)).unsqueeze(0)
+                # span_mask = mask.reshape(toy_emb.shape[:-1])
+                input_ids_r = input_ids.reshape(input_ids.shape[0], -1)
+                mask_r = mask.reshape(mask.shape[0], -1)
+                masked_ids = input_ids_r[0][mask_r[0]==1].unsqueeze(0)
+                span_mask = torch.ones_like(masked_ids).unsqueeze(0)   
 
             encoding = self.args.is_encoding
             if self.args.input_type.split('_')[0] == 'sequences':
-                longfomer_no_pad = self.longformer(inputs_embeds=longfomer_no_pad)[0]
-                # input_ids_r = input_ids.reshape(input_ids.shape[0], -1)
-                # mask_r = mask.reshape(mask.shape[0], -1)
-                # masked_ids = input_ids_r[i][mask_r[i]==1].unsqueeze(0)
-                # masked_mask = torch.ones_like(masked_ids).unsqueeze(0)                
-                # longformer_emb = self.backbone(masked_ids, attention_mask=masked_mask)[0]
-                # memory = self.input_proj(longformer_emb)
+                # longfomer_no_pad = self.longformer(inputs_embeds=toy_emb)[0]             
+                longformer_emb = self.backbone(masked_ids, attention_mask=span_mask)[0]
+                longfomer_no_pad = self.input_proj(longformer_emb)
+                span_mask = span_mask.reshape(longfomer_no_pad.shape[:-1])
                 encoding = False
             if not self.args.use_gold_mentions:
                 hs, memory = self.transformer(longfomer_no_pad, span_mask, raw_query_embed, self.is_cluster, self.IO_score, self.args.cluster_block, encoding) # [dec_layers, 1, num_queries, emb], [1, seg*seq, emb]
@@ -514,15 +515,15 @@ class DETR(pl.LightningModule):
         eval_loss = np.average(self.losses, weights=self.batch_sizes)
         losses_parts = {key:np.average(self.losses_parts[key]) for key in self.losses_parts.keys()}
 
-        if self.args.threshold > 0 or (self.thresh_delta < 0.2 and self.same_thresh_count > 3):
+        if self.args.threshold > 0 or (self.thresh_delta < 0.2 and self.same_thresh_count > 3) or self.epoch == 0:
             p, r, f1, best_metrics, self.all_predicted_clusters = self.eval_by_thresh(self.threshold)
         else:
             if self.thresh_delta == 0.2:
                 thresh_start = 0.05
                 thresh_end = 1
             else:
-                thresh_start = self.threshold - 2*self.thresh_delta
-                thresh_end = self.threshold + 2.5*self.thresh_delta
+                thresh_start = max(0.01, self.threshold - 2*self.thresh_delta)
+                thresh_end = min(1, self.threshold + 2.5*self.thresh_delta)
                 
             best = [-1, -1, -1]
             best_metrics = []
@@ -538,10 +539,11 @@ class DETR(pl.LightningModule):
             if best_threshold == self.threshold:
                 self.same_thresh_count += 1
                 if self.same_thresh_count == 3 and self.thresh_delta == 0.2:
-                    self.thresh_delta == 0.02
+                    self.thresh_delta = 0.02
                     self.same_thresh_count = 0
             else:
                 self.same_thresh_count = 0
+            self.threshold = best_threshold
 
         print_predictions(self.all_predicted_clusters, self.all_gold_clusters, self.all_input_ids, self.args, self.tokenizer)
         prec_gold_to_one_pred, prec_pred_to_one_gold, avg_gold_split_without_perfect, avg_gold_split_with_perfect, \

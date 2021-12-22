@@ -63,7 +63,7 @@ def create_letters_dataset(is_add_junk=False, num_of_texts = 3000):
 
 def create_sequences_dataset(is_add_junk=False, num_of_texts = 3000):
     SEQUENCES = []
-    for _ in range(70):
+    for _ in range(5):
         seq_len = random.randint(2, 5)
         seq = random.choices(LETTERS_LIST, k=seq_len)
         if seq not in SEQUENCES:
@@ -100,9 +100,9 @@ def create_sequences_dataset(is_add_junk=False, num_of_texts = 3000):
                 continue
             line_list[index:index] = sequence
 
-        line_text = ' '.join(line_list)
         is_non_singelton = True
         while is_non_singelton:
+            line_text = ' '.join(line_list)
             is_non_singelton = False
             for s in SEQUENCES:
                 c = line_text.count(' '.join(s))
@@ -110,7 +110,7 @@ def create_sequences_dataset(is_add_junk=False, num_of_texts = 3000):
                     is_non_singelton = True
                     line_text = line_text.replace(' '.join(s), '')
             line_list = re.split(' +', line_text)
-            line_text = ' '.join(line_list)
+        line_list = [l for l in line_list if l in LETTERS_LIST]
         for s in SEQUENCES:
             sequence_cluster = []
             for j in range(len(line_list) - len(s) + 1):
