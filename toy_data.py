@@ -3,6 +3,7 @@ import random
 import os
 import json
 import torch
+import re
 import numpy as np
 
 from transformers import AutoTokenizer
@@ -23,7 +24,7 @@ def create_letters_dataset(is_add_junk=False, num_of_texts = 3000):
     text = []
     clusters = []
     for _ in range(num_of_texts):
-        text_len = random.randint(40, 4000)
+        text_len = random.randint(40, 3500)
         bkgd_text_len = int(random.uniform(0.6, 1) * text_len)
         sequence_text_len = text_len - bkgd_text_len
         num_clusters = random.randint(1, len(letters_list)-5)
@@ -77,7 +78,7 @@ def create_sequences_dataset(is_add_junk=False, num_of_texts = 3000):
     clusters = []
     for t in range(num_of_texts):
         clusters.append([])
-        text_len = random.randint(40, 4000)
+        text_len = random.randint(40, 3500)
         bkgd_text_len = int(random.uniform(0.6, 1) * text_len)
         sequence_text_len = text_len - bkgd_text_len
         num_clusters = random.choices(list(range(1, min(int(text_len/4), len(SEQUENCES)))), k=1, weights=reversed(list(range(1, min(int(text_len/4), len(SEQUENCES))))))
@@ -99,6 +100,17 @@ def create_sequences_dataset(is_add_junk=False, num_of_texts = 3000):
                 continue
             line_list[index:index] = sequence
 
+        line_text = ' '.join(line_list)
+        is_non_singelton = True
+        while is_non_singelton:
+            is_non_singelton = False
+            for s in SEQUENCES:
+                c = line_text.count(' '.join(s))
+                if c == 1:
+                    is_non_singelton = True
+                    line_text = line_text.replace(' '.join(s), '')
+            line_list = re.split(' +', line_text)
+            line_text = ' '.join(line_list)
         for s in SEQUENCES:
             sequence_cluster = []
             for j in range(len(line_list) - len(s) + 1):
