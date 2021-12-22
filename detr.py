@@ -145,6 +145,9 @@ class DETR(pl.LightningModule):
         self.losses = []
         self.losses_parts = {}
         self.batch_sizes = []
+        self.all_cluster_logits = []
+        self.all_coref_logits = []
+        self.all_gold_mentions = []
         self.all_predicted_clusters = []
         self.all_input_ids = []
         self.all_gold_clusters = []
@@ -199,7 +202,7 @@ class DETR(pl.LightningModule):
                 nn.Linear(int(dim/2), 1),
                 nn.Sigmoid()
             )
-        configuration = LongformerConfig(10, max_position_embeddings=4096, num_attention_heads=4, num_hidden_layers=4, hidden_size=args.hidden_dim)
+        configuration = LongformerConfig(10, max_position_embeddings=4096, num_attention_heads=4, num_hidden_layers=4, hidden_size=args.hidden_dim, vocab_size=30)
         self.longformer = LongformerModel(configuration)
 
         if self.args.resume_from:
@@ -264,7 +267,13 @@ class DETR(pl.LightningModule):
 
             encoding = self.args.is_encoding
             if self.args.input_type.split('_')[0] == 'sequences':
-                memory = self.longformer(inputs_embeds=longfomer_no_pad)[0]
+                longfomer_no_pad = self.longformer(inputs_embeds=longfomer_no_pad)[0]
+                # input_ids_r = input_ids.reshape(input_ids.shape[0], -1)
+                # mask_r = mask.reshape(mask.shape[0], -1)
+                # masked_ids = input_ids_r[i][mask_r[i]==1].unsqueeze(0)
+                # masked_mask = torch.ones_like(masked_ids).unsqueeze(0)                
+                # longformer_emb = self.backbone(masked_ids, attention_mask=masked_mask)[0]
+                # memory = self.input_proj(longformer_emb)
                 encoding = False
             if not self.args.use_gold_mentions:
                 hs, memory = self.transformer(longfomer_no_pad, span_mask, raw_query_embed, self.is_cluster, self.IO_score, self.args.cluster_block, encoding) # [dec_layers, 1, num_queries, emb], [1, seg*seq, emb]
@@ -482,6 +491,9 @@ class DETR(pl.LightningModule):
         
         self.all_input_ids += input_ids    
         self.all_gold_clusters += gold_clusters
+        self.all_cluster_logits += cluster_logits.detach().cpu()
+        self.all_coref_logits += coref_logits.detach().cpu()
+        self.all_gold_mentions += gold_mentions_list
 
         return {'loss': loss}
 
@@ -494,7 +506,7 @@ class DETR(pl.LightningModule):
             predicted_clusters = calc_predicted_clusters(cluster_logits.unsqueeze(0), coref_logits.unsqueeze(0), [], \
                 threshold, [gold_mentions], self.args.use_gold_mentions, self.args.is_cluster, self.args.slots, self.args.min_cluster_size)
             all_predicted_clusters += predicted_clusters
-            evaluator.update(predicted_clusters, gold_clusters)
+            evaluator.update(predicted_clusters, [gold_clusters])
         p, r, f1 = evaluator.get_prf()
         return p, r, f1, metrics, all_predicted_clusters
 
@@ -507,10 +519,10 @@ class DETR(pl.LightningModule):
         else:
             if self.thresh_delta == 0.2:
                 thresh_start = 0.05
-                thresh_end = thresh_start + self.thresh_delta * int((1-thresh_start)/self.thresh_delta)
+                thresh_end = 1
             else:
                 thresh_start = self.threshold - 2*self.thresh_delta
-                thresh_end = self.threshold + 2*self.thresh_delta
+                thresh_end = self.threshold + 2.5*self.thresh_delta
                 
             best = [-1, -1, -1]
             best_metrics = []
@@ -603,7 +615,10 @@ class DETR(pl.LightningModule):
                     shutil.rmtree(path_to_remove)
                     print(f'removed checkpoint with f1 {prev_best_f1} from {path_to_remove}')
             self.trainer.logger.log_metrics({'eval_best_f1': self.best_f1}, self.step_num)
-            self.trainer.logger.log_metrics({'eval_best_f1_checkpoint': os.path.join(self.args.output_dir, 'checkpoint-{}'.format(self.best_f1_epoch))}, self.step_num)
+            try:
+                self.trainer.logger.log_metrics({'eval_best_f1_checkpoint': os.path.join(self.args.output_dir, 'checkpoint-{}'.format(self.best_f1_epoch))}, self.step_num)
+            except:
+                pass
         
         self.eval_evaluator = CorefEvaluator()
         self.recent_train_losses = []
@@ -611,6 +626,9 @@ class DETR(pl.LightningModule):
         self.losses = []
         self.losses_parts = {}
         self.batch_sizes = []
+        self.all_cluster_logits = []
+        self.all_coref_logits = []
+        self.all_gold_mentions = []
         self.all_input_ids = []
         self.all_gold_clusters = []
         self.all_predicted_clusters = []
