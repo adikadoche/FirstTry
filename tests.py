@@ -73,14 +73,14 @@ class Args:
 
 class Test(unittest.TestCase):
     def test_calc_predicted(self):
-        #calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, threshold, gold_mentions: List, is_max, use_gold_mentions, is_cluster, slots)
+        #calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, threshold, gold_mentions: List, use_gold_mentions, is_cluster, slots)
         options=[True,False]
         for o1 in options:
             for o2 in options:
                 if o1:
-                    res = calc_predicted_clusters(cluster_logits, coref_logits_gold, [], 0.5, gold_mentions_list, True, o1, True, o2)
+                    res = calc_predicted_clusters(cluster_logits, coref_logits_gold, [], 0.5, gold_mentions_list, o1, True, o2)
                 else:
-                    res = calc_predicted_clusters(cluster_logits, coref_logits_tokens, [], 0.5, gold_mentions_list, True, o1, True, o2)
+                    res = calc_predicted_clusters(cluster_logits, coref_logits_tokens, [], 0.5, gold_mentions_list, o1, True, o2)
                 self.assertCountEqual(set([tuple(c) for c in res[0]]),set([tuple(c) for c in clusters[0]]))
 
     def test_matcher(self):

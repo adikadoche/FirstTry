@@ -141,8 +141,6 @@ def parse_args():
                         help="L1 box coefficient in the matching cost")
     parser.add_argument('--is_cluster', action='store_true',
                         help="L1 box coefficient in the matching cost")
-    parser.add_argument('--no_long', action='store_true',
-                        help="L1 box coefficient in the matching cost")
     parser.add_argument('--slots', action='store_true',
                         help="L1 box coefficient in the matching cost")
     parser.add_argument('--is_encoding', action='store_true',

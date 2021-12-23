@@ -115,14 +115,9 @@ class DETR(pl.LightningModule):
             self.query_mu = nn.Parameter(torch.randn(num_queries, hidden_dim))
             self.query_sigma = nn.Parameter(torch.randn(num_queries, hidden_dim))
 
-        if self.args.input_type == 'ontonotes':
-            self.input_proj = nn.Linear(backbone.config.hidden_size, hidden_dim)
-            self.word_attn_projection = nn.Linear(backbone.config.hidden_size, 1)
-            self.span_proj = nn.Linear(3*backbone.config.hidden_size+20, hidden_dim) # TODO config
-        else:
-            self.input_proj = nn.Linear(backbone.config.hidden_size, hidden_dim)
-            self.word_attn_projection = nn.Linear(args.hidden_dim, 1)
-            self.span_proj = nn.Linear(3*args.hidden_dim+20, hidden_dim) # TODO config
+        self.input_proj = nn.Linear(backbone.config.hidden_size, hidden_dim)
+        self.word_attn_projection = nn.Linear(backbone.config.hidden_size, 1)
+        self.span_proj = nn.Linear(3*backbone.config.hidden_size+20, hidden_dim) # TODO config
         self.span_width_embed = nn.Embedding(30, 20)
              
         self.mention_classifier = nn.Linear(hidden_dim, 1)
@@ -160,13 +155,6 @@ class DETR(pl.LightningModule):
         self.best_f1_epoch = -1
         self.epoch = 0
         self.step_num = 0
-        self.tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name, cache_dir=args.cache_dir)
-
-        self.embedder_toy_data = nn.Embedding(len(LETTERS_LIST)+1, args.hidden_dim)
-        self.toy_onehot_dict = {self.tokenizer.encode(l,add_special_tokens=False)[0]:i for i,l in enumerate(LETTERS_LIST)}
-        self.toy_onehot_dict.update({self.tokenizer.encode(' '+l,add_special_tokens=False)[0]:i for i,l in enumerate(LETTERS_LIST)})
-        self.toy_onehot_dict[0]=len(LETTERS_LIST)
-        self.toy_onehot_dict[2]=len(LETTERS_LIST)
 
         if self.args.slots:  
             dim = args.hidden_dim      
@@ -202,8 +190,6 @@ class DETR(pl.LightningModule):
                 nn.Linear(int(dim/2), 1),
                 nn.Sigmoid()
             )
-        configuration = LongformerConfig(10, max_position_embeddings=4096, num_attention_heads=4, num_hidden_layers=4, hidden_size=args.hidden_dim, vocab_size=30)
-        self.longformer = LongformerModel(configuration)
 
         if self.args.resume_from:
             global_step = self.args.resume_from.rstrip('/').split('-')[-1]
@@ -236,70 +222,37 @@ class DETR(pl.LightningModule):
         else:
             raw_query_embed = self.query_embed.weight
 
-        if not self.args.no_long:
-            if self.args.input_type == 'ontonotes':
-                bs = input_ids.shape[0]
-                input_ids_r = input_ids.reshape(input_ids.shape[0], -1)
-                mask_r = mask.reshape(mask.shape[0], -1)
-                longfomer_no_pad_list = []
-                for i in range(input_ids_r.shape[0]):
-                    masked_ids = input_ids_r[i][mask_r[i]==1].unsqueeze(0)
-                    masked_mask = torch.ones_like(masked_ids).unsqueeze(0)
-                    if masked_ids.shape[-1] > self.args.max_seq_length:
-                        masked_ids = torch.zeros([2, math.ceil(input_ids.shape[1]/2) * input_ids.shape[-1]], dtype=torch.long)
-                        masked_mask = torch.zeros([2, math.ceil(mask.shape[1]/2) * mask.shape[-1]], dtype=torch.long)
-                        masked_ids[0] = input_ids[i][:math.ceil(input_ids.shape[1]/2)].reshape(1, math.ceil(input_ids.shape[1]/2) * input_ids.shape[-1])
-                        masked_mask[0] = mask[i][:math.ceil(mask.shape[1]/2)].reshape(1, math.ceil(mask.shape[1]/2) * mask.shape[-1])
-                        masked_ids[1][:(input_ids.shape[1]-math.ceil(input_ids.shape[1]/2)) * input_ids.shape[-1]] = \
-                            input_ids[i][math.ceil(input_ids.shape[1]/2):].reshape(1, (input_ids.shape[1]-math.ceil(input_ids.shape[1]/2)) * input_ids.shape[-1])
-                        masked_mask[1][:(mask.shape[1]-math.ceil(mask.shape[1]/2)) * mask.shape[-1]] = \
-                            mask[i][math.ceil(mask.shape[1]/2):].reshape(1, (mask.shape[1]-math.ceil(mask.shape[1]/2)) * mask.shape[-1])
+        bs = input_ids.shape[0]
+        input_ids_r = input_ids.reshape(input_ids.shape[0], -1)
+        mask_r = mask.reshape(mask.shape[0], -1)
+        longfomer_no_pad_list = []
+        for i in range(input_ids_r.shape[0]):
+            masked_ids = input_ids_r[i][mask_r[i]==1].unsqueeze(0)
+            masked_mask = torch.ones_like(masked_ids).unsqueeze(0)
+            if masked_ids.shape[-1] > self.args.max_seq_length:
+                masked_ids = torch.zeros([2, math.ceil(input_ids.shape[1]/2) * input_ids.shape[-1]], dtype=torch.long)
+                masked_mask = torch.zeros([2, math.ceil(mask.shape[1]/2) * mask.shape[-1]], dtype=torch.long)
+                masked_ids[0] = input_ids[i][:math.ceil(input_ids.shape[1]/2)].reshape(1, math.ceil(input_ids.shape[1]/2) * input_ids.shape[-1])
+                masked_mask[0] = mask[i][:math.ceil(mask.shape[1]/2)].reshape(1, math.ceil(mask.shape[1]/2) * mask.shape[-1])
+                masked_ids[1][:(input_ids.shape[1]-math.ceil(input_ids.shape[1]/2)) * input_ids.shape[-1]] = \
+                    input_ids[i][math.ceil(input_ids.shape[1]/2):].reshape(1, (input_ids.shape[1]-math.ceil(input_ids.shape[1]/2)) * input_ids.shape[-1])
+                masked_mask[1][:(mask.shape[1]-math.ceil(mask.shape[1]/2)) * mask.shape[-1]] = \
+                    mask[i][math.ceil(mask.shape[1]/2):].reshape(1, (mask.shape[1]-math.ceil(mask.shape[1]/2)) * mask.shape[-1])
 
-                    longformer_emb = self.backbone(masked_ids, attention_mask=masked_mask)[0]
-                    longfomer_no_pad_list.append(longformer_emb.reshape(-1, longformer_emb.shape[-1]))
-                    self.args.is_encoding = False
-                if not self.args.use_gold_mentions:
-                    longfomer_no_pad = self.input_proj(torch.stack(longfomer_no_pad_list,0))
-                    span_mask = masked_mask.reshape(longfomer_no_pad.shape[:-1])
-            else:
-                # toy_emb = self.embedder_toy_data(torch.tensor([self.toy_onehot_dict[i] for i in input_ids.cpu().numpy()[0][0]], device=input_ids.device)).unsqueeze(0)
-                # span_mask = mask.reshape(toy_emb.shape[:-1])
-                input_ids_r = input_ids.reshape(input_ids.shape[0], -1)
-                mask_r = mask.reshape(mask.shape[0], -1)
-                masked_ids = input_ids_r[0][mask_r[0]==1].unsqueeze(0)
-                span_mask = torch.ones_like(masked_ids).unsqueeze(0)   
+            longformer_emb = self.backbone(masked_ids, attention_mask=masked_mask)[0]
+            longfomer_no_pad_list.append(longformer_emb.reshape(-1, longformer_emb.shape[-1]))
+            self.args.is_encoding = False
 
-            encoding = self.args.is_encoding
-            if self.args.input_type.split('_')[0] == 'sequences':
-                # longfomer_no_pad = self.longformer(inputs_embeds=toy_emb)[0]             
-                longformer_emb = self.backbone(masked_ids, attention_mask=span_mask)[0]
-                longfomer_no_pad = self.input_proj(longformer_emb)
-                span_mask = span_mask.reshape(longfomer_no_pad.shape[:-1])
-                encoding = False
-            if not self.args.use_gold_mentions:
-                hs, memory = self.transformer(longfomer_no_pad, span_mask, raw_query_embed, self.is_cluster, self.IO_score, self.args.cluster_block, encoding) # [dec_layers, 1, num_queries, emb], [1, seg*seq, emb]
-            else:   #TODO: not good for sequences because only takes first and last letters and doesnt have a representation of the surrounding
-                span_starts = [torch.tensor([m[0] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
-                span_ends = [torch.tensor([m[1] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
-                span_emb, span_mask = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends, num_mentions)  # [mentions, emb']
-                span_emb = self.span_proj(span_emb) # [mentions, emb]
-                hs, memory = self.transformer(span_emb, span_mask, raw_query_embed, self.is_cluster, self.IO_score, self.args.cluster_block, encoding)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
-            
-            if self.args.slots:
-                cluster_logits, coref_logits, mention_logits = self.slot_attention(memory)
-
-        else:
-            if not self.args.use_gold_mentions:
-                input_to_embed = input_ids.squeeze(0)
-            else:
-                input_to_embed = input_ids[0][0][[[m[0] for i in range(len(gold_mentions)) for m in gold_mentions[i]]]].unsqueeze(0)
-            span_mask = torch.ones_like(input_to_embed)
-            embedding = self.embedder_toy_data(torch.tensor([self.toy_onehot_dict[i] for i in input_to_embed.cpu().numpy()[0]], device=input_ids.device)).unsqueeze(0)
-            embedding = self.position_embedding(embedding)
-            if self.args.slots:
-                cluster_logits, coref_logits, mention_logits = self.slot_attention(embedding)
-            else:
-                hs, memory = self.transformer(embedding, span_mask, raw_query_embed, self.is_cluster, self.IO_score, self.args.cluster_block, self.args.is_encoding)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
+        if not self.args.use_gold_mentions:
+            longfomer_no_pad = self.input_proj(torch.stack(longfomer_no_pad_list,0))
+            span_mask = masked_mask.reshape(longfomer_no_pad.shape[:-1]) 
+            hs, memory = self.transformer(longfomer_no_pad, span_mask, raw_query_embed, self.is_cluster, self.IO_score, self.args.cluster_block, self.args.is_encoding) # [dec_layers, 1, num_queries, emb], [1, seg*seq, emb]
+        else:   #TODO: not good for sequences because only takes first and last letters and doesnt have a representation of the surrounding
+            span_starts = [torch.tensor([m[0] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
+            span_ends = [torch.tensor([m[1] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
+            span_emb, span_mask = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends, num_mentions)  # [mentions, emb']
+            span_emb = self.span_proj(span_emb) # [mentions, emb]
+            hs, memory = self.transformer(span_emb, span_mask, raw_query_embed, self.is_cluster, self.IO_score, self.args.cluster_block, self.args.is_encoding)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
 
         if not self.args.slots:
             last_hs = hs[-1] # [bs, num_queries, emb]
