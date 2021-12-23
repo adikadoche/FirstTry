@@ -267,7 +267,7 @@ class DETR(pl.LightningModule):
 
             slots = mu + sigma * torch.randn(mu.shape, device = device)
         else:
-            slots = self.query_embed.weight
+            slots = self.query_embed.weight.unsqueeze(0)
 
 
         inputs = self.norm_input(input_emb)        
