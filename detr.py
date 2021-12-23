@@ -44,7 +44,6 @@ class DETRDataModule(pl.LightningDataModule):
         self.args = args
         self.eval_loader = None
         self.train_loader = None
-        self.tokenizer = None
 
     def setup(self, stage):
         self.len_train_loader = len(self.train_dataloader())
@@ -155,11 +154,12 @@ class DETR(pl.LightningModule):
         self.best_f1_epoch = -1
         self.epoch = 0
         self.step_num = 0
+        self.tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name, cache_dir=args.cache_dir)
 
         if self.args.slots:  
             dim = args.hidden_dim      
             self.num_slots = num_queries
-            self.iters = 6
+            self.iters = 3
             self.eps = 1e-8
             self.scale = dim ** -0.5
 
@@ -248,14 +248,14 @@ class DETR(pl.LightningModule):
         if self.args.slots:
             cluster_logits, coref_logits, mention_logits = self.slot_attention(embedding)
         else:
-            hs, memory = self.transformer(embedding, span_mask, self.query_embed.weight, self.is_cluster, self.IO_score, self.args.cluster_block, self.args.is_encoding)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
+            hs, _ = self.transformer(embedding, span_mask, self.query_embed.weight, self.is_cluster, self.IO_score, self.args.cluster_block, self.args.is_encoding)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
             last_hs = hs[-1] # [bs, num_queries, emb]
-            cluster_logits, coref_logits, mention_logits = self.calc_cluster_and_coref_logits(last_hs, memory, span_mask)
+            cluster_logits, coref_logits, mention_logits = self.calc_cluster_and_coref_logits(last_hs, embedding, span_mask)
 
         out = {"coref_logits": coref_logits,
                 "cluster_logits": cluster_logits,
                 "mention_logits": mention_logits,
-                "memory": memory}
+                "memory": embedding}
         return out
 
     def slot_attention(self, input_emb):

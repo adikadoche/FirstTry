@@ -73,7 +73,7 @@
                 // "--no_cuda",
                 "--slots",
                 "--is_cluster",
-                "--is_encoding",
+                // "--is_encoding",
                 // "--cluster_block",
                 // "--min_cluster_size",
                 // "1",
