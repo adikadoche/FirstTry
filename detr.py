@@ -215,13 +215,6 @@ class DETR(pl.LightningModule):
         """
         # input_ids_cat = torch.cat(input_ids, dim=1).squeeze(0)
         # mask_cat = torch.cat(mask, dim=1).squeeze(0)
-        if self.args.slots:
-            raw_query_embed = None
-        elif self.args.random_queries:
-            raw_query_embed = torch.normal(torch.zeros_like(self.query_embed.weight), 1) * self.query_sigma + self.query_mu #raw_query_embed = torch.normal(torch.zeros_like(self.query_embed.weight), 0.5)
-        else:
-            raw_query_embed = self.query_embed.weight
-
         bs = input_ids.shape[0]
         input_ids_r = input_ids.reshape(input_ids.shape[0], -1)
         mask_r = mask.reshape(mask.shape[0], -1)
@@ -241,20 +234,21 @@ class DETR(pl.LightningModule):
 
             longformer_emb = self.backbone(masked_ids, attention_mask=masked_mask)[0]
             longfomer_no_pad_list.append(longformer_emb.reshape(-1, longformer_emb.shape[-1]))
-            self.args.is_encoding = False
+            self.args.is_encoding = False  #TODO: not sure it's the best option for DETR, maybe it still needs the encoder
 
         if not self.args.use_gold_mentions:
-            longfomer_no_pad = self.input_proj(torch.stack(longfomer_no_pad_list,0))
-            span_mask = masked_mask.reshape(longfomer_no_pad.shape[:-1]) 
-            hs, memory = self.transformer(longfomer_no_pad, span_mask, raw_query_embed, self.is_cluster, self.IO_score, self.args.cluster_block, self.args.is_encoding) # [dec_layers, 1, num_queries, emb], [1, seg*seq, emb]
+            embedding = self.input_proj(torch.stack(longfomer_no_pad_list,0))
+            span_mask = masked_mask.reshape(embedding.shape[:-1]) 
         else:   #TODO: not good for sequences because only takes first and last letters and doesnt have a representation of the surrounding
             span_starts = [torch.tensor([m[0] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
             span_ends = [torch.tensor([m[1] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
             span_emb, span_mask = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends, num_mentions)  # [mentions, emb']
-            span_emb = self.span_proj(span_emb) # [mentions, emb]
-            hs, memory = self.transformer(span_emb, span_mask, raw_query_embed, self.is_cluster, self.IO_score, self.args.cluster_block, self.args.is_encoding)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
-
-        if not self.args.slots:
+            embedding = self.span_proj(span_emb) # [mentions, emb]
+        
+        if self.args.slots:
+            cluster_logits, coref_logits, mention_logits = self.slot_attention(embedding)
+        else:
+            hs, memory = self.transformer(embedding, span_mask, self.query_embed.weight, self.is_cluster, self.IO_score, self.args.cluster_block, self.args.is_encoding)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
             last_hs = hs[-1] # [bs, num_queries, emb]
             cluster_logits, coref_logits, mention_logits = self.calc_cluster_and_coref_logits(last_hs, memory, span_mask)
 
@@ -267,10 +261,14 @@ class DETR(pl.LightningModule):
     def slot_attention(self, input_emb):
         bs, doc_len, emb, device = *input_emb.shape, input_emb.device
         
-        mu = self.slots_mu.expand(bs, self.num_slots, -1)
-        sigma = self.slots_logsigma.exp().expand(bs, self.num_slots, -1)
+        if self.args.random_queries:
+            mu = self.slots_mu.expand(bs, self.num_slots, -1)
+            sigma = self.slots_logsigma.exp().expand(bs, self.num_slots, -1)
 
-        slots = mu + sigma * torch.randn(mu.shape, device = device)
+            slots = mu + sigma * torch.randn(mu.shape, device = device)
+        else:
+            slots = self.query_embed.weight
+
 
         inputs = self.norm_input(input_emb)        
         k, v = self.to_k(inputs), self.to_v(inputs)
