@@ -32,7 +32,6 @@ DATE=${DATE::23}
 LOG_PATH=${LOG_DIR}/${DATE}_${JOB_NAME}_slurm_log.txt
 TEMPFILE_PATH=$(tempfile)
 echo ""
-echo $GIT_HASH
 
 sbatch \
   --job-name=${JOB_NAME}  \
