@@ -43,8 +43,7 @@ sbatch \
   --nodes=1  \
   --ntasks=1  \
   --gpus=1  \
-  --export GIT_HASH \
-  --export JOB_NAME \
+  --export GIT_HASH,JOB_NAME \
   --exclude="n-301"  \
   ${SCRIPT_PATH} ${SCRIPT_PARAMS}  |  tee ${TEMPFILE_PATH}
 

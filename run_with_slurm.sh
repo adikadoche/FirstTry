@@ -32,6 +32,7 @@ DATE=${DATE::23}
 LOG_PATH=${LOG_DIR}/${DATE}_${JOB_NAME}_slurm_log.txt
 TEMPFILE_PATH=$(tempfile)
 echo ""
+echo $GIT_HASH
 
 sbatch \
   --job-name=${JOB_NAME}  \
@@ -43,8 +44,7 @@ sbatch \
   --nodes=1  \
   --ntasks=1  \
   --gpus=1  \
-  --export GIT_HASH \
-  --export JOB_NAME \
+  --export JOB_NAME,GIT_HASH \
   --constraint="geforce_rtx_3090|quadro_rtx_8000|tesla_v100"  \
   --exclude="n-301,n-401"  \
   ${SCRIPT_PATH} ${SCRIPT_PARAMS}  |  tee ${TEMPFILE_PATH}
