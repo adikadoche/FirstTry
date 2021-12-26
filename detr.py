@@ -471,8 +471,12 @@ class DETR(pl.LightningModule):
         eval_loss = np.average(self.losses, weights=self.batch_sizes)
         losses_parts = {key:np.average(self.losses_parts[key]) for key in self.losses_parts.keys()}
 
-        if self.args.threshold > 0 or (self.thresh_delta < 0.2 and self.same_thresh_count > 3) or self.epoch == 0:
+        if self.args.threshold > 0 or self.epoch == 0:
             p, r, f1, best_metrics, self.all_predicted_clusters = self.eval_by_thresh(self.threshold)
+        elif self.thresh_delta < 0.2 and self.same_thresh_count > 5:
+            p, r, f1, best_metrics, self.all_predicted_clusters = self.eval_by_thresh(self.threshold)
+            self.thresh_delta = 0.2
+            self.same_thresh_count = 0
         else:
             if self.thresh_delta == 0.2:
                 thresh_start = 0.05
@@ -494,7 +498,7 @@ class DETR(pl.LightningModule):
             p,r,f1 = best
             if best_threshold == self.threshold:
                 self.same_thresh_count += 1
-                if self.same_thresh_count == 3 and self.thresh_delta == 0.2:
+                if self.same_thresh_count == 5 and self.thresh_delta == 0.2:
                     self.thresh_delta = 0.02
                     self.same_thresh_count = 0
             else:
@@ -863,14 +867,14 @@ class MatchingLoss(nn.Module):
                 cluster_inds = targets_clusters[i][matched_gold_cluster_id_real[i]]
                 junk_cluster = 1 - torch.sum(cluster_inds, 0)
                 if torch.sum(junk_cluster) > 0:
-                    cluster_inds = torch.cat([cluster_inds, junk_cluster.unsqueeze(0)])
+                    cluster_inds = torch.cat([cluster_inds, junk_cluster.unsqueeze(0)]) #TODO: do we really want it?
                 avg_vector = torch.matmul(cluster_inds, memory) / torch.sum(cluster_inds, 1).reshape(-1, 1)
                 center_clusters_distances = torch.cdist(avg_vector, avg_vector)
                 diffs = 0
                 for x in range(cluster_inds.shape[0]):
-                    diffs += torch.sqrt(1e-4 + torch.sum(torch.pow((memory - avg_vector[x]) * cluster_inds[x].unsqueeze(-1), 2))) / torch.sum(cluster_inds[x])
+                    diffs += torch.sum(torch.pow((memory - avg_vector[x]) * cluster_inds[x].unsqueeze(-1), 2)) / torch.sum(cluster_inds[x])
                 embedding_loss = (3*torch.max(torch.tensor(1, device=diffs.device),diffs)/cluster_inds.shape[0])\
-                    + 1 / (torch.sum(center_clusters_distances)/(center_clusters_distances.shape[0]*center_clusters_distances.shape[1]))
+                    + 1 / (torch.sum(center_clusters_distances)/(center_clusters_distances.shape[0]*center_clusters_distances.shape[1]))  #TODO: change to accurate denom?
                         
             elif coref_logits.shape[1] > 0:
                 cost_coref = F.binary_cross_entropy(coref_logits, torch.zeros_like(coref_logits), reduction=self.args.reduction) / coref_logits.shape[1]
@@ -900,7 +904,7 @@ class MatchingLoss(nn.Module):
             costs_parts['loss_is_mention'].append(self.cost_is_mention * cost_is_mention.detach().cpu())
             costs_parts['loss_coref'].append(self.cost_coref * cost_coref.detach().cpu())
             costs_parts['loss_embedding'].append(self.cost_coref * 5*embedding_loss.detach().cpu())
-            costs_parts['loss_embedding_num'].append((torch.max(torch.tensor(1, device=diffs.device),diffs)/cluster_inds.shape[0]).detach().cpu())
+            costs_parts['loss_embedding_num'].append((3*torch.max(torch.tensor(1, device=diffs.device),diffs)/cluster_inds.shape[0]).detach().cpu())
             costs_parts['loss_embedding_denom'].append((1/(torch.sum(center_clusters_distances)/(center_clusters_distances.shape[0]*center_clusters_distances.shape[1]))).detach().cpu())
             total_cost = self.cost_coref * cost_coref + self.cost_is_cluster * cost_is_cluster + self.cost_is_mention * cost_is_mention + 5*self.cost_coref * embedding_loss
             costs.append(total_cost)

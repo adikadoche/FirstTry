@@ -41,7 +41,7 @@
                 "--eval",
                 "all",
                 "--input_type",
-                "sequences_20",
+                "ontonotes",
                 // "--add_junk",
                 // "--add_profile",
                 "--verbose",
@@ -69,11 +69,10 @@
                 // "--amp",
                 // "--softmax",
                 // "--sequential",
-                // "--use_gold_mentions",
+                "--use_gold_mentions",
                 // "--no_cuda",
-                "--slots",
+                // "--slots",
                 "--is_cluster",
-                // "--is_encoding",
                 // "--cluster_block",
                 // "--min_cluster_size",
                 // "1",
@@ -117,6 +116,13 @@
             "type": "python",
             "request": "launch",
             "program": "${workspaceFolder}/tests.py",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "comb",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/run_comb.py",
             "console": "integratedTerminal"
         }
     ]
