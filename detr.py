@@ -234,7 +234,7 @@ class DETR(pl.LightningModule):
 
             longformer_emb = self.backbone(masked_ids, attention_mask=masked_mask)[0]
             longfomer_no_pad_list.append(longformer_emb.reshape(-1, longformer_emb.shape[-1]))
-            self.args.is_encoding = False  #TODO: not sure it's the best option for DETR, maybe it still needs the encoder
+            # self.args.is_encoding = False  #TODO: not sure it's the best option for DETR, maybe it still needs the encoder
 
         if not self.args.use_gold_mentions:
             embedding = self.input_proj(torch.stack(longfomer_no_pad_list,0))
@@ -247,15 +247,20 @@ class DETR(pl.LightningModule):
         
         if self.args.slots:
             cluster_logits, coref_logits, mention_logits = self.slot_attention(embedding)
+            out = {"coref_logits": coref_logits,
+                    "cluster_logits": cluster_logits,
+                    "mention_logits": mention_logits,
+                    "memory": embedding}
         else:
-            hs, _ = self.transformer(embedding, span_mask, self.query_embed.weight, self.is_cluster, self.IO_score, self.args.cluster_block, self.args.is_encoding)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
+            hs, memory = self.transformer(embedding, span_mask, self.query_embed.weight, self.is_cluster, self.IO_score, self.args.cluster_block)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
             last_hs = hs[-1] # [bs, num_queries, emb]
             cluster_logits, coref_logits, mention_logits = self.calc_cluster_and_coref_logits(last_hs, embedding, span_mask)
 
-        out = {"coref_logits": coref_logits,
-                "cluster_logits": cluster_logits,
-                "mention_logits": mention_logits,
-                "memory": embedding}
+            out = {"coref_logits": coref_logits,
+                    "cluster_logits": cluster_logits,
+                    "mention_logits": mention_logits,
+                    "memory": memory}
+
         return out
 
     def slot_attention(self, input_emb):
@@ -854,19 +859,18 @@ class MatchingLoss(nn.Module):
                     else:
                         cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_gold, reduction=self.args.reduction) / coref_logits.shape[1]
 
-                if self.args.input_type.split('_')[0] == 'sequences':
-                    memory = outputs["memory"][i].squeeze(0)
-                    cluster_inds = targets_clusters[i][matched_gold_cluster_id_real[i]]
-                    junk_cluster = 1 - torch.sum(cluster_inds, 0)
-                    if torch.sum(junk_cluster) > 0:
-                        cluster_inds = torch.cat([cluster_inds, junk_cluster.unsqueeze(0)])
-                    avg_vector = torch.matmul(cluster_inds, memory) / torch.sum(cluster_inds, 1).reshape(-1, 1)
-                    center_clusters_distances = torch.cdist(avg_vector, avg_vector)
-                    diffs = 0
-                    for x in range(cluster_inds.shape[0]):
-                        diffs += torch.sqrt(torch.sum(torch.pow((memory - avg_vector[x]) * cluster_inds[x].unsqueeze(-1), 2))) / torch.sum(cluster_inds[x])
-                    embedding_loss = (torch.max(torch.tensor(1, device=diffs.device),diffs)/cluster_inds.shape[0])\
-                        / (torch.sum(center_clusters_distances)/(center_clusters_distances.shape[0]*center_clusters_distances.shape[1]))
+                memory = outputs["memory"][i].squeeze(0)
+                cluster_inds = targets_clusters[i][matched_gold_cluster_id_real[i]]
+                junk_cluster = 1 - torch.sum(cluster_inds, 0)
+                if torch.sum(junk_cluster) > 0:
+                    cluster_inds = torch.cat([cluster_inds, junk_cluster.unsqueeze(0)])
+                avg_vector = torch.matmul(cluster_inds, memory) / torch.sum(cluster_inds, 1).reshape(-1, 1)
+                center_clusters_distances = torch.cdist(avg_vector, avg_vector)
+                diffs = 0
+                for x in range(cluster_inds.shape[0]):
+                    diffs += torch.sqrt(1e-4 + torch.sum(torch.pow((memory - avg_vector[x]) * cluster_inds[x].unsqueeze(-1), 2))) / torch.sum(cluster_inds[x])
+                embedding_loss = (torch.max(torch.tensor(1, device=diffs.device),diffs)/cluster_inds.shape[0])\
+                    / (torch.sum(center_clusters_distances)/(center_clusters_distances.shape[0]*center_clusters_distances.shape[1]))
                         
             elif coref_logits.shape[1] > 0:
                 cost_coref = F.binary_cross_entropy(coref_logits, torch.zeros_like(coref_logits), reduction=self.args.reduction) / coref_logits.shape[1]
