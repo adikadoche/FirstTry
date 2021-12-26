@@ -99,7 +99,7 @@ def train(args, model, wandb=None):
             callbacks=[ModelCheckpoint(monitor="eval_avg_f1"), ModelCheckpoint(monitor="epoch")], default_root_dir=args.output_dir)
     else:
         trainer = pl.Trainer(max_epochs=args.num_train_epochs, gpus=args.n_gpu, amp_backend='apex', accumulate_grad_batches=args.gradient_accumulation_steps,\
-            callbacks=[ModelCheckpoint(monitor="eval_avg_f1"), ModelCheckpoint(monitor="epoch")], default_root_dir=args.output_dir)
+            callbacks=[ModelCheckpoint(monitor="eval_avg_f1"), ModelCheckpoint(monitor="epoch")], default_root_dir=args.output_dir, detect_anomaly=True)
                              
     # global_step = 0 if not args.resume_from else args.resume_global_step
     # if args.local_rank in [-1, 0]:
