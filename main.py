@@ -64,7 +64,7 @@ def main():
             args.n_gpu = 0
         else:
             args.n_gpu = 1 
-            os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+            os.environ["CUDA_VISIBLE_DEVICES"] = "2"
             os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
     # Setup logging
@@ -89,14 +89,6 @@ def main():
 
     # config_class = LongformerConfig
     # base_model_prefix = "longformer"
-    model = build_DETR(args)
-    if not args.is_debug:
-        wandb.watch(model, log="all")
-
-    if args.local_rank == 0:
-        torch.distributed.barrier()  # Make sure only the first process in distributed training will download model & vocab
-
-    model.to(args.device)
 
     # eval_dataset, eval_sampler, eval_loader, args.eval_batch_size = get_data_objects(args, args.predict_file, False)
     # eval_dataset = get_dataset(args, evaluate=True)
@@ -124,9 +116,9 @@ def main():
         #         f.close()
         # else:
     if not args.is_debug:
-        train(args, model, wandb)
+        train(args, wandb)
     else:
-        train(args, model)
+        train(args)
     # else:
     #     make_evaluation(model, criterion, eval_loader, eval_dataset, args) #TODO: report_eval won't work in here because of missing parameters
 

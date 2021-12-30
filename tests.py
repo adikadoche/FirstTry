@@ -4,7 +4,7 @@ import random
 import numpy as np
 from matcher import build_matcher
 from utils import calc_predicted_clusters
-from detr import MatchingLoss
+from detr import DETRLoss
 
 
 num_queries = 50
@@ -132,7 +132,7 @@ class Test(unittest.TestCase):
                     for r in reduc_options:
                         args = Args(o1, o2,r)
                         m = build_matcher(args=args)
-                        l = MatchingLoss(m, args.eos_coef, args.cost_is_cluster, args.cost_coref, args.cost_is_mention, args)
+                        l = DETRLoss(m, args.eos_coef, args.cost_is_cluster, args.cost_coref, args.cost_is_mention, args)
                         loss,parts = l(outputs,targets)
                         self.assertEqual(loss,0)
 

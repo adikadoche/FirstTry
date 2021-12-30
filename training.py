@@ -17,7 +17,7 @@ from consts import TOKENS_PAD, SPEAKER_PAD
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.profiler import AdvancedProfiler
-from detr import DETRDataModule, DETR
+from detr import DETRDataModule, DETR, build_DETR, build_Embedder
 
 from transformers import AdamW, get_constant_schedule_with_warmup
 
@@ -83,7 +83,22 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     return global_step, threshold
 
 
-def train(args, model, wandb=None):
+def train(args, wandb=None):
+    pretrain = True
+
+    if pretrain:
+        model = build_Embedder(args)
+    else:
+        model = build_DETR(args)
+
+    if not args.is_debug:
+        wandb.watch(model, log="all")
+
+    if args.local_rank == 0:
+        torch.distributed.barrier()  # Make sure only the first process in distributed training will download model & vocab
+
+    model.to(args.device)
+
     """ Train the model """
     # output_dir = Path(args.output_dir)
 
@@ -91,15 +106,20 @@ def train(args, model, wandb=None):
     # if args.resume_from:
     #     model = DETR.load_from_checkpoint(args.resume_from)
     data_model = DETRDataModule(args)
+
+    if pretrain:
+        monitor = "eval_loss"
+    else:
+        monitor = "eval_avg_f1"
     # profiler = AdvancedProfiler(dirpath=args.output_dir, filename="profile")
     if wandb is not None:        
         # trainer = pl.Trainer(max_epochs=args.num_train_epochs, gpus=args.n_gpu, amp_backend='apex', logger= wandb, accumulate_grad_batches=args.gradient_accumulation_steps,\
         #     callbacks=[ModelCheckpoint(monitor="eval_avg_f1"), ModelCheckpoint(monitor="epoch")], default_root_dir=args.output_dir, profiler=profiler)
         trainer = pl.Trainer(max_epochs=args.num_train_epochs, gpus=args.n_gpu, amp_backend='apex', logger= wandb, accumulate_grad_batches=args.gradient_accumulation_steps,\
-            callbacks=[ModelCheckpoint(monitor="eval_avg_f1"), ModelCheckpoint(monitor="epoch")], default_root_dir=args.output_dir)
+            callbacks=[ModelCheckpoint(monitor=monitor), ModelCheckpoint(monitor="epoch")], default_root_dir=args.output_dir)
     else:
         trainer = pl.Trainer(max_epochs=args.num_train_epochs, gpus=args.n_gpu, amp_backend='apex', accumulate_grad_batches=args.gradient_accumulation_steps,\
-            callbacks=[ModelCheckpoint(monitor="eval_avg_f1"), ModelCheckpoint(monitor="epoch")], default_root_dir=args.output_dir, detect_anomaly=True)
+            callbacks=[ModelCheckpoint(monitor=monitor), ModelCheckpoint(monitor="epoch")], default_root_dir=args.output_dir, detect_anomaly=True)
                              
     # global_step = 0 if not args.resume_from else args.resume_global_step
     # if args.local_rank in [-1, 0]:

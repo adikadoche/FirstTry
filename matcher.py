@@ -70,7 +70,7 @@ class HungarianMatcher(nn.Module):
 
             coref_logits = outputs["coref_logits"][i].squeeze(0) # [num_queries, tokens]
             cluster_logits = outputs["cluster_logits"][i] # [num_queries, 1]
-            if self.args.add_junk:
+            if len(outputs["mention_logits"]) > 0:
                 mention_logits = outputs["mention_logits"][i].squeeze(-1).unsqueeze(0) # [1, tokens]
 
             if self.args.BIO == 1:
@@ -83,7 +83,7 @@ class HungarianMatcher(nn.Module):
             num_of_gold_clusters = int(real_cluster_target.shape[0])
             num_queries = coref_logits.shape[0]
 
-            if self.args.is_cluster and not self.args.use_gold_mentions:
+            if self.args.is_cluster and (not self.args.use_gold_mentions or self.args.add_junk):
                 weight_cluster = torch.cat([torch.ones(num_of_gold_clusters, device=cluster_logits.device), \
                     self.args.eos_coef * torch.ones(num_queries - num_of_gold_clusters, device=cluster_logits.device)]).repeat(num_queries, 1)
                 cost_is_cluster = F.binary_cross_entropy(cluster_logits.repeat(1, num_queries), \
@@ -92,7 +92,7 @@ class HungarianMatcher(nn.Module):
             else:
                 cost_is_cluster = torch.tensor(0)
 
-            if self.args.add_junk:
+            if len(outputs["mention_logits"]) > 0:
                 mention_logits = mention_logits.repeat(num_queries, 1) # [num_queries, tokens]
                 coref_logits = coref_logits * mention_logits                
 

@@ -402,11 +402,13 @@ def create_junk_gold_mentions(gold_mentions, text_len, device, max_mention_len=5
         if num_mentions == 0:
             num_junk_mentions = random.randint(0, int(text_len[i]/5))
         else:
-            num_junk_mentions = random.randint(0, min(num_mentions*2, int(text_len[i]/5)))
+            # num_junk_mentions = random.randint(min(num_mentions, int(text_len[i]/5)), max(num_mentions*2, int(text_len[i]/3)))
+            num_junk_mentions = num_mentions * 5
 
-        junk_start_indices = np.random.permutation(range(text_len[i]))[:num_junk_mentions]
+        junk_start_indices = np.random.choice(range(text_len[i]), num_junk_mentions)
         junk_end_indices = [min(start + random.randint(0, max_mention_len), text_len[i]-1) for start in junk_start_indices]
         only_junk_mentions = [tuple((junk_start_indices[i], junk_end_indices[i])) for i in range(len(junk_start_indices))]
+        only_junk_mentions = list(set(only_junk_mentions))
         only_junk_mentions = [f for f in only_junk_mentions if f not in gold_mentions[i]]
 
         unite_mentions = gold_mentions[i] + only_junk_mentions

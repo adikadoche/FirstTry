@@ -81,6 +81,316 @@ class DETRDataModule(pl.LightningDataModule):
         return self.train_loader
 
 
+class Embedder(pl.LightningModule):
+    def __init__(self, args):
+        super().__init__()
+        self.args = args
+
+        if args.config_name:
+            config = AutoConfig.from_pretrained(args.config_name, cache_dir=args.cache_dir)
+        elif args.model_name_or_path:
+            config = AutoConfig.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir)
+        else:
+            config = CONFIG_MAPPING[args.model_type]()
+            logger.warning("You are instantiating a new config instance from scratch.")
+
+        self.longformer = LongformerModel.from_pretrained(args.model_name_or_path,
+                                               config=config,
+                                               cache_dir=args.cache_dir)
+        self.input_proj = nn.Linear(self.longformer.config.hidden_size, args.hidden_dim)
+        self.span_proj = nn.Linear(3*self.longformer.config.hidden_size+20, args.hidden_dim) # TODO config
+        self.word_attn_projection = nn.Linear(self.longformer.config.hidden_size, 1)
+        self.span_width_embed = nn.Embedding(30, 20)
+
+        self.criterion = EmbeddingLoss()
+
+        self.recent_train_losses = []
+        self.recent_train_losses_parts = {}
+        self.losses = []
+        self.losses_parts = {}
+        self.batch_sizes = []
+        self.best_loss = -1
+        self.best_loss_epoch = -1
+        self.step_num = 0
+        self.epoch = 0
+        
+        self.input_ids_pads = torch.ones(1, self.args.max_segment_len, dtype=torch.int, device=self.args.device) * TOKENS_PAD
+        self.mask_pads = torch.zeros(1, self.args.max_segment_len, dtype=torch.int, device=self.args.device)
+    
+    def forward(self, input_ids, mask, gold_mentions, num_mentions):
+        bs = input_ids.shape[0]
+        input_ids_r = input_ids.reshape(input_ids.shape[0], -1)
+        mask_r = mask.reshape(mask.shape[0], -1)
+        longfomer_no_pad_list = []
+        for i in range(input_ids_r.shape[0]):
+            masked_ids = input_ids_r[i][mask_r[i]==1].unsqueeze(0)
+            masked_mask = torch.ones_like(masked_ids).unsqueeze(0)
+            if masked_ids.shape[-1] > self.args.max_seq_length:
+                masked_ids = torch.zeros([2, math.ceil(input_ids.shape[1]/2) * input_ids.shape[-1]], dtype=torch.long)
+                masked_mask = torch.zeros([2, math.ceil(mask.shape[1]/2) * mask.shape[-1]], dtype=torch.long)
+                masked_ids[0] = input_ids[i][:math.ceil(input_ids.shape[1]/2)].reshape(1, math.ceil(input_ids.shape[1]/2) * input_ids.shape[-1])
+                masked_mask[0] = mask[i][:math.ceil(mask.shape[1]/2)].reshape(1, math.ceil(mask.shape[1]/2) * mask.shape[-1])
+                masked_ids[1][:(input_ids.shape[1]-math.ceil(input_ids.shape[1]/2)) * input_ids.shape[-1]] = \
+                    input_ids[i][math.ceil(input_ids.shape[1]/2):].reshape(1, (input_ids.shape[1]-math.ceil(input_ids.shape[1]/2)) * input_ids.shape[-1])
+                masked_mask[1][:(mask.shape[1]-math.ceil(mask.shape[1]/2)) * mask.shape[-1]] = \
+                    mask[i][math.ceil(mask.shape[1]/2):].reshape(1, (mask.shape[1]-math.ceil(mask.shape[1]/2)) * mask.shape[-1])
+
+            longformer_emb = self.longformer(masked_ids, attention_mask=masked_mask)[0]
+            longfomer_no_pad_list.append(longformer_emb.reshape(-1, longformer_emb.shape[-1]))
+            # self.args.is_encoding = False  #TODO: not sure it's the best option for DETR, maybe it still needs the encoder
+
+        if not self.args.use_gold_mentions:
+            embedding = self.input_proj(torch.stack(longfomer_no_pad_list,0))
+            span_mask = masked_mask.reshape(embedding.shape[:-1]) 
+        else:   #TODO: not good for sequences because only takes first and last letters and doesnt have a representation of the surrounding
+            span_starts = [torch.tensor([m[0] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
+            span_ends = [torch.tensor([m[1] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
+            span_emb, span_mask = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends, num_mentions)  # [mentions, emb']
+            embedding = self.span_proj(span_emb) # [mentions, emb]
+        
+
+        out = {"embedding": embedding, "mask": span_mask}
+        return out
+
+
+    def get_span_emb(self, context_outputs_list, span_starts, span_ends, num_mentions):
+        max_mentions = num_mentions.max()
+        span_mask_list = []
+        span_emb_list = []
+        # print(f'context outputs {context_outputs.shape}')
+        # print(f'span_starts {span_starts[0].shape}')
+        for i in range(len(num_mentions)):
+            span_emb_construct = []
+            # print(f'span_starts max {span_starts[i].max()} min {span_starts[i].min()}')
+            span_start_emb = context_outputs_list[i][span_starts[i][:num_mentions[i]]] # [k, emb]
+            span_emb_construct.append(span_start_emb)
+
+            span_end_emb = context_outputs_list[i][span_ends[i][:num_mentions[i]]]  # [k, emb]
+            span_emb_construct.append(span_end_emb)
+
+            span_width = (1 + span_ends[i][:num_mentions[i]] - span_starts[i][:num_mentions[i]]).clamp(max=30)  # [k]
+
+            # if self.config["use_features"]:
+            span_width_index = span_width - 1  # [k]
+            span_width_emb = self.span_width_embed.weight[span_width_index]
+            # TODO add dropout
+            # span_width_emb = tf.nn.dropout(span_width_emb, self.dropout)
+            span_emb_construct.append(span_width_emb)
+
+            # if self.config["model_heads"]:
+            mention_word_score = self.get_masked_mention_word_scores(context_outputs_list[i], span_starts[i][:num_mentions[i]], span_ends[i][:num_mentions[i]])  # [K, T]
+            head_attn_reps = torch.matmul(mention_word_score, context_outputs_list[i])  # [K, emb]
+            span_emb_construct.append(head_attn_reps)
+            # span_emb_construct.append((genre[i].unsqueeze(0)/1.0).repeat(num_mentions[i], 1))
+            span_emb_cat = torch.cat(span_emb_construct, 1)
+            span_mask = torch.cat([torch.ones(span_emb_cat.shape[0], dtype=torch.int, device=context_outputs_list[i].device), \
+                torch.zeros(max_mentions-span_emb_cat.shape[0], dtype=torch.int, device=context_outputs_list[i].device)])
+            span_emb_cat = torch.cat([span_emb_cat, torch.zeros(max_mentions-span_emb_cat.shape[0], span_emb_cat.shape[1], dtype=torch.float, device=context_outputs_list[i].device)])
+
+            span_emb_list.append(span_emb_cat.unsqueeze(0))  
+            span_mask_list.append(span_mask.unsqueeze(0))  
+        span_emb_tensor = torch.cat(span_emb_list, 0)
+        span_mask_tensor = torch.cat(span_mask_list, 0)
+        return span_emb_tensor, span_mask_tensor  # [k, emb], [K, T]
+
+    def get_masked_mention_word_scores(self, encoded_doc, span_starts, span_ends):
+        num_words = encoded_doc.shape[0]  # T
+        num_c = len(span_starts)  # NC
+
+        doc_range = torch.arange(0, num_words).unsqueeze(0).repeat(num_c, 1)  # [K, T]
+        mention_mask = torch.logical_and(doc_range >= span_starts.unsqueeze(1),
+                                      doc_range <= span_ends.unsqueeze(1))  # [K, T]
+
+        word_attn = self.word_attn_projection(encoded_doc).squeeze(1)
+        mention_word_attn = F.softmax(mention_mask.to(dtype=torch.float32, device=encoded_doc.device).log() + word_attn.unsqueeze(0), -1)
+        return mention_word_attn  # [K, T]
+
+
+    def configure_optimizers(self):
+        param_dicts = [
+            {"params": [p for n, p in self.named_parameters() if "longformer" not in n and p.requires_grad]},
+            {
+                "params": [p for n, p in self.named_parameters() if "longformer" in n and p.requires_grad],
+                "lr": self.args.lr_backbone,
+            },
+        ]
+
+        self.optimizer = torch.optim.AdamW(param_dicts, lr=self.args.lr, weight_decay=self.args.weight_decay)
+
+        lr_scheduler = {
+            'scheduler': WarmupLinearSchedule(self.optimizer, warmup_steps=self.args.warmup_steps, t_total=self.args.t_total),
+            "interval": "step"
+            }
+        return [self.optimizer], [lr_scheduler]
+        
+
+    def training_step(self, batch, batch_idx):
+        if self.args.do_train:
+            sum_text_len = [sum(tl) for tl in batch['text_len']]
+            gold_clusters = batch['clusters']
+
+            gold_mentions_list = [list(set([tuple(m) for c in gc for m in c])) for gc in gold_clusters]
+            if self.args.add_junk:
+                gold_mentions_list, gold_mentions_vector = create_junk_gold_mentions(gold_mentions_list, sum_text_len, self.args.device)
+            else:
+                gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=self.args.device) for gm in gold_mentions_list]
+
+            input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = \
+                tensor_and_remove_empty(batch, gold_mentions_list, self.args, self.input_ids_pads, self.mask_pads)
+            if len(input_ids) == 0:
+                return 0
+
+            gold_matrix = create_gold_matrix(self.args.device, sum_text_len, self.args.num_queries, gold_clusters, gold_mentions_list, self.args.use_gold_mentions, self.args.BIO)
+
+            outputs = self(input_ids, input_mask, gold_mentions, num_mentions)
+
+            loss, loss_parts = self.criterion(outputs, {'clusters':gold_matrix})
+            
+            self.recent_train_losses.append(loss.item())
+            for key in loss_parts.keys():
+                if key in self.recent_train_losses_parts.keys() and len(self.recent_train_losses_parts[key]) > 0:
+                    self.recent_train_losses_parts[key] += loss_parts[key]
+                else:
+                    self.recent_train_losses_parts[key] = loss_parts[key]
+
+            if self.args.local_rank in [-1, 0] and self.args.logging_steps > 0 and batch_idx % self.args.logging_steps == 0:
+                self.trainer.logger.log_metrics({'lr': self.optimizer.param_groups[0]['lr']}, self.step_num)
+                self.trainer.logger.log_metrics({'lr_long': self.optimizer.param_groups[1]['lr']}, self.step_num)
+                self.trainer.logger.log_metrics({'loss': np.mean(self.recent_train_losses)}, self.step_num)
+                for key in self.recent_train_losses_parts.keys():
+                    self.trainer.logger.log_metrics({key: np.mean(self.recent_train_losses_parts[key])}, self.step_num)
+                self.recent_train_losses.clear()
+                self.recent_train_losses_parts.clear()
+
+            self.step_num += 1
+
+            return {'loss': loss}
+
+    def training_epoch_end(self, train_step_outputs):
+        self.log('epoch', self.epoch)
+        if self.args.do_train:
+            self.recent_train_losses.clear()
+            self.recent_train_losses_parts.clear()
+            self.epoch += 1
+
+    def validation_step(self, batch, batch_idx):
+        sum_text_len = [sum(tl) for tl in batch['text_len']]
+        gold_clusters = batch['clusters']
+
+        gold_mentions_list = [list(set([tuple(m) for c in gc for m in c])) for gc in gold_clusters]
+        if self.args.add_junk:
+            gold_mentions_list, gold_mentions_vector = create_junk_gold_mentions(gold_mentions_list, sum_text_len, self.args.device)
+        else:
+            gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=self.args.device) for gm in gold_mentions_list]
+        
+        gold_matrix = create_gold_matrix(self.args.device, sum_text_len, self.args.num_queries, gold_clusters, gold_mentions_list, self.args.use_gold_mentions, self.args.BIO)
+
+        input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = \
+            tensor_and_remove_empty(batch, gold_mentions_list, self.args, self.input_ids_pads, self.mask_pads)
+        if len(input_ids) == 0:
+            return 0
+
+        outputs = self(input_ids, input_mask, gold_mentions, num_mentions)
+
+        loss, loss_parts = self.criterion(outputs, {'clusters':gold_matrix})
+        self.losses.append(loss.mean().detach().cpu())
+        for key in loss_parts.keys():
+            if key in self.losses_parts.keys() and len(self.losses_parts[key]) > 0:
+                self.losses_parts[key] += loss_parts[key]
+            else:
+                self.losses_parts[key] = loss_parts[key]
+        self.batch_sizes.append(loss.shape[0]) 
+
+        return {'loss': loss}
+
+    def validation_epoch_end(self, val_step_outputs):
+        eval_loss = np.average(self.losses, weights=self.batch_sizes)
+        losses_parts = {key:np.average(self.losses_parts[key]) for key in self.losses_parts.keys()}
+
+        results = {'loss': eval_loss} | losses_parts
+
+        for key, value in results.items():
+            self.trainer.logger.log_metrics({'eval_{}'.format(key): value}, self.step_num)
+        self.log('eval_loss', torch.tensor(results['loss']))
+
+        if self.step_num > 0 and self.args.save_epochs > 0 and (self.epoch + 1) % self.args.save_epochs == 0 or self.epoch + 1 == self.args.num_train_epochs:
+            if eval_loss < self.best_loss or self.best_loss == -1:
+                prev_best_loss = self.best_loss
+                prev_best_loss_epoch = self.best_loss_epoch
+                output_dir = os.path.join(self.args.output_dir, 'checkpoint-{}'.format(self.epoch))
+                if not os.path.exists(output_dir):
+                    os.makedirs(output_dir)
+                path = os.path.join(output_dir, 'model.step-{}.pt'.format(self.epoch))
+                torch.save(self.state_dict(), path)
+                print(f'previous checkpoint with loss {prev_best_loss} was {prev_best_loss_epoch}')
+                self.best_loss = eval_loss
+                self.best_loss_epoch = self.epoch
+                print(f'saved checkpoint with loss {self.best_loss} in step {self.best_loss_epoch} to {path}')
+                if prev_best_loss_epoch > -1:
+                    path_to_remove = os.path.join(self.args.output_dir, 'checkpoint-{}'.format(prev_best_loss_epoch))
+                    shutil.rmtree(path_to_remove)
+                    print(f'removed checkpoint with loss {prev_best_loss} from {path_to_remove}')
+            self.trainer.logger.log_metrics({'eval_best_loss': self.best_loss}, self.step_num)
+            try:
+                self.trainer.logger.log_metrics({'eval_best_loss_checkpoint': os.path.join(self.args.output_dir, 'checkpoint-{}'.format(self.best_loss_epoch))}, self.step_num)
+            except:
+                pass
+        
+        self.recent_train_losses = []
+        self.recent_train_losses_parts = {}
+        self.losses = []
+        self.losses_parts = {}
+        self.batch_sizes = []
+
+
+class EmbeddingLoss(nn.Module):
+    """ This class computes the loss for DETR.
+    The process happens in two steps:
+        1) we compute hungarian assignment between ground truth boxes and the outputs of the model
+        2) we supervise each pair of matched ground-truth / prediction (supervise class and box)
+    """
+
+    def forward(self, outputs, targets):
+        """ This performs the loss computation.
+        Parameters:
+             outputs: dict of tensors, see the output specification of the model for the format
+             targets: list of dicts, such that len(targets) == batch_size.
+                      The expected keys in each dict depends on the losses applied, see each loss' doc
+        """
+
+        targets_clusters = targets['clusters']
+        bs = outputs["embedding"].shape[0]
+        costs = []
+        costs_parts = {'loss_embedding':[], 'loss_embedding_num':[], 'loss_embedding_denom':[]}
+        for i in range(bs):
+            # Compute the average number of target boxes accross all nodes, for normalization purposes
+            num_of_gold_clusters = torch.sum(torch.sum(targets_clusters[i], -1) > 0)
+
+            embedding_loss = torch.tensor(0)
+
+            embedding = outputs["embedding"][i].squeeze(0)
+            cluster_inds = targets_clusters[i][:num_of_gold_clusters]
+            junk_cluster = 1 - torch.sum(cluster_inds, 0)
+            if torch.sum(junk_cluster) > 0:
+                cluster_inds = torch.cat([cluster_inds, junk_cluster.unsqueeze(0)]) #TODO: do we really want it?
+            avg_vector = torch.matmul(cluster_inds, embedding) / torch.sum(cluster_inds, 1).reshape(-1, 1)
+            center_clusters_distances = torch.cdist(avg_vector, avg_vector)
+            diffs = 0
+            for x in range(cluster_inds.shape[0]):
+                diffs += torch.sum(torch.pow((embedding - avg_vector[x]) * cluster_inds[x].unsqueeze(-1), 2)) / torch.sum(cluster_inds[x])
+            embedding_loss = (3*torch.max(torch.tensor(1, device=embedding.device), diffs)/cluster_inds.shape[0])\
+                + 1 / (torch.sum(center_clusters_distances)/(center_clusters_distances.shape[0]*center_clusters_distances.shape[1]))  #TODO: change to accurate denom?
+
+            costs_parts['loss_embedding_num'].append(5*(3*torch.max(torch.tensor(1, device=embedding.device), diffs)/cluster_inds.shape[0]).detach().cpu())
+            costs_parts['loss_embedding_denom'].append(5*(1/(torch.sum(center_clusters_distances)/(center_clusters_distances.shape[0]*center_clusters_distances.shape[1]))).detach().cpu())                        
+            costs_parts['loss_embedding'].append(5*embedding_loss.detach().cpu())
+
+            total_cost = embedding_loss
+            costs.append(total_cost)
+        return torch.stack(costs), costs_parts
+
+
+
 class DETR(pl.LightningModule):
     """ This is the DETR module that performs object detection """
     def __init__(self, backbone, criterion, transformer, num_queries, args, aux_loss=False):
@@ -114,10 +424,6 @@ class DETR(pl.LightningModule):
             self.query_mu = nn.Parameter(torch.randn(num_queries, hidden_dim))
             self.query_sigma = nn.Parameter(torch.randn(num_queries, hidden_dim))
 
-        self.input_proj = nn.Linear(backbone.config.hidden_size, hidden_dim)
-        self.word_attn_projection = nn.Linear(backbone.config.hidden_size, 1)
-        self.span_proj = nn.Linear(3*backbone.config.hidden_size+20, hidden_dim) # TODO config
-        self.span_width_embed = nn.Embedding(30, 20)
              
         self.mention_classifier = nn.Linear(hidden_dim, 1)
 
@@ -214,53 +520,22 @@ class DETR(pl.LightningModule):
                                 dictionnaries containing the two above keys for each decoder layer.
         """
         # input_ids_cat = torch.cat(input_ids, dim=1).squeeze(0)
-        # mask_cat = torch.cat(mask, dim=1).squeeze(0)
-        bs = input_ids.shape[0]
-        input_ids_r = input_ids.reshape(input_ids.shape[0], -1)
-        mask_r = mask.reshape(mask.shape[0], -1)
-        longfomer_no_pad_list = []
-        for i in range(input_ids_r.shape[0]):
-            masked_ids = input_ids_r[i][mask_r[i]==1].unsqueeze(0)
-            masked_mask = torch.ones_like(masked_ids).unsqueeze(0)
-            if masked_ids.shape[-1] > self.args.max_seq_length:
-                masked_ids = torch.zeros([2, math.ceil(input_ids.shape[1]/2) * input_ids.shape[-1]], dtype=torch.long)
-                masked_mask = torch.zeros([2, math.ceil(mask.shape[1]/2) * mask.shape[-1]], dtype=torch.long)
-                masked_ids[0] = input_ids[i][:math.ceil(input_ids.shape[1]/2)].reshape(1, math.ceil(input_ids.shape[1]/2) * input_ids.shape[-1])
-                masked_mask[0] = mask[i][:math.ceil(mask.shape[1]/2)].reshape(1, math.ceil(mask.shape[1]/2) * mask.shape[-1])
-                masked_ids[1][:(input_ids.shape[1]-math.ceil(input_ids.shape[1]/2)) * input_ids.shape[-1]] = \
-                    input_ids[i][math.ceil(input_ids.shape[1]/2):].reshape(1, (input_ids.shape[1]-math.ceil(input_ids.shape[1]/2)) * input_ids.shape[-1])
-                masked_mask[1][:(mask.shape[1]-math.ceil(mask.shape[1]/2)) * mask.shape[-1]] = \
-                    mask[i][math.ceil(mask.shape[1]/2):].reshape(1, (mask.shape[1]-math.ceil(mask.shape[1]/2)) * mask.shape[-1])
+        # mask_cat = torch.cat(mask, dim=1).squeeze(0)\
+        embedding_dict = self.backbone(input_ids, mask, gold_mentions, num_mentions)
+        embedding = embedding_dict['embedding']
+        span_mask = embedding_dict['mask']
 
-            longformer_emb = self.backbone(masked_ids, attention_mask=masked_mask)[0]
-            longfomer_no_pad_list.append(longformer_emb.reshape(-1, longformer_emb.shape[-1]))
-            # self.args.is_encoding = False  #TODO: not sure it's the best option for DETR, maybe it still needs the encoder
-
-        if not self.args.use_gold_mentions:
-            embedding = self.input_proj(torch.stack(longfomer_no_pad_list,0))
-            span_mask = masked_mask.reshape(embedding.shape[:-1]) 
-        else:   #TODO: not good for sequences because only takes first and last letters and doesnt have a representation of the surrounding
-            span_starts = [torch.tensor([m[0] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
-            span_ends = [torch.tensor([m[1] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
-            span_emb, span_mask = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends, num_mentions)  # [mentions, emb']
-            embedding = self.span_proj(span_emb) # [mentions, emb]
-        
         if self.args.slots:
             cluster_logits, coref_logits, mention_logits = self.slot_attention(embedding)
-            out = {"coref_logits": coref_logits,
-                    "cluster_logits": cluster_logits,
-                    "mention_logits": mention_logits,
-                    "memory": embedding}
         else:
-            hs, memory = self.transformer(embedding, span_mask, self.query_embed.weight, self.is_cluster, self.IO_score, self.args.cluster_block)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
+            hs, _ = self.transformer(embedding, span_mask, self.query_embed.weight, self.is_cluster, self.IO_score, self.args.cluster_block)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
             last_hs = hs[-1] # [bs, num_queries, emb]
             cluster_logits, coref_logits, mention_logits = self.calc_cluster_and_coref_logits(last_hs, embedding, span_mask)
 
-            out = {"coref_logits": coref_logits,
-                    "cluster_logits": cluster_logits,
-                    "mention_logits": mention_logits,
-                    "memory": memory}
-
+        out = {"coref_logits": coref_logits,
+                "cluster_logits": cluster_logits,
+                "mention_logits": mention_logits,
+                "embedding": embedding}
         return out
 
     def slot_attention(self, input_emb):
@@ -332,10 +607,7 @@ class DETR(pl.LightningModule):
 
             gold_mentions_list = [list(set([tuple(m) for c in gc for m in c])) for gc in gold_clusters]
             if self.args.add_junk:
-                if self.args.input_type == 'ontonotes':
-                    gold_mentions_list, gold_mentions_vector = create_junk_gold_mentions(gold_mentions_list, sum_text_len, self.args.device)
-                else:
-                    gold_mentions_list, gold_mentions_vector = create_junk_gold_mentions(gold_mentions_list, sum_text_len, self.args.device, 0)
+                gold_mentions_list, gold_mentions_vector = create_junk_gold_mentions(gold_mentions_list, sum_text_len, self.args.device)
             else:
                 gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=self.args.device) for gm in gold_mentions_list]
 
@@ -349,14 +621,18 @@ class DETR(pl.LightningModule):
             outputs = self(input_ids, input_mask, gold_mentions, num_mentions)
             cluster_logits, coref_logits, mention_logits = outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits']
 
-            if self.args.add_junk:
+            if len(mention_logits) > 0:
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), mention_logits.cpu().detach(),
                                                             self.threshold, gold_mentions_list, self.args.use_gold_mentions, self.args.is_cluster, self.args.slots, self.args.min_cluster_size)
             else:
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
                                                             self.threshold, gold_mentions_list, self.args.use_gold_mentions, self.args.is_cluster, self.args.slots, self.args.min_cluster_size)
             self.train_evaluator.update(predicted_clusters, gold_clusters)
+            
+            embed_loss, embed_loss_parts = self.backbone.criterion(outputs, {'clusters':gold_matrix})
             loss, loss_parts = self.criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
+            loss_parts.update(embed_loss_parts)
+            loss = loss + embed_loss
             
             self.recent_train_losses.append(loss.item())
             for key in loss_parts.keys():
@@ -399,10 +675,7 @@ class DETR(pl.LightningModule):
 
         gold_mentions_list = [list(set([tuple(m) for c in gc for m in c])) for gc in gold_clusters]
         if self.args.add_junk:
-            if self.args.input_type == 'ontonotes':
-                gold_mentions_list, gold_mentions_vector = create_junk_gold_mentions(gold_mentions_list, sum_text_len, self.args.device)
-            else:
-                gold_mentions_list, gold_mentions_vector = create_junk_gold_mentions(gold_mentions_list, sum_text_len, self.args.device, 0)
+            gold_mentions_list, gold_mentions_vector = create_junk_gold_mentions(gold_mentions_list, sum_text_len, self.args.device)
         else:
             gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=self.args.device) for gm in gold_mentions_list]
         
@@ -435,7 +708,10 @@ class DETR(pl.LightningModule):
         #     predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
         #                                                 self.threshold, gold_mentions_list, self.args.use_gold_mentions, self.args.is_cluster, self.args.slots, self.args.min_cluster_size)
         # self.eval_evaluator.update(predicted_clusters, gold_clusters)
+        embed_loss, embed_loss_parts = self.backbone.criterion(outputs, {'clusters':gold_matrix})
         loss, loss_parts = self.criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
+        loss_parts.update(embed_loss_parts)
+        loss = loss + embed_loss
         self.losses.append(loss.mean().detach().cpu())
         for key in loss_parts.keys():
             if key in self.losses_parts.keys() and len(self.losses_parts[key]) > 0:
@@ -654,8 +930,8 @@ class DETR(pl.LightningModule):
         # memory [bs, tokens, emb]
 
         cluster_logits = self.is_cluster(last_hs).sigmoid()  # [bs, num_queries, 1]
-        if self.args.add_junk:
-            mention_logits = self.mention_classifier(memory).sigmoid()  # [bs, tokens, 1]
+        # if self.args.add_junk:
+        #     mention_logits = self.mention_classifier(memory).sigmoid()  # [bs, tokens, 1]
 
         #TODO: check cross attention? (without values)
 
@@ -682,67 +958,15 @@ class DETR(pl.LightningModule):
             else:
                 coref_logits.append(torch.cat([cur_coref_logits, (torch.ones(cur_coref_logits.shape[0], cur_coref_logits.shape[1], memory.shape[1]-cur_coref_logits.shape[2]) * -1).to(cur_coref_logits.device)], dim=2))
 
-            if self.args.add_junk:
-                mention_logits_masked.append(torch.cat([mention_logits[i][span_mask[i]==1].unsqueeze(0), (torch.ones(1, memory.shape[1]-cur_coref_logits.shape[2], 1) * -1).to(mention_logits.device)], dim=1))
+            # if self.args.add_junk:
+            #     mention_logits_masked.append(torch.cat([mention_logits[i][span_mask[i]==1].unsqueeze(0), (torch.ones(1, memory.shape[1]-cur_coref_logits.shape[2], 1) * -1).to(mention_logits.device)], dim=1))
         # if not is_gold_mention:  #TODO: do I want this?
         #     coref_logits = coref_logits * cluster_logits
 
-        if self.args.add_junk:
-            mention_logits_masked = torch.cat(mention_logits_masked)
+        # if self.args.add_junk:
+        #     mention_logits_masked = torch.cat(mention_logits_masked)
 
         return cluster_logits, torch.cat(coref_logits), mention_logits_masked
-
-    def get_span_emb(self, context_outputs_list, span_starts, span_ends, num_mentions):
-        max_mentions = num_mentions.max()
-        span_mask_list = []
-        span_emb_list = []
-        # print(f'context outputs {context_outputs.shape}')
-        # print(f'span_starts {span_starts[0].shape}')
-        for i in range(len(num_mentions)):
-            span_emb_construct = []
-            # print(f'span_starts max {span_starts[i].max()} min {span_starts[i].min()}')
-            span_start_emb = context_outputs_list[i][span_starts[i][:num_mentions[i]]] # [k, emb]
-            span_emb_construct.append(span_start_emb)
-
-            span_end_emb = context_outputs_list[i][span_ends[i][:num_mentions[i]]]  # [k, emb]
-            span_emb_construct.append(span_end_emb)
-
-            span_width = (1 + span_ends[i][:num_mentions[i]] - span_starts[i][:num_mentions[i]]).clamp(max=30)  # [k]
-
-            # if self.config["use_features"]:
-            span_width_index = span_width - 1  # [k]
-            span_width_emb = self.span_width_embed.weight[span_width_index]
-            # TODO add dropout
-            # span_width_emb = tf.nn.dropout(span_width_emb, self.dropout)
-            span_emb_construct.append(span_width_emb)
-
-            # if self.config["model_heads"]:
-            mention_word_score = self.get_masked_mention_word_scores(context_outputs_list[i], span_starts[i][:num_mentions[i]], span_ends[i][:num_mentions[i]])  # [K, T]
-            head_attn_reps = torch.matmul(mention_word_score, context_outputs_list[i])  # [K, emb]
-            span_emb_construct.append(head_attn_reps)
-            # span_emb_construct.append((genre[i].unsqueeze(0)/1.0).repeat(num_mentions[i], 1))
-            span_emb_cat = torch.cat(span_emb_construct, 1)
-            span_mask = torch.cat([torch.ones(span_emb_cat.shape[0], dtype=torch.int, device=context_outputs_list[i].device), \
-                torch.zeros(max_mentions-span_emb_cat.shape[0], dtype=torch.int, device=context_outputs_list[i].device)])
-            span_emb_cat = torch.cat([span_emb_cat, torch.zeros(max_mentions-span_emb_cat.shape[0], span_emb_cat.shape[1], dtype=torch.float, device=context_outputs_list[i].device)])
-
-            span_emb_list.append(span_emb_cat.unsqueeze(0))  
-            span_mask_list.append(span_mask.unsqueeze(0))  
-        span_emb_tensor = torch.cat(span_emb_list, 0)
-        span_mask_tensor = torch.cat(span_mask_list, 0)
-        return span_emb_tensor, span_mask_tensor  # [k, emb], [K, T]
-
-    def get_masked_mention_word_scores(self, encoded_doc, span_starts, span_ends):
-        num_words = encoded_doc.shape[0]  # T
-        num_c = len(span_starts)  # NC
-
-        doc_range = torch.arange(0, num_words).unsqueeze(0).repeat(num_c, 1)  # [K, T]
-        mention_mask = torch.logical_and(doc_range >= span_starts.unsqueeze(1),
-                                      doc_range <= span_ends.unsqueeze(1))  # [K, T]
-
-        word_attn = self.word_attn_projection(encoded_doc).squeeze(1)
-        mention_word_attn = F.softmax(mention_mask.to(dtype=torch.float32, device=encoded_doc.device).log() + word_attn.unsqueeze(0), -1)
-        return mention_word_attn  # [K, T]
 
 
     def find_mentions(self, hs, memory):
@@ -764,7 +988,7 @@ class DETR(pl.LightningModule):
                 for a, b, c in zip(output_logits[:-1], outputs_clusters[:-1], outputs_is_cluster[:-1])]
 
 
-class MatchingLoss(nn.Module):
+class DETRLoss(nn.Module):
     """ This class computes the loss for DETR.
     The process happens in two steps:
         1) we compute hungarian assignment between ground truth boxes and the outputs of the model
@@ -803,14 +1027,14 @@ class MatchingLoss(nn.Module):
         targets_mentions = targets['mentions']
         bs = outputs["coref_logits"].shape[0]
         costs = []
-        costs_parts = {'loss_is_cluster':[], 'loss_is_mention':[], 'loss_coref':[], 'loss_embedding':[], 'loss_embedding_num':[], 'loss_embedding_denom':[]}
+        costs_parts = {'loss_is_cluster':[], 'loss_is_mention':[], 'loss_coref':[]}
         for i in range(bs):
             # Compute the average number of target boxes accross all nodes, for normalization purposes
             coref_logits = outputs["coref_logits"][i].squeeze(0)  # [num_queries, tokens, BIO(3/1)]
             cluster_logits = outputs["cluster_logits"][i].squeeze() # [num_queries]
             real_token_target_cols = torch.sum(targets_clusters[i], -2) > 0
 
-            if self.args.add_junk:
+            if len(outputs["mention_logits"]) > 0:
                 mention_logits = outputs["mention_logits"][i].squeeze() # [tokens]
             #TODO: normalize according to number of clusters? (identical to DETR)
 
@@ -820,7 +1044,7 @@ class MatchingLoss(nn.Module):
             #     torch.distributed.all_reduce(num_of_gold_clusters)
             # num_of_gold_clusters = torch.clamp(num_of_gold_clusters / get_world_size(), min=1).item()
 
-            if self.args.is_cluster and not self.args.use_gold_mentions:
+            if self.args.is_cluster and (not self.args.use_gold_mentions or self.args.add_junk):
                 gold_is_cluster = torch.zeros_like(cluster_logits)
                 weight_cluster = self.eos_coef * torch.ones_like(cluster_logits)
                 if matched_predicted_cluster_id_real[i] is not False:
@@ -830,7 +1054,7 @@ class MatchingLoss(nn.Module):
             else:
                 cost_is_cluster = torch.tensor(0)
                 
-            if not self.args.add_junk or sum(targets_mentions[i].shape) == 0:
+            if len(outputs["mention_logits"]) == 0 or sum(targets_mentions[i].shape) == 0:
                 cost_is_mention = torch.tensor(0)
             else:
                 if sum(mention_logits.shape) == 0:
@@ -843,7 +1067,6 @@ class MatchingLoss(nn.Module):
             coref_logits = torch.index_select(coref_logits, 1, torch.arange(0, targets_clusters[i].shape[1]).to(coref_logits.device))
 
             cost_coref = torch.tensor(0)
-            embedding_loss = torch.tensor(0)
             if matched_predicted_cluster_id_real[i] is not False:
                 permuted_coref_logits = coref_logits[torch.cat([matched_predicted_cluster_id_real[i],matched_predicted_cluster_id_junk[i]])]
                 if not self.args.cluster_block and self.args.slots:
@@ -863,21 +1086,8 @@ class MatchingLoss(nn.Module):
                     else:
                         cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_gold, reduction=self.args.reduction) / coref_logits.shape[1]
 
-                memory = outputs["memory"][i].squeeze(0)
-                cluster_inds = targets_clusters[i][matched_gold_cluster_id_real[i]]
-                junk_cluster = 1 - torch.sum(cluster_inds, 0)
-                if torch.sum(junk_cluster) > 0:
-                    cluster_inds = torch.cat([cluster_inds, junk_cluster.unsqueeze(0)]) #TODO: do we really want it?
-                avg_vector = torch.matmul(cluster_inds, memory) / torch.sum(cluster_inds, 1).reshape(-1, 1)
-                center_clusters_distances = torch.cdist(avg_vector, avg_vector)
-                diffs = 0
-                for x in range(cluster_inds.shape[0]):
-                    diffs += torch.sum(torch.pow((memory - avg_vector[x]) * cluster_inds[x].unsqueeze(-1), 2)) / torch.sum(cluster_inds[x])
-                embedding_loss = (3*torch.max(torch.tensor(1, device=diffs.device),diffs)/cluster_inds.shape[0])\
-                    + 1 / (torch.sum(center_clusters_distances)/(center_clusters_distances.shape[0]*center_clusters_distances.shape[1]))  #TODO: change to accurate denom?
-                        
             elif coref_logits.shape[1] > 0:
-                cost_coref = F.binary_cross_entropy(coref_logits, torch.zeros_like(coref_logits), reduction=self.args.reduction) / coref_logits.shape[1]
+                cost_coref = F.binary_cross_entropy(coref_logits, torch.zeros_like(coref_logits), reduction=self.args.reduction) / coref_logits.shape[1]  #TODO: not good for slots                    
 
             if self.args.b3_loss:
                 # b3_loss
@@ -903,10 +1113,7 @@ class MatchingLoss(nn.Module):
             costs_parts['loss_is_cluster'].append(self.cost_is_cluster * cost_is_cluster.detach().cpu())
             costs_parts['loss_is_mention'].append(self.cost_is_mention * cost_is_mention.detach().cpu())
             costs_parts['loss_coref'].append(self.cost_coref * cost_coref.detach().cpu())
-            costs_parts['loss_embedding'].append(self.cost_coref * 5*embedding_loss.detach().cpu())
-            costs_parts['loss_embedding_num'].append((3*torch.max(torch.tensor(1, device=diffs.device),diffs)/cluster_inds.shape[0]).detach().cpu())
-            costs_parts['loss_embedding_denom'].append((1/(torch.sum(center_clusters_distances)/(center_clusters_distances.shape[0]*center_clusters_distances.shape[1]))).detach().cpu())
-            total_cost = self.cost_coref * cost_coref + self.cost_is_cluster * cost_is_cluster + self.cost_is_mention * cost_is_mention + 5*self.cost_coref * embedding_loss
+            total_cost = self.cost_coref * cost_coref + self.cost_is_cluster * cost_is_cluster + self.cost_is_mention * cost_is_mention
             costs.append(total_cost)
         return torch.stack(costs), costs_parts
 
@@ -932,22 +1139,15 @@ def build_DETR(args):
 
     device = torch.device(args.device)
 
-    if args.config_name:
-        config = AutoConfig.from_pretrained(args.config_name, cache_dir=args.cache_dir)
-    elif args.model_name_or_path:
-        config = AutoConfig.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir)
-    else:
-        config = CONFIG_MAPPING[args.model_type]()
-        logger.warning("You are instantiating a new config instance from scratch.")
-
-    backbone = build_backbone(args, config)
-
     transformer = build_transformer(args)
+
+    backbone = Embedder(args)
+    backbone.load_state_dict(torch.load('/home/gamir/adiz/Code/runs/firsttry/output_dir/12_30_2021_07_52_32_vscode/checkpoint-1/model.step-1.pt'))
 
     matcher = build_matcher(args)
     # TODO maybe return consideration of aux loss
 
-    criterion = MatchingLoss(matcher=matcher, eos_coef=args.eos_coef, cost_is_cluster=args.cost_is_cluster, cost_is_mention=args.cost_is_mention,
+    criterion = DETRLoss(matcher=matcher, eos_coef=args.eos_coef, cost_is_cluster=args.cost_is_cluster, cost_is_mention=args.cost_is_mention,
                              cost_coref=args.cost_coref, args=args)
     criterion.to(device)
 
@@ -966,5 +1166,19 @@ def build_DETR(args):
     #     criterion = BCubedLoss()
 
     # postprocessors = {'bbox': PostProcess()}
+
+    return model #, postprocessors
+
+def build_Embedder(args):
+    # the `num_classes` naming here is somewhat misleading.
+    # it indeed corresponds to `max_obj_id + 1`, where max_obj_id
+    # is the maximum id for a class in your dataset. For example,
+    # COCO has a max_obj_id of 90, so we pass `num_classes` to be 91.
+    # As another example, for a dataset that has a single class with id 1,
+    # you should pass `num_classes` to be 2 (max_obj_id + 1).
+    # For more details on this, check the following discussion
+    # https://github.com/facebookresearch/detr/issues/108#issuecomment-650269223
+
+    model = Embedder(args)
 
     return model #, postprocessors
