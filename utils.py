@@ -431,12 +431,16 @@ def pad_mentions(gold_mentions, max_mentions):
     padded_gold_mentions = torch.tensor(np.asarray(gold_mentions + (max_mentions-len(gold_mentions)) * [(-1, -1)])).unsqueeze(0)
     return padded_gold_mentions
 
-def tensor_and_remove_empty(batch, gold_mentions, args, input_ids_pads, mask_pads):
+def tensor_and_remove_empty(batch, gold_mentions, args, input_ids_pads, mask_pads, use_gold_mentions):
     input_ids, input_mask, sum_text_len, num_mentions, new_gold_mentions = [], [], [], [], []
     max_mentions = max([len(gm) for gm in gold_mentions])
     max_sentences = max([ii.shape[0] for ii in batch['input_ids']])
     num_examples = len(gold_mentions)
+    num_nonempy_examples = num_examples
     for i in range(num_examples):
+        if use_gold_mentions and len(gold_mentions[i]) == 0:
+            num_nonempy_examples -= 1
+            continue
         padded_input_ids, padded_mask= pad_input_ids_and_mask_to_max_sentences(\
             torch.tensor(batch['input_ids'][i]).to(args.device), 
             torch.tensor(batch['input_mask'][i]).to(args.device), 
@@ -446,8 +450,10 @@ def tensor_and_remove_empty(batch, gold_mentions, args, input_ids_pads, mask_pad
         sum_text_len.append(torch.tensor([sum(batch['text_len'][i])]).to(args.device))
         new_gold_mentions.append(pad_mentions(gold_mentions[i], max_mentions))
         num_mentions.append(torch.tensor([len(gold_mentions[i])]).to(args.device))
-    return torch.cat(input_ids).reshape(num_examples, max_sentences, -1), \
-        torch.cat(input_mask).reshape(num_examples, max_sentences, -1), \
-            torch.cat(sum_text_len).reshape(num_examples), \
-                torch.cat(new_gold_mentions).reshape(num_examples, max_mentions, 2),\
-                    torch.cat(num_mentions).reshape(num_examples)
+    if num_nonempy_examples == 0:
+        return ([],)*5
+    return torch.cat(input_ids).reshape(num_nonempy_examples, max_sentences, -1), \
+        torch.cat(input_mask).reshape(num_nonempy_examples, max_sentences, -1), \
+            torch.cat(sum_text_len).reshape(num_nonempy_examples), \
+                torch.cat(new_gold_mentions).reshape(num_nonempy_examples, max_mentions, 2),\
+                    torch.cat(num_mentions).reshape(num_nonempy_examples)

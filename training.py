@@ -109,17 +109,19 @@ def train(args, wandb=None):
 
     if pretrain:
         monitor = "eval_loss"
+        mode="min"
     else:
         monitor = "eval_avg_f1"
+        mode="max"
     # profiler = AdvancedProfiler(dirpath=args.output_dir, filename="profile")
     if wandb is not None:        
         # trainer = pl.Trainer(max_epochs=args.num_train_epochs, gpus=args.n_gpu, amp_backend='apex', logger= wandb, accumulate_grad_batches=args.gradient_accumulation_steps,\
         #     callbacks=[ModelCheckpoint(monitor="eval_avg_f1"), ModelCheckpoint(monitor="epoch")], default_root_dir=args.output_dir, profiler=profiler)
         trainer = pl.Trainer(max_epochs=args.num_train_epochs, gpus=args.n_gpu, amp_backend='apex', logger= wandb, accumulate_grad_batches=args.gradient_accumulation_steps,\
-            callbacks=[ModelCheckpoint(monitor=monitor), ModelCheckpoint(monitor="epoch")], default_root_dir=args.output_dir)
+            callbacks=[ModelCheckpoint(monitor=monitor, mode=mode), ModelCheckpoint(monitor="epoch", mode="max")], default_root_dir=args.output_dir)
     else:
         trainer = pl.Trainer(max_epochs=args.num_train_epochs, gpus=args.n_gpu, amp_backend='apex', accumulate_grad_batches=args.gradient_accumulation_steps,\
-            callbacks=[ModelCheckpoint(monitor=monitor), ModelCheckpoint(monitor="epoch")], default_root_dir=args.output_dir, detect_anomaly=True)
+            callbacks=[ModelCheckpoint(monitor=monitor, mode=mode), ModelCheckpoint(monitor="epoch", mode="max")], default_root_dir=args.output_dir, detect_anomaly=True)
                              
     # global_step = 0 if not args.resume_from else args.resume_global_step
     # if args.local_rank in [-1, 0]:

@@ -236,9 +236,9 @@ class Embedder(pl.LightningModule):
                 gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=self.args.device) for gm in gold_mentions_list]
 
             input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = \
-                tensor_and_remove_empty(batch, gold_mentions_list, self.args, self.input_ids_pads, self.mask_pads)
+                tensor_and_remove_empty(batch, gold_mentions_list, self.args, self.input_ids_pads, self.mask_pads, self.args.use_gold_mentions)
             if len(input_ids) == 0:
-                return 0
+                return
 
             gold_matrix = create_gold_matrix(self.args.device, sum_text_len, self.args.num_queries, gold_clusters, gold_mentions_list, self.args.use_gold_mentions, self.args.BIO)
 
@@ -248,14 +248,15 @@ class Embedder(pl.LightningModule):
             
             self.recent_train_losses.append(loss.item())
             for key in loss_parts.keys():
-                if key in self.recent_train_losses_parts.keys() and len(self.recent_train_losses_parts[key]) > 0:
-                    self.recent_train_losses_parts[key] += loss_parts[key]
-                else:
-                    self.recent_train_losses_parts[key] = loss_parts[key]
+                if loss_parts[key][0] < 100:
+                    if key in self.recent_train_losses_parts.keys() and len(self.recent_train_losses_parts[key]) > 0:
+                        self.recent_train_losses_parts[key] += loss_parts[key]
+                    else:
+                        self.recent_train_losses_parts[key] = loss_parts[key]
 
             if self.args.local_rank in [-1, 0] and self.args.logging_steps > 0 and batch_idx % self.args.logging_steps == 0:
                 self.trainer.logger.log_metrics({'lr': self.optimizer.param_groups[0]['lr']}, self.step_num)
-                self.trainer.logger.log_metrics({'lr_long': self.optimizer.param_groups[1]['lr']}, self.step_num)
+                self.trainer.logger.log_metrics({'lr_bert': self.optimizer.param_groups[1]['lr']}, self.step_num)
                 self.trainer.logger.log_metrics({'loss': np.mean(self.recent_train_losses)}, self.step_num)
                 for key in self.recent_train_losses_parts.keys():
                     self.trainer.logger.log_metrics({key: np.mean(self.recent_train_losses_parts[key])}, self.step_num)
@@ -286,19 +287,20 @@ class Embedder(pl.LightningModule):
         gold_matrix = create_gold_matrix(self.args.device, sum_text_len, self.args.num_queries, gold_clusters, gold_mentions_list, self.args.use_gold_mentions, self.args.BIO)
 
         input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = \
-            tensor_and_remove_empty(batch, gold_mentions_list, self.args, self.input_ids_pads, self.mask_pads)
+            tensor_and_remove_empty(batch, gold_mentions_list, self.args, self.input_ids_pads, self.mask_pads, self.args.use_gold_mentions)
         if len(input_ids) == 0:
-            return 0
+            return
 
         outputs = self(input_ids, input_mask, gold_mentions, num_mentions)
 
         loss, loss_parts = self.criterion(outputs, {'clusters':gold_matrix})
         self.losses.append(loss.mean().detach().cpu())
         for key in loss_parts.keys():
-            if key in self.losses_parts.keys() and len(self.losses_parts[key]) > 0:
-                self.losses_parts[key] += loss_parts[key]
-            else:
-                self.losses_parts[key] = loss_parts[key]
+            if loss_parts[key][0] < 100:
+                if key in self.losses_parts.keys() and len(self.losses_parts[key]) > 0:
+                    self.losses_parts[key] += loss_parts[key]
+                else:
+                    self.losses_parts[key] = loss_parts[key]
         self.batch_sizes.append(loss.shape[0]) 
 
         return {'loss': loss}
@@ -369,6 +371,8 @@ class EmbeddingLoss(nn.Module):
             embedding_loss = torch.tensor(0)
 
             embedding = outputs["embedding"][i].squeeze(0)
+            if len(embedding.shape) == 1:
+                embedding = embedding.unsqueeze(0)
             cluster_inds = targets_clusters[i][:num_of_gold_clusters]
             junk_cluster = 1 - torch.sum(cluster_inds, 0)
             if torch.sum(junk_cluster) > 0:
@@ -378,14 +382,20 @@ class EmbeddingLoss(nn.Module):
             diffs = 0
             for x in range(cluster_inds.shape[0]):
                 diffs += torch.sum(torch.pow((embedding - avg_vector[x]) * cluster_inds[x].unsqueeze(-1), 2)) / torch.sum(cluster_inds[x])
-            embedding_loss = (3*torch.max(torch.tensor(1, device=embedding.device), diffs)/cluster_inds.shape[0])\
-                + 1 / (torch.sum(center_clusters_distances)/(center_clusters_distances.shape[0]*center_clusters_distances.shape[1]))  #TODO: change to accurate denom?
+            incluster_dist = 3 * diffs/cluster_inds.shape[0]
+            outcluster_dist = torch.sum(center_clusters_distances)/(center_clusters_distances.shape[0]*center_clusters_distances.shape[1])
+            if embedding.shape[0] == 1 or outcluster_dist == 0:
+                embedding_loss = incluster_dist
+            else:
+                embedding_loss = incluster_dist + 1 / outcluster_dist  #TODO: change to accurate denom?
 
-            costs_parts['loss_embedding_num'].append(5*(3*torch.max(torch.tensor(1, device=embedding.device), diffs)/cluster_inds.shape[0]).detach().cpu())
-            costs_parts['loss_embedding_denom'].append(5*(1/(torch.sum(center_clusters_distances)/(center_clusters_distances.shape[0]*center_clusters_distances.shape[1]))).detach().cpu())                        
+            costs_parts['loss_embedding_num'].append(5 * incluster_dist.detach().cpu())
+            costs_parts['loss_embedding_denom'].append(5 * ( 1 / outcluster_dist).detach().cpu())                        
             costs_parts['loss_embedding'].append(5*embedding_loss.detach().cpu())
 
             total_cost = embedding_loss
+            if total_cost > 100:
+                print(f"total cost {total_cost} incluster_dist {incluster_dist} outcluster_dist {outcluster_dist} ")
             costs.append(total_cost)
         return torch.stack(costs), costs_parts
 
@@ -612,9 +622,9 @@ class DETR(pl.LightningModule):
                 gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=self.args.device) for gm in gold_mentions_list]
 
             input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = \
-                tensor_and_remove_empty(batch, gold_mentions_list, self.args, self.input_ids_pads, self.mask_pads)
+                tensor_and_remove_empty(batch, gold_mentions_list, self.args, self.input_ids_pads, self.mask_pads, self.args.use_gold_mentions)
             if len(input_ids) == 0:
-                return 0
+                return
 
             gold_matrix = create_gold_matrix(self.args.device, sum_text_len, self.args.num_queries, gold_clusters, gold_mentions_list, self.args.use_gold_mentions, self.args.BIO)
 
@@ -684,7 +694,7 @@ class DETR(pl.LightningModule):
         input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = \
             tensor_and_remove_empty(batch, gold_mentions_list, self.args, self.input_ids_pads, self.mask_pads)
         if len(input_ids) == 0:
-            return 0
+            return
 
         outputs = self(input_ids, input_mask, gold_mentions, num_mentions)
         cluster_logits, coref_logits, mention_logits = outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits']
