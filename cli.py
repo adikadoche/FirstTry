@@ -143,6 +143,7 @@ def parse_args():
                         help="L1 box coefficient in the matching cost")
     parser.add_argument('--slots', action='store_true',
                         help="L1 box coefficient in the matching cost")
+    parser.add_argument('--load_backbone', type=str, choices=['no', 'latest', 'best'], default='no')
     parser.add_argument('--reduction', default='mean', type=str,
                         help="L1 box coefficient in the matching cost")
     parser.add_argument('--BIO', default=1, type=int, choices=[3, 1],
@@ -155,6 +156,7 @@ def parse_args():
     parser.add_argument('--max_segment_len', default=512, type=int)
     parser.add_argument('--limit_trainset', default=-1, type=int)
     parser.add_argument('--use_gold_mentions', action='store_true')
+    parser.add_argument('--use_topk_mentions', action='store_true')
     parser.add_argument('--softmax_coref', action='store_true')
     parser.add_argument('--random_queries', action='store_true')
     parser.add_argument('--single_distribution_queries', action='store_true')
