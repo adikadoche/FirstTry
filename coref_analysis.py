@@ -221,6 +221,7 @@ count_missed_pronouns, count_excess_pronous, count_excess_mentions, tokenizer):
     real_input_ids = [t for t in input_ids.reshape(-1) if t != 1]
     tokens = tokenizer.convert_ids_to_tokens(real_input_ids)
     tokens = [t.replace('Ġ', '') for t in tokens]
+    tokens = [t.replace('#', '$') for t in tokens]
     tokens = [t.replace('<pad>', '') for t in tokens]
 
 

@@ -43,6 +43,7 @@ class OntonotesDataset(Dataset):
     def __getitem__(self, index):
         if self.args.max_ind_example > 0 and index > self.args.max_ind_example:
             return []
+        # print(index)
         example = self.examples[index]
         tensorized_example = self.tensorize_example(example, self.is_training)
         return tensorized_example
@@ -122,7 +123,7 @@ class OntonotesDataset(Dataset):
         speaker_dict = self.get_speaker_dict(self.flatten(speakers))
         sentence_map = [] #example['sentence_map']
 
-        max_sentence_length = self.args.max_segment_len
+        max_sentence_length = self.args.max_seq_length
 
         input_ids, input_mask, speaker_ids, text_len = [], [], [], []
         word_idx = 0

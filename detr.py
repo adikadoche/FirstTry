@@ -124,8 +124,8 @@ class Embedder(pl.LightningModule):
         self.step_num = 0
         self.epoch = 0
         
-        self.input_ids_pads = torch.ones(1, self.args.max_segment_len, dtype=torch.int, device=self.args.device) * TOKENS_PAD
-        self.mask_pads = torch.zeros(1, self.args.max_segment_len, dtype=torch.int, device=self.args.device)
+        self.input_ids_pads = torch.ones(1, self.args.max_seq_length, dtype=torch.int, device=self.args.device) * TOKENS_PAD
+        self.mask_pads = torch.zeros(1, self.args.max_seq_length, dtype=torch.int, device=self.args.device)
     
     def forward(self, input_ids, mask, gold_clusters, gold_mentions, num_mentions):
         bs = input_ids.shape[0]
@@ -169,7 +169,7 @@ class Embedder(pl.LightningModule):
         
         gold_matrix = create_gold_matrix(self.args.device, [input_ids.shape[1]], self.args.num_queries, gold_clusters, gold_mentions_list, self.args.use_gold_mentions or self.args.use_topk_mentions, self.args.BIO)
 
-        out = {"embedding": embedding, "mask": span_mask, "gold_matrix": gold_matrix}
+        out = {"embedding": embedding, "mask": span_mask, "gold_matrix": gold_matrix, "gold_mentions_list": gold_mentions_list}
         return out
 
 
@@ -410,20 +410,20 @@ class EmbeddingLoss(nn.Module):
             diffs = 0
             for x in range(cluster_inds.shape[0]):
                 diffs += torch.sum(torch.pow((embedding - avg_vector[x]) * cluster_inds[x].unsqueeze(-1), 2)) / torch.sum(cluster_inds[x])
-            incluster_dist = 5 * 3 * diffs/cluster_inds.shape[0]
-            outcluster_dist = (1/5) * torch.sum(center_clusters_distances)/(center_clusters_distances.shape[0]*center_clusters_distances.shape[1])
+            incluster_dist = 3 * diffs/cluster_inds.shape[0]
+            outcluster_dist = torch.sum(center_clusters_distances)/(center_clusters_distances.shape[0]*center_clusters_distances.shape[1])
             if embedding.shape[0] == 1 or outcluster_dist == 0:
                 embedding_loss = incluster_dist
             else:
                 embedding_loss = incluster_dist + 1 / outcluster_dist  #TODO: change to accurate denom?
 
-            costs_parts['loss_embedding_num'].append(incluster_dist.detach().cpu())
-            costs_parts['loss_embedding_denom'].append(1 / outcluster_dist.detach().cpu())                        
-            costs_parts['loss_embedding'].append(embedding_loss.detach().cpu())
+            costs_parts['loss_embedding_num'].append(5 * incluster_dist.detach().cpu())
+            costs_parts['loss_embedding_denom'].append(5 * 1 / outcluster_dist.detach().cpu())                        
+            costs_parts['loss_embedding'].append(5 * embedding_loss.detach().cpu())
 
             total_cost = self.cost_embedding * embedding_loss
-            if total_cost > 100:
-                print(f"total cost {total_cost} incluster_dist {incluster_dist} outcluster_dist {outcluster_dist} ")
+            # if total_cost > 100:
+            #     print(f"total cost {total_cost} incluster_dist {incluster_dist} outcluster_dist {outcluster_dist} ")
             costs.append(total_cost)
         return torch.stack(costs), costs_parts
 
@@ -476,8 +476,8 @@ class DETR(pl.LightningModule):
         self.query_head = nn.Linear(hidden_dim, 75)
         self.token_head = nn.Linear(hidden_dim, 75)
 
-        self.input_ids_pads = torch.ones(1, self.args.max_segment_len, dtype=torch.int, device=self.args.device) * TOKENS_PAD
-        self.mask_pads = torch.zeros(1, self.args.max_segment_len, dtype=torch.int, device=self.args.device)
+        self.input_ids_pads = torch.ones(1, self.args.max_seq_length, dtype=torch.int, device=self.args.device) * TOKENS_PAD
+        self.mask_pads = torch.zeros(1, self.args.max_seq_length, dtype=torch.int, device=self.args.device)
         self.recent_train_losses = []
         self.recent_train_losses_parts = {}
         self.losses = []
@@ -574,7 +574,8 @@ class DETR(pl.LightningModule):
                 "cluster_logits": cluster_logits,
                 "mention_logits": mention_logits,
                 "embedding": embedding,
-                "gold_matrix": embedding_dict['gold_matrix']}
+                "gold_matrix": embedding_dict['gold_matrix'], 
+                "gold_mentions_list": embedding_dict['gold_mentions_list']}
         return out
 
     def slot_attention(self, input_emb):
@@ -652,18 +653,20 @@ class DETR(pl.LightningModule):
 
             input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = \
                 tensor_and_remove_empty(batch, gold_mentions_list, self.args, self.input_ids_pads, self.mask_pads, self.args.use_gold_mentions)
-            if len(input_ids) == 0:
+            if len(input_ids) == 0 or input_ids.shape[1] > 1:  #TODO fix
+                print(f'skipped {batch_idx}')
                 return
 
             outputs = self(input_ids, input_mask, gold_clusters, gold_mentions, num_mentions)
-            cluster_logits, coref_logits, mention_logits, gold_matrix = outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits'], outputs['gold_matrix']
+            cluster_logits, coref_logits, mention_logits, gold_matrix, gold_mentions_list = \
+                outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits'], outputs['gold_matrix'], outputs['gold_mentions_list']
 
             if len(mention_logits) > 0:
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), mention_logits.cpu().detach(),
-                                                            self.threshold, gold_mentions_list, self.args.use_gold_mentions, self.args.is_cluster, self.args.slots, self.args.min_cluster_size)
+                                                            self.threshold, gold_mentions_list, self.args.use_gold_mentions or self.args.use_topk_mentions, self.args.is_cluster, self.args.slots, self.args.min_cluster_size)
             else:
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
-                                                            self.threshold, gold_mentions_list, self.args.use_gold_mentions, self.args.is_cluster, self.args.slots, self.args.min_cluster_size)
+                                                            self.threshold, gold_mentions_list, self.args.use_gold_mentions or self.args.use_topk_mentions, self.args.is_cluster, self.args.slots, self.args.min_cluster_size)
             self.train_evaluator.update(predicted_clusters, gold_clusters)
             
             embed_loss, embed_loss_parts = self.backbone.criterion(outputs)
@@ -723,7 +726,8 @@ class DETR(pl.LightningModule):
             return
 
         outputs = self(input_ids, input_mask, gold_clusters, gold_mentions, num_mentions)
-        cluster_logits, coref_logits, mention_logits, gold_matrix = outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits'], outputs['gold_matrix']
+        cluster_logits, coref_logits, mention_logits, gold_matrix, gold_mentions_list = \
+            outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits'], outputs['gold_matrix'], outputs['gold_mentions_list']
         targets = {'clusters':gold_matrix, 'mentions':gold_mentions_vector}
         matched_predicted_cluster_id_real, matched_gold_cluster_id_real, _, _ = self.criterion.matcher(outputs, targets)
         if matched_gold_cluster_id_real[0] is not False:
@@ -774,7 +778,7 @@ class DETR(pl.LightningModule):
         for i, (cluster_logits, coref_logits, gold_clusters, gold_mentions) in enumerate(
                 zip(self.all_cluster_logits, self.all_coref_logits, self.all_gold_clusters, self.all_gold_mentions)):                
             predicted_clusters = calc_predicted_clusters(cluster_logits.unsqueeze(0), coref_logits.unsqueeze(0), [], \
-                threshold, [gold_mentions], self.args.use_gold_mentions, self.args.is_cluster, self.args.slots, self.args.min_cluster_size)
+                threshold, [gold_mentions], self.args.use_gold_mentions or self.args.use_topk_mentions, self.args.is_cluster, self.args.slots, self.args.min_cluster_size)
             all_predicted_clusters += predicted_clusters
             evaluator.update(predicted_clusters, [gold_clusters])
         p, r, f1 = evaluator.get_prf()
@@ -911,8 +915,8 @@ class DETR(pl.LightningModule):
         # self.query_cluster_confusion_matrix = np.zeros([self.args.num_queries, 26], dtype=int)
 
     def make_batch_same_len(self, input_ids, mask, sum_text_len):
-        input_ids_pads = torch.ones(1, self.args.max_segment_len, dtype=torch.int, device=input_ids[0].device) * TOKENS_PAD
-        mask_pads = torch.zeros(1, self.args.max_segment_len, dtype=torch.int, device=input_ids[0].device)
+        input_ids_pads = torch.ones(1, self.args.max_seq_length, dtype=torch.int, device=input_ids[0].device) * TOKENS_PAD
+        mask_pads = torch.zeros(1, self.args.max_seq_length, dtype=torch.int, device=input_ids[0].device)
 
         max_seq_num = np.argmax(sum_text_len)
         seq_num = input_ids[max_seq_num].shape[0]
@@ -923,8 +927,8 @@ class DETR(pl.LightningModule):
             if input_ids[i].shape[0] < seq_num:
                 input_ids[i] = torch.cat([input_ids[i], input_ids_pads.detach().clone().repeat([seq_num - input_ids[i].shape[0], 1])])
                 mask[i] = torch.cat([mask[i], mask_pads.detach().clone().repeat([seq_num - mask[i].shape[0], 1])])
-            new_input_ids.append(input_ids[i].reshape([1, seq_num*self.args.max_segment_len]))
-            new_maks.append(mask[i].reshape([1, seq_num*self.args.max_segment_len]))
+            new_input_ids.append(input_ids[i].reshape([1, seq_num*self.args.max_seq_length]))
+            new_maks.append(mask[i].reshape([1, seq_num*self.args.max_seq_length]))
         input_ids = torch.cat(new_input_ids)
         mask = torch.cat(new_maks)
         return input_ids, mask
@@ -944,8 +948,8 @@ class DETR(pl.LightningModule):
 
 
     def make_batch_same_len(self, input_ids, mask, sum_text_len):
-        input_ids_pads = torch.ones(1, self.args.max_segment_len, dtype=torch.int, device=input_ids[0].device) * TOKENS_PAD
-        mask_pads = torch.zeros(1, self.args.max_segment_len, dtype=torch.int, device=input_ids[0].device)
+        input_ids_pads = torch.ones(1, self.args.max_seq_length, dtype=torch.int, device=input_ids[0].device) * TOKENS_PAD
+        mask_pads = torch.zeros(1, self.args.max_seq_length, dtype=torch.int, device=input_ids[0].device)
 
         max_seq_num = np.argmax(sum_text_len)
         seq_num = input_ids[max_seq_num].shape[0]
@@ -956,8 +960,8 @@ class DETR(pl.LightningModule):
             if input_ids[i].shape[0] < seq_num:
                 input_ids[i] = torch.cat([input_ids[i], input_ids_pads.detach().clone().repeat([seq_num - input_ids[i].shape[0], 1])])
                 mask[i] = torch.cat([mask[i], mask_pads.detach().clone().repeat([seq_num - mask[i].shape[0], 1])])
-            new_input_ids.append(input_ids[i].reshape([1, seq_num*self.args.max_segment_len]))
-            new_maks.append(mask[i].reshape([1, seq_num*self.args.max_segment_len]))
+            new_input_ids.append(input_ids[i].reshape([1, seq_num*self.args.max_seq_length]))
+            new_maks.append(mask[i].reshape([1, seq_num*self.args.max_seq_length]))
         input_ids = torch.cat(new_input_ids)
         mask = torch.cat(new_maks)
         return input_ids, mask

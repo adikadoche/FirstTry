@@ -132,18 +132,18 @@ class HungarianMatcher(nn.Module):
 
             total_cost = self.cost_is_cluster * cost_is_cluster + self.cost_coref * cost_coref
             
-            total_cost = total_cost.cpu()
+            total_cost = total_cost.cpu().transpose(0,1)  # [gold, predict]
             indices = linear_sum_assignment(total_cost)
             ind1, ind2 = indices
 
-            matched_predicted_cluster_id_real.append(torch.as_tensor(ind1[real_cluster_target_rows.cpu()], dtype=torch.int64, device=coref_logits.device))
-            matched_gold_cluster_id_real.append(torch.as_tensor(ind2[real_cluster_target_rows.cpu()], dtype=torch.int64, device=coref_logits.device))
-            if len(ind2) > num_of_gold_clusters:
-                matched_predicted_cluster_id_junk.append(torch.as_tensor(ind1[~real_cluster_target_rows.cpu()], dtype=torch.int64, device=coref_logits.device))
-                matched_gold_cluster_id_junk.append(torch.as_tensor(ind2[~real_cluster_target_rows.cpu()], dtype=torch.int64, device=coref_logits.device))
+            matched_gold_cluster_id_real.append(torch.as_tensor(ind1[real_cluster_target_rows.cpu()], dtype=torch.int64, device=coref_logits.device))
+            matched_predicted_cluster_id_real.append(torch.as_tensor(ind2[real_cluster_target_rows.cpu()], dtype=torch.int64, device=coref_logits.device))
+            if len(ind1) > num_of_gold_clusters:
+                matched_gold_cluster_id_junk.append(torch.as_tensor(ind1[~real_cluster_target_rows.cpu()], dtype=torch.int64, device=coref_logits.device))
+                matched_predicted_cluster_id_junk.append(torch.as_tensor(ind2[~real_cluster_target_rows.cpu()], dtype=torch.int64, device=coref_logits.device))
             else:
-                matched_predicted_cluster_id_junk.append(torch.as_tensor([j for j in range(num_queries) if j not in ind1], dtype=torch.int64, device=coref_logits.device))
                 matched_gold_cluster_id_junk.append(torch.as_tensor(list(range(num_of_gold_clusters, num_queries)), dtype=torch.int64, device=coref_logits.device))
+                matched_predicted_cluster_id_junk.append(torch.as_tensor([j for j in range(num_queries) if j not in ind1], dtype=torch.int64, device=coref_logits.device))
 
         return matched_predicted_cluster_id_real, matched_gold_cluster_id_real, matched_predicted_cluster_id_junk, matched_gold_cluster_id_junk
 
