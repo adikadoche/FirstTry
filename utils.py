@@ -196,7 +196,7 @@ def create_gold_matrix(device, doc_len, num_queries, gold_clusters, gold_mention
 def make_mentions_from_clustered_tokens(self, coref_logits):
     pass
 
-def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, threshold, gold_mentions: List, use_gold_mentions, is_cluster, slots, min_cluster_size):
+def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, threshold, gold_mentions: List, use_gold_mentions, use_topk_mentions, is_cluster, slots, min_cluster_size):
     # when we are using gold mentions, we get coref_logits at the size of the gold mentions ([bs, clusters, gold_mentions]) (because we know they are mentions, what we are predicting is the clustering)
 
     bs = coref_logits.shape[0]
@@ -210,11 +210,11 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, thresh
         cur_cluster_bool = cluster_bools[i]
         cur_coref_logits = coref_logits[i].detach().clone()
         cluster_mention_mask = torch.ones_like(cur_coref_logits) == 1
-        if is_cluster and not use_gold_mentions:
+        if is_cluster and (not use_gold_mentions or use_topk_mentions):
             cur_cluster_bool = cur_cluster_bool.reshape([-1, 1]).repeat((1, cur_coref_logits.shape[1]))
             cluster_mention_mask = cur_cluster_bool
 
-        if not use_gold_mentions:  
+        if not use_gold_mentions and not use_topk_mentions:  
             if slots:
                 if BIO == 3:
                     BIO_max_score = torch.argmax(cur_coref_logits, -1)  ##TODO: wrong, fix

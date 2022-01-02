@@ -137,7 +137,7 @@ class Embedder(pl.LightningModule):
             span_starts, span_ends, longfomer_no_pad_list = self.longformer(masked_ids, masked_mask, gold_clusters)
             span_emb, span_mask = self.get_span_emb([longfomer_no_pad_list.reshape(-1, longfomer_no_pad_list.shape[-1])], [span_starts[0]], [span_ends[0]], torch.tensor([span_ends[0].shape[0]]))  # [mentions, emb']
             embedding = self.span_proj(span_emb) # [mentions, emb]
-            gold_mentions_list = [[(span_starts[0][i], span_ends[0][i]) for i in range(len(span_ends[0]))]]
+            gold_mentions_list = [[(span_starts.detach().cpu().numpy()[0][i], span_ends.detach().cpu().numpy()[0][i]) for i in range(len(span_ends[0]))]]
         else:
             longfomer_no_pad_list = []
             for i in range(input_ids_r.shape[0]):
@@ -653,7 +653,7 @@ class DETR(pl.LightningModule):
 
             input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = \
                 tensor_and_remove_empty(batch, gold_mentions_list, self.args, self.input_ids_pads, self.mask_pads, self.args.use_gold_mentions)
-            if len(input_ids) == 0 or input_ids.shape[1] > 1:  #TODO fix
+            if len(input_ids) == 0 or input_ids.shape[1] > 1:  #TODO fix?
                 print(f'skipped {batch_idx}')
                 return
 
@@ -663,10 +663,10 @@ class DETR(pl.LightningModule):
 
             if len(mention_logits) > 0:
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), mention_logits.cpu().detach(),
-                                                            self.threshold, gold_mentions_list, self.args.use_gold_mentions or self.args.use_topk_mentions, self.args.is_cluster, self.args.slots, self.args.min_cluster_size)
+                                                            self.threshold, gold_mentions_list, self.args.use_gold_mentions, self.args.use_topk_mentions, self.args.is_cluster, self.args.slots, self.args.min_cluster_size)
             else:
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
-                                                            self.threshold, gold_mentions_list, self.args.use_gold_mentions or self.args.use_topk_mentions, self.args.is_cluster, self.args.slots, self.args.min_cluster_size)
+                                                            self.threshold, gold_mentions_list, self.args.use_gold_mentions, self.args.use_topk_mentions, self.args.is_cluster, self.args.slots, self.args.min_cluster_size)
             self.train_evaluator.update(predicted_clusters, gold_clusters)
             
             embed_loss, embed_loss_parts = self.backbone.criterion(outputs)
@@ -778,7 +778,7 @@ class DETR(pl.LightningModule):
         for i, (cluster_logits, coref_logits, gold_clusters, gold_mentions) in enumerate(
                 zip(self.all_cluster_logits, self.all_coref_logits, self.all_gold_clusters, self.all_gold_mentions)):                
             predicted_clusters = calc_predicted_clusters(cluster_logits.unsqueeze(0), coref_logits.unsqueeze(0), [], \
-                threshold, [gold_mentions], self.args.use_gold_mentions or self.args.use_topk_mentions, self.args.is_cluster, self.args.slots, self.args.min_cluster_size)
+                threshold, [gold_mentions], self.args.use_gold_mentions, self.args.use_topk_mentions, self.args.is_cluster, self.args.slots, self.args.min_cluster_size)
             all_predicted_clusters += predicted_clusters
             evaluator.update(predicted_clusters, [gold_clusters])
         p, r, f1 = evaluator.get_prf()
