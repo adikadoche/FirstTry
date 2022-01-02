@@ -151,8 +151,8 @@ def reduce_dict(input_dict, average=True):
         reduced_dict = {k: v for k, v in zip(names, values)}
     return reduced_dict
 
-def create_gold_matrix(device, doc_len, num_queries, gold_clusters, gold_mentions: List, use_gold_mentions, BIO=1):
-    if not use_gold_mentions:
+def create_gold_matrix(device, doc_len, num_queries, gold_clusters, gold_mentions: List, is_spans, BIO=1):
+    if not is_spans:
         gold_per_token_batch = []
         for i in range(len(gold_clusters)):
             if BIO == 3:
@@ -181,9 +181,12 @@ def create_gold_matrix(device, doc_len, num_queries, gold_clusters, gold_mention
                 if cluster_id >= num_queries:
                     continue
                 for mention in cluster:
-                    mention_index = gold_mentions[i].index(tuple(mention))
-                    assert mention_index >= 0
-                    gold_per_token[cluster_id, mention_index] = 1
+                    try:
+                        mention_index = gold_mentions[i].index(tuple(mention))
+                        assert mention_index >= 0
+                        gold_per_token[cluster_id, mention_index] = 1
+                    except:
+                        continue
             # if gold_per_token.shape[1] == 0:
             #     logger.info("size of gold_cluster {}, size of gold matrix {}".format(len(gold_clusters[i]), gold_per_token.shape))
             gold_per_token_batch.append(gold_per_token)

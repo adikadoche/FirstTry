@@ -125,6 +125,8 @@ def parse_args():
                         help="Class coefficient in the matching cost")
     parser.add_argument('--cost_coref', default=5, type=float,
                         help="L1 box coefficient in the matching cost")
+    parser.add_argument('--cost_embedding', default=5, type=float,
+                        help="L1 box coefficient in the matching cost")
     parser.add_argument('--threshold', default=-1, type=float,
                         help="L1 box coefficient in the matching cost")
     parser.add_argument('--max_ind_example', default=-1, type=float,
