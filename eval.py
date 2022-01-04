@@ -16,7 +16,6 @@ from utils import tensor_and_remove_empty, calc_predicted_clusters, create_gold_
 from conll import evaluate_conll
 from consts import TOKENS_PAD, SPEAKER_PAD
 from metrics import CorefEvaluator
-from matcher import build_matcher
 import wandb
 logger = logging.getLogger(__name__)
 

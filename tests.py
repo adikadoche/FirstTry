@@ -2,7 +2,7 @@ import unittest
 import torch
 import random
 import numpy as np
-from matcher import build_matcher
+from matcher import HungarianMatcher
 from utils import calc_predicted_clusters
 from detr import DETRLoss
 
@@ -105,7 +105,7 @@ class Test(unittest.TestCase):
             for o1 in options:
                 for o2 in options:
                     args = Args(o1, o2)
-                    m = build_matcher(args=args)
+                    m = HungarianMatcher(args=args)
                     p_r,g_r,p_f,g_f = m(outputs,targets)
                     self.assertCountEqual(p_r[0][g_r[0]].numpy(),clusters_inds)
 
@@ -131,7 +131,7 @@ class Test(unittest.TestCase):
                 for o2 in options:
                     for r in reduc_options:
                         args = Args(o1, o2,r)
-                        m = build_matcher(args=args)
+                        m = HungarianMatcher(args=args)
                         l = DETRLoss(m, args.eos_coef, args.cost_is_cluster, args.cost_coref, args.cost_is_mention, args)
                         loss,parts = l(outputs,targets)
                         self.assertEqual(loss,0)

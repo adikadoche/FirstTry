@@ -16,7 +16,6 @@ import pytorch_lightning as pl
 
 # from modeling import Adi
 from datetime import datetime
-from detr import build_DETR
 from coref_bucket_batch_sampler import BucketBatchSampler
 from training import set_seed, train
 from eval import make_evaluation
@@ -48,7 +47,7 @@ def main():
             args.n_gpu = 0
         else:
             args.n_gpu = 1 
-            os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+            os.environ["CUDA_VISIBLE_DEVICES"] = "1"
             os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
     if args.local_rank == -1 or args.no_cuda:
         device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
@@ -64,7 +63,7 @@ def main():
             args.n_gpu = 0
         else:
             args.n_gpu = 1 
-            os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+            os.environ["CUDA_VISIBLE_DEVICES"] = "1"
             os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
     # Setup logging

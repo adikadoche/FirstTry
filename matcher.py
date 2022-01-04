@@ -57,7 +57,6 @@ class HungarianMatcher(nn.Module):
                 len(index_i) = len(index_j) = min(num_queries, num_target_boxes)
         """
         targets_clusters = targets['clusters']
-        targets_mentions = targets['mentions']
         bs = outputs["coref_logits"].shape[0]
         matched_predicted_cluster_id_real, matched_gold_cluster_id_real, matched_predicted_cluster_id_junk, matched_gold_cluster_id_junk = [],[],[],[]
         for i in range(bs):
@@ -70,8 +69,8 @@ class HungarianMatcher(nn.Module):
 
             coref_logits = outputs["coref_logits"][i].squeeze(0) # [num_queries, tokens]
             cluster_logits = outputs["cluster_logits"][i] # [num_queries, 1]
-            if len(outputs["mention_logits"]) > 0:
-                mention_logits = outputs["mention_logits"][i].squeeze(-1).unsqueeze(0) # [1, tokens]
+            # if len(outputs["mention_logits"]) > 0:
+            #     mention_logits = outputs["mention_logits"][i].squeeze(-1).unsqueeze(0) # [1, tokens]
 
             if self.args.BIO == 1:
                 real_cluster_target_rows = torch.sum(targets_clusters[i], -1) > 0
@@ -92,11 +91,11 @@ class HungarianMatcher(nn.Module):
             else:
                 cost_is_cluster = torch.tensor(0)
 
-            if len(outputs["mention_logits"]) > 0:
-                mention_logits = mention_logits.repeat(num_queries, 1) # [num_queries, tokens]
-                coref_logits = coref_logits * mention_logits                
+            # if len(outputs["mention_logits"]) > 0:
+            #     mention_logits = mention_logits.repeat(num_queries, 1) # [num_queries, tokens]
+            #     coref_logits = coref_logits * mention_logits                
 
-            coref_logits = torch.index_select(coref_logits, 1, torch.arange(0, real_cluster_target.shape[1]).to(coref_logits.device))
+            # coref_logits = torch.index_select(coref_logits, 1, torch.arange(0, real_cluster_target.shape[1]).to(coref_logits.device))
 
 
         #TODO - bce - sum/mean/dim?
@@ -147,6 +146,3 @@ class HungarianMatcher(nn.Module):
 
         return matched_predicted_cluster_id_real, matched_gold_cluster_id_real, matched_predicted_cluster_id_junk, matched_gold_cluster_id_junk
 
-
-def build_matcher(args):
-    return HungarianMatcher(cost_is_cluster=args.cost_is_cluster, cost_coref=args.cost_coref, cost_is_mention=args.cost_is_mention, args=args)

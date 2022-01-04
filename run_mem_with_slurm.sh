@@ -45,7 +45,7 @@ sbatch \
   --ntasks=1  \
   --gpus=${GPU_NUM}  \
   --export GIT_HASH,JOB_NAME \
-  --constraint="quadro_rtx_8000|tesla_v100|a100_smx_80gb"  \
+  --constraint="quadro_rtx_8000|tesla_v100"  \
   ${SCRIPT_PATH} ${SCRIPT_PARAMS}  |  tee ${TEMPFILE_PATH}
 
 JOB_ID=$(grep -oP '\d+' ${TEMPFILE_PATH})

@@ -17,7 +17,7 @@ from consts import TOKENS_PAD, SPEAKER_PAD
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.profiler import AdvancedProfiler
-from detr import DETRDataModule, DETR, build_DETR, build_Embedder
+from detr import DETRDataModule, DETR, Embedder
 
 from transformers import AdamW, get_constant_schedule_with_warmup
 
@@ -84,12 +84,12 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
 
 def train(args, wandb=None):
-    pretrain = True
+    pretrain = False
 
     if pretrain:
-        model = build_Embedder(args)
+        model = Embedder(args)
     else:
-        model = build_DETR(args)
+        model = DETR(args)
 
     if not args.is_debug:
         wandb.watch(model, log="all")
@@ -102,9 +102,9 @@ def train(args, wandb=None):
     """ Train the model """
     # output_dir = Path(args.output_dir)
 
-    logger.info("Training/evaluation parameters %s", args)
     # if args.resume_from:
-    #     model = DETR.load_from_checkpoint(args.resume_from)
+    #     model = DETR.load_from_checkpoint(args.resume_from, args=args)
+    logger.info("Training/evaluation parameters %s", args)
     data_model = DETRDataModule(args)
 
     if pretrain:
@@ -118,10 +118,10 @@ def train(args, wandb=None):
         # trainer = pl.Trainer(max_epochs=args.num_train_epochs, gpus=args.n_gpu, amp_backend='apex', logger= wandb, accumulate_grad_batches=args.gradient_accumulation_steps,\
         #     callbacks=[ModelCheckpoint(monitor="eval_avg_f1"), ModelCheckpoint(monitor="epoch")], default_root_dir=args.output_dir, profiler=profiler)
         trainer = pl.Trainer(max_epochs=args.num_train_epochs, gpus=args.n_gpu, amp_backend='apex', logger= wandb, accumulate_grad_batches=args.gradient_accumulation_steps,\
-            callbacks=[ModelCheckpoint(monitor=monitor, mode=mode), ModelCheckpoint(monitor="epoch", mode="max")], default_root_dir=args.output_dir)
+            default_root_dir=args.output_dir)
     else:
         trainer = pl.Trainer(max_epochs=args.num_train_epochs, gpus=args.n_gpu, amp_backend='apex', accumulate_grad_batches=args.gradient_accumulation_steps,\
-            callbacks=[ModelCheckpoint(monitor=monitor, mode=mode), ModelCheckpoint(monitor="epoch", mode="max")], default_root_dir=args.output_dir, detect_anomaly=True)
+            default_root_dir=args.output_dir, detect_anomaly=True)
                              
     # global_step = 0 if not args.resume_from else args.resume_global_step
     # if args.local_rank in [-1, 0]:

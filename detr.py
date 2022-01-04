@@ -28,11 +28,11 @@ import numpy as np
 #                        is_dist_avail_and_initialized)
 #
 # from .backbone import build_backbone
-from matcher import build_matcher
-from transformer import build_transformer
+from matcher import HungarianMatcher
+from transformer import Transformer
 from transformers import LongformerConfig, LongformerModel
 from typing import List
-from utils import calc_predicted_clusters, create_gold_matrix, tensor_and_remove_empty, create_junk_gold_mentions, save_checkpoint
+from utils import calc_predicted_clusters, create_gold_matrix, tensor_and_remove_empty, create_junk_gold_mentions, save_checkpoint, create_target_and_predict_matrix
 from transformers import AutoConfig, CONFIG_MAPPING
 from misc import NestedTensor, accuracy
 from consts import BACKBONE_PATHS
@@ -101,8 +101,8 @@ class Embedder(pl.LightningModule):
             self.longformer = MenPropose(AutoConfig.from_pretrained('allenai/longformer-large-4096', cache_dir=args.cache_dir), args)
             self.longformer.load_state_dict(torch.load('/home/gamir/adiz/tmpCode/s2e-coref/s2e_mention_proposal.pt'))
 
-            for param in self.longformer.parameters():
-                param.requires_grad = False
+            # for param in self.longformer.parameters():
+            #     param.requires_grad = False
         else:
             self.longformer = LongformerModel.from_pretrained(args.model_name_or_path,
                                                 config=config,
@@ -127,7 +127,7 @@ class Embedder(pl.LightningModule):
         self.input_ids_pads = torch.ones(1, self.args.max_seq_length, dtype=torch.int, device=self.args.device) * TOKENS_PAD
         self.mask_pads = torch.zeros(1, self.args.max_seq_length, dtype=torch.int, device=self.args.device)
     
-    def forward(self, input_ids, mask, gold_clusters, gold_mentions, num_mentions):
+    def forward(self, input_ids, mask, gold_clusters, mentions, num_mentions):
         bs = input_ids.shape[0]
         input_ids_r = input_ids.reshape(input_ids.shape[0], -1)
         mask_r = mask.reshape(mask.shape[0], -1)
@@ -137,7 +137,7 @@ class Embedder(pl.LightningModule):
             span_starts, span_ends, longfomer_no_pad_list = self.longformer(masked_ids, masked_mask, gold_clusters)
             span_emb, span_mask = self.get_span_emb([longfomer_no_pad_list.reshape(-1, longfomer_no_pad_list.shape[-1])], [span_starts[0]], [span_ends[0]], torch.tensor([span_ends[0].shape[0]]))  # [mentions, emb']
             embedding = self.span_proj(span_emb) # [mentions, emb]
-            gold_mentions_list = [[(span_starts.detach().cpu().numpy()[0][i], span_ends.detach().cpu().numpy()[0][i]) for i in range(len(span_ends[0]))]]
+            mentions_list = [[(span_starts.detach().cpu().numpy()[0][i], span_ends.detach().cpu().numpy()[0][i]) for i in range(len(span_ends[0]))]]
         else:
             longfomer_no_pad_list = []
             for i in range(input_ids_r.shape[0]):
@@ -161,15 +161,13 @@ class Embedder(pl.LightningModule):
                 embedding = self.input_proj(torch.stack(longfomer_no_pad_list,0))
                 span_mask = masked_mask.reshape(embedding.shape[:-1]) 
             else:   #TODO: not good for sequences because only takes first and last letters and doesnt have a representation of the surrounding
-                span_starts = [torch.tensor([m[0] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
-                span_ends = [torch.tensor([m[1] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
+                span_starts = [torch.tensor([m[0] for m in mentions[i]], dtype=torch.long) for i in range(len(mentions))]
+                span_ends = [torch.tensor([m[1] for m in mentions[i]], dtype=torch.long) for i in range(len(mentions))]
                 span_emb, span_mask = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends, num_mentions)  # [mentions, emb']
                 embedding = self.span_proj(span_emb) # [mentions, emb]
-                gold_mentions_list = [gold_mentions]
+            mentions_list = mentions
         
-        gold_matrix = create_gold_matrix(self.args.device, [input_ids.shape[1]], self.args.num_queries, gold_clusters, gold_mentions_list, self.args.use_gold_mentions or self.args.use_topk_mentions, self.args.BIO)
-
-        out = {"embedding": embedding, "mask": span_mask, "gold_matrix": gold_matrix, "gold_mentions_list": gold_mentions_list}
+        out = {"embedding": embedding, "mask": span_mask, "mentions_list": mentions_list}
         return out
 
 
@@ -252,19 +250,22 @@ class Embedder(pl.LightningModule):
             gold_clusters = batch['clusters']
 
             gold_mentions_list = [list(set([tuple(m) for c in gc for m in c])) for gc in gold_clusters]
-            if self.args.add_junk:
-                gold_mentions_list, gold_mentions_vector = create_junk_gold_mentions(gold_mentions_list, sum_text_len, self.args.device)
-            else:
-                gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=self.args.device) for gm in gold_mentions_list]
-
             input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = \
                 tensor_and_remove_empty(batch, gold_mentions_list, self.args, self.input_ids_pads, self.mask_pads, self.args.use_gold_mentions)
             if len(input_ids) == 0:
                 return
 
-            outputs = self(input_ids, input_mask, gold_clusters, gold_mentions, num_mentions)
+            if self.args.add_junk:
+                mentions_list, gold_mentions_vector = create_junk_gold_mentions(gold_mentions_list, sum_text_len, self.args.device)
+            else:
+                gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=self.args.device) for gm in gold_mentions_list]
+                mentions_list = gold_mentions_list
 
-            loss, loss_parts = self.criterion(outputs)
+            gold_matrix = create_gold_matrix(self.args.device, sum_text_len, self.args.num_queries, gold_clusters, gold_mentions_list, self.args.use_gold_mentions or self.args.use_topk_mentions, self.args.BIO)
+
+            outputs = self(input_ids, input_mask, gold_clusters, mentions_list, num_mentions)
+
+            loss, loss_parts = self.criterion(outputs, {"clusters": gold_matrix})
             
             self.recent_train_losses.append(loss.item())
             for key in loss_parts.keys():
@@ -299,19 +300,27 @@ class Embedder(pl.LightningModule):
         gold_clusters = batch['clusters']
 
         gold_mentions_list = [list(set([tuple(m) for c in gc for m in c])) for gc in gold_clusters]
-        if self.args.add_junk:
-            gold_mentions_list, gold_mentions_vector = create_junk_gold_mentions(gold_mentions_list, sum_text_len, self.args.device)
-        else:
-            gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=self.args.device) for gm in gold_mentions_list]
-        
         input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = \
             tensor_and_remove_empty(batch, gold_mentions_list, self.args, self.input_ids_pads, self.mask_pads, self.args.use_gold_mentions)
         if len(input_ids) == 0:
             return
 
-        outputs = self(input_ids, input_mask, gold_clusters, gold_mentions, num_mentions)
+        if self.args.add_junk:
+            mentions_list, gold_mentions_vector = create_junk_gold_mentions(gold_mentions_list, sum_text_len, self.args.device)
+        else:
+            gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=self.args.device) for gm in gold_mentions_list]
+            mentions_list = gold_mentions_list
 
-        loss, loss_parts = self.criterion(outputs)
+        gold_matrix = create_gold_matrix(self.args.device, sum_text_len, self.args.num_queries, gold_clusters, gold_mentions_list, self.args.use_gold_mentions or self.args.use_topk_mentions, self.args.BIO)
+
+        outputs = self(input_ids, input_mask, gold_clusters, mentions_list, num_mentions)
+        mentions_list = outputs['mentions_list']
+        if self.args.use_gold_mentions or self.args.use_topk_mentions:
+            target_matrix, predict_matrix = create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_matrix, outputs['embedding'])
+        else:
+            target_matrix, predict_matrix = gold_matrix, outputs['embedding']
+
+        loss, loss_parts = self.criterion({'embedding': predict_matrix}, {"clusters": target_matrix})
         self.losses.append(loss.mean().detach().cpu())
         for key in loss_parts.keys():
             if loss_parts[key][0] < 100:
@@ -380,7 +389,7 @@ class EmbeddingLoss(nn.Module):
         super().__init__()
         self.cost_embedding = cost_embedding
 
-    def forward(self, outputs):
+    def forward(self, outputs, gold_clusters, mentions_list=None):
         """ This performs the loss computation.
         Parameters:
              outputs: dict of tensors, see the output specification of the model for the format
@@ -388,20 +397,27 @@ class EmbeddingLoss(nn.Module):
                       The expected keys in each dict depends on the losses applied, see each loss' doc
         """
 
-        targets_clusters = outputs['gold_matrix']
         bs = outputs["embedding"].shape[0]
         costs = []
         costs_parts = {'loss_embedding':[], 'loss_embedding_num':[], 'loss_embedding_denom':[]}
         for i in range(bs):
+            embedding = outputs["embedding"][i].squeeze(0)
+
+            if mentions_list == None:
+                num_of_gold_clusters = torch.sum(torch.sum(gold_clusters[i], -1) > 0)
+                cluster_inds = gold_clusters[i][:num_of_gold_clusters]
+            else:
+                cluster_inds = torch.zeros(len(gold_clusters[i]), len(mentions_list[i]), device=embedding.device)
+                for k,m in enumerate(mentions_list[i]):
+                    for j,c in enumerate(gold_clusters[i]):
+                        if [m[0],m[1]] in c:
+                            cluster_inds[j][k] = 1
             # Compute the average number of target boxes accross all nodes, for normalization purposes
-            num_of_gold_clusters = torch.sum(torch.sum(targets_clusters[i], -1) > 0)
 
             embedding_loss = torch.tensor(0)
 
-            embedding = outputs["embedding"][i].squeeze(0)
             if len(embedding.shape) == 1:
                 embedding = embedding.unsqueeze(0)
-            cluster_inds = targets_clusters[i][:num_of_gold_clusters]
             junk_cluster = 1 - torch.sum(cluster_inds, 0)
             if torch.sum(junk_cluster) > 0:
                 cluster_inds = torch.cat([cluster_inds, junk_cluster.unsqueeze(0)]) #TODO: do we really want it?
@@ -431,7 +447,7 @@ class EmbeddingLoss(nn.Module):
 
 class DETR(pl.LightningModule):
     """ This is the DETR module that performs object detection """
-    def __init__(self, backbone, criterion, transformer, num_queries, args, aux_loss=False):
+    def __init__(self, args):
         """ Initializes the model.
         Parameters:
             backbone: torch module of the backbone to be used. See backbone.py
@@ -441,16 +457,42 @@ class DETR(pl.LightningModule):
             aux_loss: True if auxiliary decoding losses (loss at each decoder layer) are to be used.
         """
         super().__init__()
-        self.num_queries = num_queries
-        self.transformer = transformer
-        hidden_dim = transformer.d_model
-        self.query_embed = nn.Embedding(num_queries, hidden_dim)
+
+        device = torch.device(args.device)
+
+        self.transformer = Transformer(
+            d_model=args.hidden_dim,
+            dropout=args.dropout,
+            nhead=args.nheads,
+            dim_feedforward=args.dim_feedforward,
+            num_encoder_layers=args.enc_layers,
+            num_decoder_layers=args.dec_layers,
+            normalize_before=args.pre_norm,
+            return_intermediate_dec=True,
+            is_sequential=args.sequential
+        )
+
+        if args.load_backbone == 'no':
+            self.backbone = Embedder(args)        
+        else:
+            self.backbone = Embedder.load_from_checkpoint(
+                BACKBONE_PATHS[args.input_type.split('_')[0]]['gold' if args.use_gold_mentions else 'no_gold']['junk' if args.add_junk else 'no_junk'][args.load_backbone],
+                args=args)
+        matcher = HungarianMatcher(cost_is_cluster=args.cost_is_cluster, cost_coref=args.cost_coref, cost_is_mention=args.cost_is_mention, args=args)
+        # TODO maybe return consideration of aux loss
+
+        self.criterion = DETRLoss(matcher=matcher, eos_coef=args.eos_coef, cost_is_cluster=args.cost_is_cluster, cost_is_mention=args.cost_is_mention,
+                                cost_coref=args.cost_coref, args=args)
+        self.criterion.to(device)
+
+        self.num_queries = args.num_queries
+        hidden_dim = self.transformer.d_model
+        self.query_embed = nn.Embedding(self.num_queries, hidden_dim)
         self.is_cluster = nn.Linear(hidden_dim, 1)
-        self.backbone = backbone
-        self.criterion = criterion
-        self.aux_loss = aux_loss
+        self.aux_loss = args.aux_loss
         self.args = args
-        self.threshold = self.args.threshold if self.args.threshold > 0 else 0.5
+        self.cluster_threshold = self.args.threshold if self.args.threshold > 0 else 0.5
+        self.coref_threshold = self.args.threshold if self.args.threshold > 0 else 0.5
         self.same_thresh_count = 0
         self.thresh_delta = 0.2
         self.train_evaluator = CorefEvaluator()
@@ -459,8 +501,8 @@ class DETR(pl.LightningModule):
             self.query_mu = nn.Parameter(torch.randn(1, hidden_dim))
             self.query_sigma = nn.Parameter(torch.randn(1, hidden_dim))
         else:
-            self.query_mu = nn.Parameter(torch.randn(num_queries, hidden_dim))
-            self.query_sigma = nn.Parameter(torch.randn(num_queries, hidden_dim))
+            self.query_mu = nn.Parameter(torch.randn(self.num_queries, hidden_dim))
+            self.query_sigma = nn.Parameter(torch.randn(self.num_queries, hidden_dim))
 
              
         self.mention_classifier = nn.Linear(hidden_dim, 1)
@@ -485,7 +527,7 @@ class DETR(pl.LightningModule):
         self.batch_sizes = []
         self.all_cluster_logits = []
         self.all_coref_logits = []
-        self.all_gold_mentions = []
+        self.all_mentions = []
         self.all_predicted_clusters = []
         self.all_input_ids = []
         self.all_gold_clusters = []
@@ -496,13 +538,14 @@ class DETR(pl.LightningModule):
 
         self.best_f1 = 0
         self.best_f1_epoch = -1
+        self.last_saved_epoch = -1
         self.epoch = 0
         self.step_num = 0
         self.tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name, cache_dir=args.cache_dir)
 
         if self.args.slots:  
             dim = args.hidden_dim      
-            self.num_slots = num_queries
+            self.num_slots = self.num_queries
             self.iters = 3
             self.eps = 1e-8
             self.scale = dim ** -0.5
@@ -542,7 +585,7 @@ class DETR(pl.LightningModule):
             model_to_load.load_state_dict(checkpoint['model'])
             x=1
 
-    def forward(self, input_ids, mask, gold_clusters, gold_mentions, num_mentions):
+    def forward(self, input_ids, mask, gold_clusters, mentions, num_mentions):
         """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
@@ -559,7 +602,7 @@ class DETR(pl.LightningModule):
         """
         # input_ids_cat = torch.cat(input_ids, dim=1).squeeze(0)
         # mask_cat = torch.cat(mask, dim=1).squeeze(0)\
-        embedding_dict = self.backbone(input_ids, mask, gold_clusters, gold_mentions, num_mentions)
+        embedding_dict = self.backbone(input_ids, mask, gold_clusters, mentions, num_mentions)
         embedding = embedding_dict['embedding']
         span_mask = embedding_dict['mask']
 
@@ -574,8 +617,7 @@ class DETR(pl.LightningModule):
                 "cluster_logits": cluster_logits,
                 "mention_logits": mention_logits,
                 "embedding": embedding,
-                "gold_matrix": embedding_dict['gold_matrix'], 
-                "gold_mentions_list": embedding_dict['gold_mentions_list']}
+                "mentions_list": embedding_dict['mentions_list']}
         return out
 
     def slot_attention(self, input_emb):
@@ -646,31 +688,42 @@ class DETR(pl.LightningModule):
             gold_clusters = batch['clusters']
 
             gold_mentions_list = [list(set([tuple(m) for c in gc for m in c])) for gc in gold_clusters]
-            if self.args.add_junk:
-                gold_mentions_list, gold_mentions_vector = create_junk_gold_mentions(gold_mentions_list, sum_text_len, self.args.device)
-            else:
-                gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=self.args.device) for gm in gold_mentions_list]
-
             input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = \
                 tensor_and_remove_empty(batch, gold_mentions_list, self.args, self.input_ids_pads, self.mask_pads, self.args.use_gold_mentions)
+            if self.args.add_junk:
+                mentions_list, gold_mentions_vector = create_junk_gold_mentions(gold_mentions_list, sum_text_len, self.args.device)
+            else:
+                gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=self.args.device) for gm in gold_mentions_list]
+                mentions_list = gold_mentions_list
+
             if len(input_ids) == 0 or input_ids.shape[1] > 1:  #TODO fix?
                 print(f'skipped {batch_idx}')
                 return
+            
+            gold_matrix = create_gold_matrix(self.args.device, sum_text_len, self.args.num_queries, gold_clusters, gold_mentions_list, self.args.use_gold_mentions or self.args.use_topk_mentions, self.args.BIO)
 
-            outputs = self(input_ids, input_mask, gold_clusters, gold_mentions, num_mentions)
-            cluster_logits, coref_logits, mention_logits, gold_matrix, gold_mentions_list = \
-                outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits'], outputs['gold_matrix'], outputs['gold_mentions_list']
+            outputs = self(input_ids, input_mask, gold_clusters, mentions_list, num_mentions)
+            cluster_logits, coref_logits, mention_logits, mentions_list = \
+                outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits'], outputs['mentions_list']
+
+            if self.args.use_gold_mentions or self.args.use_topk_mentions:
+                target_matrix, predict_matrix = create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_matrix, coref_logits)
+            else:
+                target_matrix, predict_matrix = gold_matrix, coref_logits
 
             if len(mention_logits) > 0:
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), mention_logits.cpu().detach(),
-                                                            self.threshold, gold_mentions_list, self.args.use_gold_mentions, self.args.use_topk_mentions, self.args.is_cluster, self.args.slots, self.args.min_cluster_size)
+                                                            self.coref_threshold, self.cluster_threshold, mentions_list, self.args.use_gold_mentions, self.args.use_topk_mentions, self.args.is_cluster, self.args.slots, self.args.min_cluster_size)
             else:
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
-                                                            self.threshold, gold_mentions_list, self.args.use_gold_mentions, self.args.use_topk_mentions, self.args.is_cluster, self.args.slots, self.args.min_cluster_size)
+                                                            self.coref_threshold, self.cluster_threshold, mentions_list, self.args.use_gold_mentions, self.args.use_topk_mentions, self.args.is_cluster, self.args.slots, self.args.min_cluster_size)
             self.train_evaluator.update(predicted_clusters, gold_clusters)
             
-            embed_loss, embed_loss_parts = self.backbone.criterion(outputs)
-            loss, loss_parts = self.criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
+            if self.args.use_gold_mentions or self.args.use_topk_mentions:
+                embed_loss, embed_loss_parts = self.backbone.criterion({'embedding':outputs['embedding']}, gold_clusters, mentions_list)
+            else:
+                embed_loss, embed_loss_parts = self.backbone.criterion({'embedding':outputs['embedding']}, target_matrix)            
+            loss, loss_parts = self.criterion({'cluster_logits':cluster_logits, 'coref_logits':predict_matrix}, {'clusters':target_matrix})
             loss_parts.update(embed_loss_parts)
             if embed_loss > 0:
                 loss = loss + embed_loss
@@ -715,21 +768,28 @@ class DETR(pl.LightningModule):
         gold_clusters = batch['clusters']
 
         gold_mentions_list = [list(set([tuple(m) for c in gc for m in c])) for gc in gold_clusters]
-        if self.args.add_junk:
-            gold_mentions_list, gold_mentions_vector = create_junk_gold_mentions(gold_mentions_list, sum_text_len, self.args.device)
-        else:
-            gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=self.args.device) for gm in gold_mentions_list]
-        
         input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = \
             tensor_and_remove_empty(batch, gold_mentions_list, self.args, self.input_ids_pads, self.mask_pads, self.args.use_gold_mentions)
+        if self.args.add_junk:
+            mentions_list, gold_mentions_vector = create_junk_gold_mentions(gold_mentions_list, sum_text_len, self.args.device)
+        else:
+            gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=self.args.device) for gm in gold_mentions_list]
+            mentions_list = gold_mentions_list
         if len(input_ids) == 0:
             return
+            
+        gold_matrix = create_gold_matrix(self.args.device, sum_text_len, self.args.num_queries, gold_clusters, gold_mentions_list, self.args.use_gold_mentions or self.args.use_topk_mentions, self.args.BIO)
 
-        outputs = self(input_ids, input_mask, gold_clusters, gold_mentions, num_mentions)
-        cluster_logits, coref_logits, mention_logits, gold_matrix, gold_mentions_list = \
-            outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits'], outputs['gold_matrix'], outputs['gold_mentions_list']
+        outputs = self(input_ids, input_mask, gold_clusters, mentions_list, num_mentions)
+        cluster_logits, coref_logits, mention_logits, mentions_list = \
+            outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits'], outputs['mentions_list']
+
+        if self.args.use_gold_mentions or self.args.use_topk_mentions:
+            target_matrix, predict_matrix = create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_matrix, coref_logits)
+        else:
+            target_matrix, predict_matrix = gold_matrix, coref_logits
         targets = {'clusters':gold_matrix, 'mentions':gold_mentions_vector}
-        matched_predicted_cluster_id_real, matched_gold_cluster_id_real, _, _ = self.criterion.matcher(outputs, targets)
+        matched_predicted_cluster_id_real, matched_gold_cluster_id_real, _, _ = self.criterion.matcher({'coref_logits':predict_matrix, 'cluster_logits': cluster_logits}, {'clusters':target_matrix})
         if matched_gold_cluster_id_real[0] is not False:
             if self.args.input_type.split('_')[0] != 'letters':
                 for i, j in zip(matched_predicted_cluster_id_real[0], matched_gold_cluster_id_real[0]):
@@ -748,8 +808,11 @@ class DETR(pl.LightningModule):
         #     predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
         #                                                 self.threshold, gold_mentions_list, self.args.use_gold_mentions, self.args.is_cluster, self.args.slots, self.args.min_cluster_size)
         # self.eval_evaluator.update(predicted_clusters, gold_clusters)
-        embed_loss, embed_loss_parts = self.backbone.criterion(outputs)
-        loss, loss_parts = self.criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
+        if self.args.use_gold_mentions or self.args.use_topk_mentions:
+            embed_loss, embed_loss_parts = self.backbone.criterion({'embedding':outputs['embedding']}, gold_clusters, mentions_list)
+        else:
+            embed_loss, embed_loss_parts = self.backbone.criterion({'embedding':outputs['embedding']}, target_matrix)
+        loss, loss_parts = self.criterion({'cluster_logits':cluster_logits, 'coref_logits':predict_matrix}, {'clusters':target_matrix})
         loss_parts.update(embed_loss_parts)
         if embed_loss > 0:
             loss = loss + embed_loss
@@ -767,18 +830,20 @@ class DETR(pl.LightningModule):
         self.all_gold_clusters += gold_clusters
         self.all_cluster_logits += cluster_logits.detach().cpu()
         self.all_coref_logits += coref_logits.detach().cpu()
-        self.all_gold_mentions += gold_mentions_list
+        self.all_mentions += mentions_list
 
+        # predicted_clusters = calc_predicted_clusters(cluster_logits.detach().cpu(), coref_logits.detach().cpu(), [], \
+        #                 .5, gold_mentions_list, self.args.use_gold_mentions, self.args.use_topk_mentions, self.args.is_cluster, self.args.slots, self.args.min_cluster_size)
         return {'loss': loss}
 
-    def eval_by_thresh(self, threshold):
+    def eval_by_thresh(self, coref_threshold, cluster_threshold):
         evaluator = CorefEvaluator()
         all_predicted_clusters = []
         metrics = [0] * 5    
-        for i, (cluster_logits, coref_logits, gold_clusters, gold_mentions) in enumerate(
-                zip(self.all_cluster_logits, self.all_coref_logits, self.all_gold_clusters, self.all_gold_mentions)):                
+        for i, (cluster_logits, coref_logits, gold_clusters, mentions) in enumerate(
+                zip(self.all_cluster_logits, self.all_coref_logits, self.all_gold_clusters, self.all_mentions)):                
             predicted_clusters = calc_predicted_clusters(cluster_logits.unsqueeze(0), coref_logits.unsqueeze(0), [], \
-                threshold, [gold_mentions], self.args.use_gold_mentions, self.args.use_topk_mentions, self.args.is_cluster, self.args.slots, self.args.min_cluster_size)
+                coref_threshold, cluster_threshold, [mentions], self.args.use_gold_mentions, self.args.use_topk_mentions, self.args.is_cluster, self.args.slots, self.args.min_cluster_size)
             all_predicted_clusters += predicted_clusters
             evaluator.update(predicted_clusters, [gold_clusters])
         p, r, f1 = evaluator.get_prf()
@@ -788,39 +853,47 @@ class DETR(pl.LightningModule):
         eval_loss = np.average(self.losses, weights=self.batch_sizes)
         losses_parts = {key:np.average(self.losses_parts[key]) for key in self.losses_parts.keys()}
 
-        if self.args.threshold > 0 or self.epoch == 0:
-            p, r, f1, best_metrics, self.all_predicted_clusters = self.eval_by_thresh(self.threshold)
+        if self.args.threshold > 0:
+            p, r, f1, best_metrics, self.all_predicted_clusters = self.eval_by_thresh(self.coref_threshold, self.cluster_threshold)
         elif self.thresh_delta < 0.2 and self.same_thresh_count > 5:
-            p, r, f1, best_metrics, self.all_predicted_clusters = self.eval_by_thresh(self.threshold)
+            p, r, f1, best_metrics, self.all_predicted_clusters = self.eval_by_thresh(self.coref_threshold, self.cluster_threshold)
             self.thresh_delta = 0.2
             self.same_thresh_count = 0
         else:
             if self.thresh_delta == 0.2:
-                thresh_start = 0.05
-                thresh_end = 1
+                thresh_coref_start = 0.05
+                thresh_coref_end = 1
+                thresh_cluster_start = 0.05
+                thresh_cluster_end = 1
             else:
-                thresh_start = max(0.01, self.threshold - 2*self.thresh_delta)
-                thresh_end = min(1, self.threshold + 2.5*self.thresh_delta)
+                thresh_coref_start = max(0.01, self.coref_threshold - 2*self.thresh_delta)
+                thresh_coref_end = min(1, self.coref_threshold + 2.5*self.thresh_delta)
+                thresh_cluster_start = max(0.01, self.cluster_threshold - 2*self.thresh_delta)
+                thresh_cluster_end = min(1, self.cluster_threshold + 2.5*self.thresh_delta)
                 
             best = [-1, -1, -1]
             best_metrics = []
-            best_threshold = None
-            for threshold in tqdm(np.arange(thresh_start, thresh_end, self.thresh_delta), desc='Searching for best threshold'):
-                p, r, f1, metrics, all_predicted_clusters = self.eval_by_thresh(threshold)
-                if f1 > best[-1]:
-                    best = p,r,f1
-                    best_metrics = metrics
-                    best_threshold = threshold
-                    self.all_predicted_clusters = all_predicted_clusters
+            best_coref_threshold = None
+            best_cluster_threshold = None
+            for coref_threshold in tqdm(np.arange(thresh_coref_start, thresh_coref_end, self.thresh_delta), desc='Searching for best threshold'):
+                for cluster_threshold in np.arange(thresh_cluster_start, thresh_cluster_end, self.thresh_delta):
+                    p, r, f1, metrics, all_predicted_clusters = self.eval_by_thresh(coref_threshold, cluster_threshold)
+                    if f1 > best[-1]:
+                        best = p,r,f1
+                        best_metrics = metrics
+                        best_coref_threshold = coref_threshold
+                        best_cluster_threshold = cluster_threshold
+                        self.all_predicted_clusters = all_predicted_clusters
             p,r,f1 = best
-            if best_threshold == self.threshold:
+            if best_cluster_threshold == self.cluster_threshold and best_coref_threshold == self.coref_threshold:
                 self.same_thresh_count += 1
                 if self.same_thresh_count == 5 and self.thresh_delta == 0.2:
                     self.thresh_delta = 0.02
                     self.same_thresh_count = 0
             else:
                 self.same_thresh_count = 0
-            self.threshold = best_threshold
+            self.cluster_threshold = best_cluster_threshold
+            self.coref_threshold = best_coref_threshold
 
         print_predictions(self.all_predicted_clusters, self.all_gold_clusters, self.all_input_ids, self.args, self.tokenizer)
         prec_gold_to_one_pred, prec_pred_to_one_gold, avg_gold_split_without_perfect, avg_gold_split_with_perfect, \
@@ -844,7 +917,8 @@ class DETR(pl.LightningModule):
 
         results = {'loss': eval_loss,
                 'avg_f1': f1,
-                'threshold': self.threshold,
+                'coref_threshold': self.coref_threshold,
+                'cluster_threshold': self.cluster_threshold,
                 'precision': p,
                 'recall': r,  
                 'prec_gold_to_one_pred': prec_gold_to_one_pred,  
@@ -884,7 +958,7 @@ class DETR(pl.LightningModule):
                 prev_best_f1 = self.best_f1
                 prev_best_f1_epoch = self.best_f1_epoch
                 output_dir = os.path.join(self.args.output_dir, 'checkpoint-{}'.format(self.epoch))
-                save_checkpoint(self.args, self.epoch, self.threshold, self, self.optimizer, output_dir)
+                save_checkpoint(self.args, self.epoch, self.coref_threshold, self.cluster_threshold, self, self.optimizer, output_dir)
                 print(f'previous checkpoint with f1 {prev_best_f1} was {prev_best_f1_epoch}')
                 self.best_f1 = f1
                 self.best_f1_epoch = self.epoch
@@ -893,6 +967,15 @@ class DETR(pl.LightningModule):
                     path_to_remove = os.path.join(self.args.output_dir, 'checkpoint-{}'.format(prev_best_f1_epoch))
                     shutil.rmtree(path_to_remove)
                     print(f'removed checkpoint with f1 {prev_best_f1} from {path_to_remove}')
+            else:
+                output_dir = os.path.join(self.args.output_dir, 'checkpoint-{}'.format(self.epoch))
+                save_checkpoint(self.args, self.epoch, self.coref_threshold, self.cluster_threshold, self, self.optimizer, output_dir)
+                print(f'saved checkpoint in epoch {self.epoch}')
+                if self.last_saved_epoch > -1 and self.last_saved_epoch != self.best_f1_epoch:
+                    path_to_remove = os.path.join(self.args.output_dir, 'checkpoint-{}'.format(self.last_saved_epoch))
+                    shutil.rmtree(path_to_remove)
+                    print(f'removed previous checkpoint in epoch {self.last_saved_epoch}')
+                self.last_saved_epoch = self.epoch
             self.trainer.logger.log_metrics({'eval_best_f1': self.best_f1}, self.step_num)
             try:
                 self.trainer.logger.log_metrics({'eval_best_f1_checkpoint': os.path.join(self.args.output_dir, 'checkpoint-{}'.format(self.best_f1_epoch))}, self.step_num)
@@ -907,7 +990,7 @@ class DETR(pl.LightningModule):
         self.batch_sizes = []
         self.all_cluster_logits = []
         self.all_coref_logits = []
-        self.all_gold_mentions = []
+        self.all_mentions = []
         self.all_input_ids = []
         self.all_gold_clusters = []
         self.all_predicted_clusters = []
@@ -1065,7 +1148,7 @@ class DETRLoss(nn.Module):
             = self.matcher(outputs, targets)
 
         targets_clusters = targets['clusters']
-        targets_mentions = targets['mentions']
+        # targets_mentions = targets['mentions']
         bs = outputs["coref_logits"].shape[0]
         costs = []
         costs_parts = {'loss_is_cluster':[], 'loss_is_mention':[], 'loss_coref':[]}
@@ -1075,8 +1158,8 @@ class DETRLoss(nn.Module):
             cluster_logits = outputs["cluster_logits"][i].squeeze() # [num_queries]
             real_token_target_cols = torch.sum(targets_clusters[i], -2) > 0
 
-            if len(outputs["mention_logits"]) > 0:
-                mention_logits = outputs["mention_logits"][i].squeeze() # [tokens]
+            # if len(outputs["mention_logits"]) > 0:
+            #     mention_logits = outputs["mention_logits"][i].squeeze() # [tokens]
             #TODO: normalize according to number of clusters? (identical to DETR)
 
             # num_of_gold_clusters = len(targets)
@@ -1095,17 +1178,17 @@ class DETRLoss(nn.Module):
             else:
                 cost_is_cluster = torch.tensor(0)
                 
-            if len(outputs["mention_logits"]) == 0 or sum(targets_mentions[i].shape) == 0:
-                cost_is_mention = torch.tensor(0)
-            else:
-                if sum(mention_logits.shape) == 0:
-                    mention_logits = mention_logits.reshape(1)
-                else:
-                    mention_logits = mention_logits[:targets_mentions[i].shape[0]]
-                weight_mention = targets_mentions[i] + self.eos_coef * (1 - targets_mentions[i])
-                cost_is_mention = F.binary_cross_entropy(mention_logits, targets_mentions[i], weight=weight_mention, reduction=self.args.reduction) / len(mention_logits)
+            # if len(outputs["mention_logits"]) == 0 or sum(targets_mentions[i].shape) == 0:
+            cost_is_mention = torch.tensor(0)
+            # else:
+            #     if sum(mention_logits.shape) == 0:
+            #         mention_logits = mention_logits.reshape(1)
+            #     else:
+            #         mention_logits = mention_logits[:targets_mentions[i].shape[0]]
+            #     weight_mention = targets_mentions[i] + self.eos_coef * (1 - targets_mentions[i])
+            #     cost_is_mention = F.binary_cross_entropy(mention_logits, targets_mentions[i], weight=weight_mention, reduction=self.args.reduction) / len(mention_logits)
 
-            coref_logits = torch.index_select(coref_logits, 1, torch.arange(0, targets_clusters[i].shape[1]).to(coref_logits.device))
+            # coref_logits = torch.index_select(coref_logits, 1, torch.arange(0, targets_clusters[i].shape[1]).to(coref_logits.device))
 
             cost_coref = torch.tensor(0)
             if matched_predicted_cluster_id_real[i] is not False:
@@ -1118,9 +1201,9 @@ class DETRLoss(nn.Module):
                         junk_cluster, reduction=self.args.reduction) / len(real_token_target_cols)
                 else:
                     permuted_gold = targets_clusters[i][torch.cat([matched_gold_cluster_id_real[i],matched_gold_cluster_id_junk[i]])]
-                    premuted_cluster_logits = cluster_logits[torch.cat([matched_predicted_cluster_id_real[i],matched_predicted_cluster_id_junk[i]])]
 
                     if self.args.cluster_block:
+                        premuted_cluster_logits = cluster_logits[torch.cat([matched_predicted_cluster_id_real[i],matched_predicted_cluster_id_junk[i]])]
                         cost_coref = F.binary_cross_entropy(premuted_cluster_logits.unsqueeze(1)*permuted_coref_logits, permuted_gold, reduction=self.args.reduction) / coref_logits.shape[1]
                     # if self.args.BIO == 3:
                     #     cost_coref = F.cross_entropy(permuted_coref_logits.reshape([-1, 3]), permuted_gold.reshape([-1]), reduction=self.args.reduction) / coref_logits.shape[1]
@@ -1157,74 +1240,6 @@ class DETRLoss(nn.Module):
             total_cost = self.cost_coref * cost_coref + self.cost_is_cluster * cost_is_cluster + self.cost_is_mention * cost_is_mention
             costs.append(total_cost)
         return torch.stack(costs), costs_parts
-
-def build_backbone(args, config):
-    # position_embedding = PositionalEncoding(config.hidden_size)
-    model = LongformerModel.from_pretrained(args.model_name_or_path,
-                                               config=config,
-                                               cache_dir=args.cache_dir)
-    # model = Joiner(backbone, position_embedding)
-    # model.backbone_hidden_size = config.hidden_size
-    return model
-
-
-def build_DETR(args):
-    # the `num_classes` naming here is somewhat misleading.
-    # it indeed corresponds to `max_obj_id + 1`, where max_obj_id
-    # is the maximum id for a class in your dataset. For example,
-    # COCO has a max_obj_id of 90, so we pass `num_classes` to be 91.
-    # As another example, for a dataset that has a single class with id 1,
-    # you should pass `num_classes` to be 2 (max_obj_id + 1).
-    # For more details on this, check the following discussion
-    # https://github.com/facebookresearch/detr/issues/108#issuecomment-650269223
-
-    device = torch.device(args.device)
-
-    transformer = build_transformer(args)
-
-    backbone = build_Embedder(args)
-
-    matcher = build_matcher(args)
-    # TODO maybe return consideration of aux loss
-
-    criterion = DETRLoss(matcher=matcher, eos_coef=args.eos_coef, cost_is_cluster=args.cost_is_cluster, cost_is_mention=args.cost_is_mention,
-                             cost_coref=args.cost_coref, args=args)
-    criterion.to(device)
-
-    model = DETR(
-        backbone,
-        criterion,
-        transformer,
-        num_queries=args.num_queries,
-        args=args,
-        aux_loss=args.aux_loss
-    )
-
-    # if args.loss == 'match':
-    #     criterion = MatchingLoss(matcher=matcher, eos_coef=args.eos_coef, cost_is_cluster=args.cost_is_cluster, cost_coref=args.cost_coref, args=args)
-    # elif args.loss == 'bcubed':
-    #     criterion = BCubedLoss()
-
-    return model 
-
-def build_Embedder(args):
-    # the `num_classes` naming here is somewhat misleading.
-    # it indeed corresponds to `max_obj_id + 1`, where max_obj_id
-    # is the maximum id for a class in your dataset. For example,
-    # COCO has a max_obj_id of 90, so we pass `num_classes` to be 91.
-    # As another example, for a dataset that has a single class with id 1,
-    # you should pass `num_classes` to be 2 (max_obj_id + 1).
-    # For more details on this, check the following discussion
-    # https://github.com/facebookresearch/detr/issues/108#issuecomment-650269223
-
-    if args.load_backbone == 'no':
-        model = Embedder(args)        
-    else:
-        model = Embedder.load_from_checkpoint(
-            BACKBONE_PATHS[args.input_type.split('_')[0]]['gold' if args.use_gold_mentions else 'no_gold']['junk' if args.add_junk else 'no_junk'][args.load_backbone],
-            args=args)
-    return model 
-
 
 
 class FullyConnectedLayer(Module):
