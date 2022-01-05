@@ -59,7 +59,7 @@ for i in non_mention_token_inds:
     coref_logits_tokens[0][non_cluster_ind][i] = 1
 
 class Args:
-    def __init__(self, is_cluster, cluster_block, reduction='sum', use_gold_mentions=True):
+    def __init__(self, is_cluster, cluster_block, reduction='sum', use_gold_mentions=True, slots=True):
         self.cost_is_cluster=3
         self.cost_coref=1
         self.cost_is_mention=1
@@ -67,7 +67,7 @@ class Args:
         self.BIO=1
         self.is_cluster = is_cluster
         self.use_gold_mentions = use_gold_mentions
-        self.slots = True
+        self.slots = slots
         self.cluster_block = cluster_block
         self.eos_coef=0.1
         self.reduction=reduction
@@ -131,14 +131,17 @@ class Test(unittest.TestCase):
                 targets['clusters'] = coref_logits_gold
             for o1 in options:  #is cluster
                 for o2 in options:   #cluster block
-                    for r in reduc_options:   #reduction
-                        args = Args(o1, o2, r, use_gold_mentions=i==1)
-                        m = HungarianMatcher(args=args)
-                        l = DETRLoss(m, args.eos_coef, args.cost_is_cluster, args.cost_coref, args.cost_is_mention, args)
-                        loss,parts = l(outputs,targets)
-                        if loss != 0:
-                            print(i,o1,o2,r)
-                        self.assertEqual(loss,0)
+                    for o3 in options:   #slots/DETR
+                        for r in reduc_options:   #reduction]
+                            if not o3 and i==0:
+                                continue
+                            args = Args(o1, o2, r, use_gold_mentions=i==1, slots=o3)
+                            m = HungarianMatcher(args=args)
+                            l = DETRLoss(m, args.eos_coef, args.cost_is_cluster, args.cost_coref, args.cost_is_mention, args)
+                            loss,parts = l(outputs,targets)
+                            if loss != 0:
+                                print(i,o1,o2,r)
+                            self.assertEqual(loss,0)
 
 if __name__ == '__main__':
     unittest.main()
