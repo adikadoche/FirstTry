@@ -1201,11 +1201,13 @@ class DETRLoss(nn.Module):
                 # permuted_coref_logits = coref_logits[torch.cat([matched_predicted_cluster_id_real[i],matched_predicted_cluster_id_junk[i]])]
                 permuted_coref_logits = coref_logits[matched_predicted_cluster_id_real[i]]
                 if not self.args.cluster_block and self.args.slots:
-                    junk_cluster = torch.zeros_like(targets_clusters[i][matched_gold_cluster_id_junk[i]].transpose(0,1)[real_token_target_cols].transpose(0,1))
-                    cost_coref = F.binary_cross_entropy(coref_logits[matched_predicted_cluster_id_real[i]], \
-                        targets_clusters[i][matched_gold_cluster_id_real[i]], reduction=self.args.reduction) / coref_logits.shape[1] + \
-                            F.binary_cross_entropy(coref_logits[matched_predicted_cluster_id_junk[i]].transpose(0,1)[real_token_target_cols].transpose(0,1), \
-                        junk_cluster, reduction=self.args.reduction) / len(real_token_target_cols)
+                    # junk_cluster = torch.zeros_like(targets_clusters[i][matched_gold_cluster_id_junk[i]].transpose(0,1)[real_token_target_cols].transpose(0,1))
+                    # cost_coref = F.binary_cross_entropy(coref_logits[matched_predicted_cluster_id_real[i]], \
+                    #     targets_clusters[i][matched_gold_cluster_id_real[i]], reduction=self.args.reduction) / coref_logits.shape[1] + \
+                    #         F.binary_cross_entropy(coref_logits[matched_predicted_cluster_id_junk[i]].transpose(0,1)[real_token_target_cols].transpose(0,1), \
+                    #     junk_cluster, reduction=self.args.reduction) / len(real_token_target_cols)
+                    permuted_gold = targets_clusters[i][matched_gold_cluster_id_real[i]]
+                    cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_gold, reduction='mean')
                 else:
                     # permuted_gold = targets_clusters[i][torch.cat([matched_gold_cluster_id_real[i],matched_gold_cluster_id_junk[i]])]
                     permuted_gold = targets_clusters[i][matched_gold_cluster_id_real[i]]
