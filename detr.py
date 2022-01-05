@@ -1078,8 +1078,8 @@ class DETR(pl.LightningModule):
 
             if coref_logits_unnorm.shape[-1] > 1:
                 cur_coref_logits = coref_logits_unnorm.softmax(-1)
-            elif self.args.use_gold_mentions or self.args.softmax: 
-                cur_coref_logits = coref_logits_unnorm.softmax(dim=1).squeeze(-1)
+            # elif self.args.use_gold_mentions or self.args.softmax: 
+            #     cur_coref_logits = coref_logits_unnorm.softmax(dim=1).squeeze(-1)
             else:
                 cur_coref_logits = coref_logits_unnorm.sigmoid().squeeze(-1)
             if len(cur_coref_logits.shape) > 3:
