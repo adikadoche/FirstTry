@@ -182,12 +182,9 @@ def create_gold_matrix(device, doc_len, num_queries, gold_clusters, gold_mention
                 if cluster_id >= num_queries:
                     continue
                 for mention in cluster:
-                    try:
-                        mention_index = gold_mentions[i].index(tuple(mention))
-                        assert mention_index >= 0
-                        gold_per_token[cluster_id, mention_index] = 1
-                    except:
-                        continue
+                    mention_index = gold_mentions[i].index(tuple(mention))
+                    assert mention_index >= 0
+                    gold_per_token[cluster_id, mention_index] = 1
             # if gold_per_token.shape[1] == 0:
             #     logger.info("size of gold_cluster {}, size of gold matrix {}".format(len(gold_clusters[i]), gold_per_token.shape))
             gold_per_token_batch.append(gold_per_token)

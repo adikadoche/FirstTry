@@ -131,7 +131,7 @@ def parse_args():
                         help="L1 box coefficient in the matching cost")
     parser.add_argument('--max_ind_example', default=-1, type=float,
                         help="L1 box coefficient in the matching cost")
-    parser.add_argument('--min_cluster_size', default=0, type=int,
+    parser.add_argument('--min_cluster_size', default=1, type=int,
                         help="L1 box coefficient in the matching cost")
     parser.add_argument('--softmax', action='store_true',
                         help="L1 box coefficient in the matching cost")

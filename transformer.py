@@ -25,10 +25,10 @@ class Transformer(nn.Module):
                  return_intermediate_dec=False, is_sequential=False):
         super().__init__()
 
-        # encoder_layer = TransformerEncoderLayer(d_model, nhead, dim_feedforward,
-        #                                         dropout, activation, normalize_before)
-        # encoder_norm = nn.LayerNorm(d_model) if normalize_before else None
-        # self.encoder = TransformerEncoder(encoder_layer, num_encoder_layers, encoder_norm)
+        encoder_layer = TransformerEncoderLayer(d_model, nhead, dim_feedforward,
+                                                dropout, activation, normalize_before)
+        encoder_norm = nn.LayerNorm(d_model) if normalize_before else None
+        self.encoder = TransformerEncoder(encoder_layer, num_encoder_layers, encoder_norm)
 
         decoder_layer = TransformerDecoderLayer(d_model, nhead, dim_feedforward,
                                                 dropout, activation, normalize_before)
@@ -50,17 +50,17 @@ class Transformer(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def forward(self, src, mask, query_embed, is_cluster=None, IO_score=None, is_cluster_block=False, pos_embed=None, is_encoder=True):
+    def forward(self, src, mask, query_embed, is_cluster=None, IO_score=None, is_cluster_block=False, is_encoder=False, pos_embed=None):
         # flatten NxMxE to ExNxM
         bs, m, e = src.shape
         src = src.permute(1,0,2)
         if pos_embed is not None:
             pos_embed = pos_embed.transpose(0,1)
         binary_mask = mask == 0
-        # if is_encoder:
-        #     memory = self.encoder(src, src_key_padding_mask=binary_mask, pos=pos_embed)
-        # else:
-        memory = src
+        if is_encoder:
+            memory = self.encoder(src, src_key_padding_mask=binary_mask, pos=pos_embed)
+        else:
+            memory = src
 
         if query_embed is not None:
             query_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)

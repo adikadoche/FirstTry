@@ -101,8 +101,8 @@ class Embedder(pl.LightningModule):
             self.longformer = MenPropose(AutoConfig.from_pretrained('allenai/longformer-large-4096', cache_dir=args.cache_dir), args)
             self.longformer.load_state_dict(torch.load('/home/gamir/adiz/tmpCode/s2e-coref/s2e_mention_proposal.pt'))
 
-            # for param in self.longformer.parameters():
-            #     param.requires_grad = False
+            for param in self.longformer.parameters():
+                param.requires_grad = False
         else:
             self.longformer = LongformerModel.from_pretrained(args.model_name_or_path,
                                                 config=config,
@@ -608,16 +608,21 @@ class DETR(pl.LightningModule):
 
         if self.args.slots:
             cluster_logits, coref_logits, mention_logits = self.slot_attention(embedding)
+            out = {"coref_logits": coref_logits,
+                    "cluster_logits": cluster_logits,
+                    "mention_logits": mention_logits,
+                    "embedding": embedding,
+                    "mentions_list": embedding_dict['mentions_list']}
         else:
-            hs, _ = self.transformer(embedding, span_mask, self.query_embed.weight, self.is_cluster, self.IO_score, self.args.cluster_block)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
+            hs, memory = self.transformer(embedding, span_mask, self.query_embed.weight, self.is_cluster, self.IO_score, self.args.cluster_block, is_encoder=True)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
             last_hs = hs[-1] # [bs, num_queries, emb]
-            cluster_logits, coref_logits, mention_logits = self.calc_cluster_and_coref_logits(last_hs, embedding, span_mask)
+            cluster_logits, coref_logits, mention_logits = self.calc_cluster_and_coref_logits(last_hs, memory, span_mask)
 
-        out = {"coref_logits": coref_logits,
-                "cluster_logits": cluster_logits,
-                "mention_logits": mention_logits,
-                "embedding": embedding,
-                "mentions_list": embedding_dict['mentions_list']}
+            out = {"coref_logits": coref_logits,
+                    "cluster_logits": cluster_logits,
+                    "mention_logits": mention_logits,
+                    "embedding": memory,
+                    "mentions_list": embedding_dict['mentions_list']}
         return out
 
     def slot_attention(self, input_emb):
