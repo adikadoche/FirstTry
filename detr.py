@@ -1179,7 +1179,8 @@ class DETRLoss(nn.Module):
                 if matched_predicted_cluster_id_real[i] is not False:
                     gold_is_cluster[matched_predicted_cluster_id_real[i]] = 1
                     weight_cluster[matched_predicted_cluster_id_real[i]] = 1
-                cost_is_cluster = F.binary_cross_entropy(cluster_logits, gold_is_cluster, weight=weight_cluster, reduction=self.args.reduction) / len(cluster_logits)
+                # cost_is_cluster = F.binary_cross_entropy(cluster_logits, gold_is_cluster, weight=weight_cluster, reduction=self.args.reduction) / len(cluster_logits)
+                cost_is_cluster = F.binary_cross_entropy(cluster_logits, gold_is_cluster, weight=weight_cluster)
             else:
                 cost_is_cluster = torch.tensor(0)
                 
@@ -1197,7 +1198,8 @@ class DETRLoss(nn.Module):
 
             cost_coref = torch.tensor(0)
             if matched_predicted_cluster_id_real[i] is not False:
-                permuted_coref_logits = coref_logits[torch.cat([matched_predicted_cluster_id_real[i],matched_predicted_cluster_id_junk[i]])]
+                # permuted_coref_logits = coref_logits[torch.cat([matched_predicted_cluster_id_real[i],matched_predicted_cluster_id_junk[i]])]
+                permuted_coref_logits = coref_logits[matched_predicted_cluster_id_real[i]]
                 if not self.args.cluster_block and self.args.slots:
                     junk_cluster = torch.zeros_like(targets_clusters[i][matched_gold_cluster_id_junk[i]].transpose(0,1)[real_token_target_cols].transpose(0,1))
                     cost_coref = F.binary_cross_entropy(coref_logits[matched_predicted_cluster_id_real[i]], \
@@ -1205,7 +1207,8 @@ class DETRLoss(nn.Module):
                             F.binary_cross_entropy(coref_logits[matched_predicted_cluster_id_junk[i]].transpose(0,1)[real_token_target_cols].transpose(0,1), \
                         junk_cluster, reduction=self.args.reduction) / len(real_token_target_cols)
                 else:
-                    permuted_gold = targets_clusters[i][torch.cat([matched_gold_cluster_id_real[i],matched_gold_cluster_id_junk[i]])]
+                    # permuted_gold = targets_clusters[i][torch.cat([matched_gold_cluster_id_real[i],matched_gold_cluster_id_junk[i]])]
+                    permuted_gold = targets_clusters[i][matched_gold_cluster_id_real[i]]
 
                     if self.args.cluster_block:
                         premuted_cluster_logits = cluster_logits[torch.cat([matched_predicted_cluster_id_real[i],matched_predicted_cluster_id_junk[i]])]
@@ -1213,7 +1216,8 @@ class DETRLoss(nn.Module):
                     # if self.args.BIO == 3:
                     #     cost_coref = F.cross_entropy(permuted_coref_logits.reshape([-1, 3]), permuted_gold.reshape([-1]), reduction=self.args.reduction) / coref_logits.shape[1]
                     else:
-                        cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_gold, reduction=self.args.reduction) / coref_logits.shape[1]
+                        # cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_gold, reduction=self.args.reduction) / coref_logits.shape[1]
+                        cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_gold, reduction='mean')
 
             elif coref_logits.shape[1] > 0:
                 cost_coref = F.binary_cross_entropy(coref_logits, torch.zeros_like(coref_logits), reduction=self.args.reduction) / coref_logits.shape[1]  #TODO: not good for slots                    
