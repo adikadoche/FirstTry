@@ -6,7 +6,6 @@ from collections import namedtuple
 import numpy as np
 
 import torch
-from transformers import AutoTokenizer
 
 from consts import SPEAKER_START_ID, SPEAKER_END_ID, NULL_ID_FOR_COREF
 from torch.utils.data import Dataset, RandomSampler, DistributedSampler, SequentialSampler, DataLoader
@@ -19,8 +18,8 @@ logger = logging.getLogger(__name__)
 
 
 class CorefDataset(Dataset):
-    def __init__(self, file_path, tokenizer_name, cache_dir, max_seq_length=-1):
-        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, cache_dir=cache_dir)
+    def __init__(self, file_path, tokenizer, max_seq_length=-1):
+        self.tokenizer = tokenizer
         logger.info(f"Reading dataset from {file_path}")
         examples, self.max_mention_num, self.max_cluster_size, self.max_num_clusters = self._parse_jsonlines(file_path)
         self.max_seq_length = max_seq_length
@@ -121,7 +120,7 @@ class CorefDataset(Dataset):
         return tensored_batch
 
 
-def get_dataset(args, evaluate=False):
+def get_dataset(args, tokenizer, evaluate=False):
     read_from_cache, file_path = False, ''
     if evaluate and os.path.exists(args.predict_file_cache):
         file_path = args.predict_file_cache
@@ -137,15 +136,13 @@ def get_dataset(args, evaluate=False):
 
     file_path, cache_path = (args.predict_file, args.predict_file_cache) if evaluate else (args.train_file, args.train_file_cache)
 
-    coref_dataset = CorefDataset(file_path, args.tokenizer_name, args.cache_dir, max_seq_length=args.max_seq_length)
+    coref_dataset = CorefDataset(file_path, tokenizer, max_seq_length=args.max_seq_length)
     with open(cache_path, 'wb') as f:
         pickle.dump(coref_dataset, f)
 
     return coref_dataset
 
 def collate_fn(batch):
-    if batch[0] == []:
-        return []
     batch_concat = {}
     for key in batch[0].keys():
         batch_concat[key] = [0] * len(batch)
@@ -168,12 +165,8 @@ def get_data_objects(args, data_file_path, is_training):
     else:
         sampler = SequentialSampler(dataset) if args.local_rank == -1 else DistributedSampler(dataset)
         logger.info("Loaded eval data")
+
     # sampler = SequentialSampler(dataset) if args.local_rank == -1 else DistributedSampler(dataset)
-
-    # loader = DataLoader(dataset, sampler=sampler, batch_size=batch_size,
-    #                          pin_memory=not args.no_cuda, persistent_workers=True, collate_fn=collate_fn, num_workers=args.num_workers,
-    #                          worker_init_fn=lambda worker_id: np.random.seed(torch.initial_seed() % 2**32))
-
     loader = DataLoader(dataset, sampler=sampler, batch_size=batch_size,
                              pin_memory=not args.no_cuda, collate_fn=collate_fn, num_workers=args.num_workers,
                              worker_init_fn=lambda worker_id: np.random.seed(torch.initial_seed() % 2**32))

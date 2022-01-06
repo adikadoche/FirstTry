@@ -26,11 +26,6 @@ def parse_args():
         type=str,
         help="run name for w&b",
     )
-    parser.add_argument(
-        "--input_type",
-        default="ontonotes",
-        type=str,
-    )
     parser.add_argument("--tokenizer_name",
                         default="allenai/longformer-base-4096",
                         type=str,
@@ -125,39 +120,14 @@ def parse_args():
                         help="Class coefficient in the matching cost")
     parser.add_argument('--cost_coref', default=5, type=float,
                         help="L1 box coefficient in the matching cost")
-    parser.add_argument('--cost_embedding', default=5, type=float,
-                        help="L1 box coefficient in the matching cost")
-    parser.add_argument('--threshold', default=-1, type=float,
-                        help="L1 box coefficient in the matching cost")
-    parser.add_argument('--max_ind_example', default=-1, type=float,
-                        help="L1 box coefficient in the matching cost")
-    parser.add_argument('--min_cluster_size', default=1, type=int,
-                        help="L1 box coefficient in the matching cost")
-    parser.add_argument('--softmax', action='store_true',
-                        help="L1 box coefficient in the matching cost")
-    parser.add_argument('--sequential', action='store_true',
-                        help="L1 box coefficient in the matching cost")
-    parser.add_argument('--cluster_block', action='store_true',
-                        help="L1 box coefficient in the matching cost")
-    parser.add_argument('--b3_loss', action='store_true',
-                        help="L1 box coefficient in the matching cost")
-    parser.add_argument('--is_cluster', action='store_true',
-                        help="L1 box coefficient in the matching cost")
-    parser.add_argument('--slots', action='store_true',
-                        help="L1 box coefficient in the matching cost")
-    parser.add_argument('--load_backbone', type=str, choices=['no', 'latest', 'best'], default='no')
-    parser.add_argument('--reduction', default='mean', type=str,
-                        help="L1 box coefficient in the matching cost")
-    parser.add_argument('--BIO', default=1, type=int, choices=[3, 1],
-                        help="L1 box coefficient in the matching cost")
     parser.add_argument('--eos_coef', default=0.1, type=float,
                         help="Relative classification weight of the no-object class")
 
     parser.add_argument('--max_training_sentences', default=3, type=int)
     parser.add_argument('--max_num_speakers', default=20, type=int)
+    parser.add_argument('--max_segment_len', default=512, type=int)
     parser.add_argument('--limit_trainset', default=-1, type=int)
     parser.add_argument('--use_gold_mentions', action='store_true')
-    parser.add_argument('--use_topk_mentions', action='store_true')
     parser.add_argument('--softmax_coref', action='store_true')
     parser.add_argument('--random_queries', action='store_true')
     parser.add_argument('--single_distribution_queries', action='store_true')
@@ -191,32 +161,6 @@ def parse_args():
                     help="Max gradient norm.")
     parser.add_argument('--lr_drop_interval', default="step", type=str, choices=['epoch, step'])
 
-    # parser.add_argument(
-    #     "--train_file_cache",
-    #     default=None,
-    #     type=str,
-    #     required=True,
-    #     help="The output directory where the datasets will be written and read from.",
-    # )
-    # parser.add_argument(
-    #     "--predict_file_cache",
-    #     default=None,
-    #     type=str,
-    #     required=True,
-    #     help="The output directory where the datasets will be written and read from.",
-    # )
 
     args = parser.parse_args()
     return args
-
-    # parser.add_argument("--nonfreeze_params", default=None, type=str,
-    #                     help="named parameters to update while training (separated by ,). The rest will kept frozen. If None or empty - train all")
-    # parser.add_argument('--lr_drop', default=200, type=int) #TODO:?
-    # parser.add_argument("--adam_beta1", default=0.9, type=float,
-    #                     help="Epsilon for Adam optimizer.")
-    # parser.add_argument("--adam_beta2", default=0.98, type=float,
-    #                     help="Epsilon for Adam optimizer.")
-    # parser.add_argument("--adam_epsilon", default=1e-8, type=float, help="Epsilon for Adam optimizer.")
-    # parser.add_argument("--normalise_loss", action="store_true")
-    # parser.add_argument("--ffnn_size", type=int, default=3072)
-    # parser.add_argument("--conll_path_for_eval", type=str, default=None)
