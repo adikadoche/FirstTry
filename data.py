@@ -168,6 +168,11 @@ def get_data_objects(args, data_file_path, is_training):
     else:
         sampler = SequentialSampler(dataset) if args.local_rank == -1 else DistributedSampler(dataset)
         logger.info("Loaded eval data")
+    # sampler = SequentialSampler(dataset) if args.local_rank == -1 else DistributedSampler(dataset)
+
+    # loader = DataLoader(dataset, sampler=sampler, batch_size=batch_size,
+    #                          pin_memory=not args.no_cuda, persistent_workers=True, collate_fn=collate_fn, num_workers=args.num_workers,
+    #                          worker_init_fn=lambda worker_id: np.random.seed(torch.initial_seed() % 2**32))
 
     loader = DataLoader(dataset, sampler=sampler, batch_size=batch_size,
                              pin_memory=not args.no_cuda, collate_fn=collate_fn, num_workers=args.num_workers,

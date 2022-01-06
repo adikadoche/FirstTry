@@ -205,18 +205,22 @@ def create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_mat
                     ind += 1
 
     junk_mentions_indices = torch.tensor([i for i, m in enumerate(mentions_list[0]) if m not in gold_mentions_list[0]], dtype=torch.long, device=coref_logits.device)
-    missed_mentions_indices = torch.tensor([i for i, m in enumerate(gold_mentions_list[0]) if m not in mentions_list[0]], dtype=torch.long, device=gold_matrix[0].device)
-    target_matrix = torch.zeros(len(common_mentions)+len(missed_mentions_indices)+len(junk_mentions_indices), gold_matrix[0].shape[0], device=gold_matrix[0].device)
-    predict_matrix = torch.zeros(len(common_mentions)+len(missed_mentions_indices)+len(junk_mentions_indices), coref_logits.shape[1], device=coref_logits.device)
+    # missed_mentions_indices = torch.tensor([i for i, m in enumerate(gold_mentions_list[0]) if m not in mentions_list[0]], dtype=torch.long, device=gold_matrix[0].device)
+    # target_matrix = torch.zeros(len(common_mentions)+len(missed_mentions_indices)+len(junk_mentions_indices), gold_matrix[0].shape[0], device=gold_matrix[0].device)
+    # predict_matrix = torch.zeros(len(common_mentions)+len(missed_mentions_indices)+len(junk_mentions_indices), coref_logits.shape[1], device=coref_logits.device)
+    target_matrix = torch.zeros(len(common_mentions)+len(junk_mentions_indices), gold_matrix[0].shape[0], device=gold_matrix[0].device)
+    predict_matrix = torch.zeros(len(common_mentions)+len(junk_mentions_indices), coref_logits.shape[1], device=coref_logits.device)
 
     target_matrix[:len(common_mentions)] = torch.index_select(gold_matrix[0].transpose(0,1), 0, common_gold_ind) 
     predict_matrix[:len(common_mentions)] = torch.index_select(coref_logits[0].transpose(0,1), 0, common_pred_ind) 
 
-    target_matrix[len(common_mentions):len(common_mentions)+len(missed_mentions_indices)] = torch.index_select(gold_matrix[0], 1, missed_mentions_indices).transpose(0,1)
-    predict_matrix[len(common_mentions):len(common_mentions)+len(missed_mentions_indices)] = torch.zeros_like(torch.index_select(gold_matrix[0], 1, missed_mentions_indices).transpose(0,1))
+    # target_matrix[len(common_mentions):len(common_mentions)+len(missed_mentions_indices)] = torch.index_select(gold_matrix[0], 1, missed_mentions_indices).transpose(0,1)
+    # predict_matrix[len(common_mentions):len(common_mentions)+len(missed_mentions_indices)] = torch.zeros_like(torch.index_select(gold_matrix[0], 1, missed_mentions_indices).transpose(0,1))
     
-    target_matrix[len(common_mentions)+len(missed_mentions_indices):] = torch.zeros_like(torch.index_select(coref_logits[0], 1, junk_mentions_indices).transpose(0,1))
-    predict_matrix[len(common_mentions)+len(missed_mentions_indices):] = torch.index_select(coref_logits[0], 1, junk_mentions_indices).transpose(0,1)
+    # target_matrix[len(common_mentions)+len(missed_mentions_indices):] = torch.zeros_like(torch.index_select(coref_logits[0], 1, junk_mentions_indices).transpose(0,1))
+    # predict_matrix[len(common_mentions)+len(missed_mentions_indices):] = torch.index_select(coref_logits[0], 1, junk_mentions_indices).transpose(0,1)
+    target_matrix[len(common_mentions):] = torch.zeros_like(torch.index_select(coref_logits[0], 1, junk_mentions_indices).transpose(0,1))
+    predict_matrix[len(common_mentions):] = torch.index_select(coref_logits[0], 1, junk_mentions_indices).transpose(0,1)
 
     return [target_matrix.transpose(0,1)], predict_matrix.transpose(0,1).unsqueeze(0)
 
@@ -237,7 +241,7 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, coref_
         cur_cluster_bool = cluster_bools[i]
         cur_coref_logits = coref_logits[i].detach().clone()
         cluster_mention_mask = torch.ones_like(cur_coref_logits) == 1
-        if is_cluster and (not use_gold_mentions or use_topk_mentions):
+        if is_cluster:
             cur_cluster_bool = cur_cluster_bool.reshape([-1, 1]).repeat((1, cur_coref_logits.shape[1]))
             cluster_mention_mask = cur_cluster_bool
 

@@ -711,7 +711,7 @@ class DETR(pl.LightningModule):
             cluster_logits, coref_logits, mention_logits, mentions_list = \
                 outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits'], outputs['mentions_list']
 
-            if self.args.use_gold_mentions or self.args.use_topk_mentions:
+            if self.args.use_topk_mentions:
                 target_matrix, predict_matrix = create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_matrix, coref_logits)
             else:
                 target_matrix, predict_matrix = gold_matrix, coref_logits
@@ -1173,7 +1173,7 @@ class DETRLoss(nn.Module):
             #     torch.distributed.all_reduce(num_of_gold_clusters)
             # num_of_gold_clusters = torch.clamp(num_of_gold_clusters / get_world_size(), min=1).item()
 
-            if self.args.is_cluster and (not self.args.use_gold_mentions or self.args.add_junk):
+            if self.args.is_cluster:
                 gold_is_cluster = torch.zeros_like(cluster_logits)
                 weight_cluster = self.eos_coef * torch.ones_like(cluster_logits)
                 if matched_predicted_cluster_id_real[i] is not False:
