@@ -218,13 +218,13 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
             model, criterion, epoch_iterator, optimizer, scaler, args, evaluator, skip_steps, recent_losses, recent_losses_parts, global_step,
             lr_scheduler, coref_threshold, cluster_threshold)
 
-        p, r, f1 = evaluator.get_prf()
+        p_train, r_train, f1_train = evaluator.get_prf()
         if args.local_rank in [-1, 0]:
             if not args.is_debug:
-                wandb.log({'Train Precision':p}, step=global_step)
-                wandb.log({'Train Recall': r}, step=global_step)
-                wandb.log({'Train F1': f1}, step=global_step)
-            logger.info('Train precision, recall, f1: {}'.format((p, r, f1)))
+                wandb.log({'Train Precision':p_train}, step=global_step)
+                wandb.log({'Train Recall': r_train}, step=global_step)
+                wandb.log({'Train F1': f1_train}, step=global_step)
+            logger.info('Train f1, precision, recall: {}'.format((f1_train, p_train, r_train)))
 
         if args.lr_drop_interval == 'epoch':
             lr_scheduler.step()  # Update learning rate schedule
