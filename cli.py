@@ -128,6 +128,7 @@ def parse_args():
     parser.add_argument('--max_segment_len', default=512, type=int)
     parser.add_argument('--limit_trainset', default=-1, type=int)
     parser.add_argument('--use_gold_mentions', action='store_true')
+    parser.add_argument('--use_topk_mentions', action='store_true')
     parser.add_argument('--softmax_coref', action='store_true')
     parser.add_argument('--random_queries', action='store_true')
     parser.add_argument('--single_distribution_queries', action='store_true')

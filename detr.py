@@ -5,6 +5,9 @@ DETR model and criterion classes.
 import logging
 import torch
 import torch.nn.functional as F
+from torch.nn import Module, Linear, LayerNorm, Dropout
+from transformers import BertPreTrainedModel, LongformerModel
+from transformers.models.bert.modeling_bert import ACT2FN
 from torch import nn, Tensor
 from consts import OUT_KEYS, TOKENS_PAD
 import math
@@ -13,7 +16,6 @@ import math
 import numpy as np
 from matcher import build_matcher
 from transformer import build_transformer
-from transformers import LongformerModel
 from transformers import AutoConfig, CONFIG_MAPPING
 
 logger = logging.getLogger(__name__)
@@ -66,7 +68,7 @@ class DETR(nn.Module):
         self.query_token_IO_score = nn.Linear(150, 1)  #TODO: change to 3 so it would be BIO instead of IO
  
 
-    def forward(self, input_ids, sum_text_len, mask, gold_mentions, num_mentions):
+    def forward(self, input_ids, sum_text_len, mask, gold_mentions, gold_clusters, num_mentions):
         """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
@@ -84,39 +86,47 @@ class DETR(nn.Module):
         # input_ids_cat = torch.cat(input_ids, dim=1).squeeze(0)
         # mask_cat = torch.cat(mask, dim=1).squeeze(0)
 
-        bs = input_ids.shape[0]
-        input_ids_r = input_ids.reshape(input_ids.shape[0], -1)
-        mask_r = mask.reshape(mask.shape[0], -1)
-        longfomer_no_pad_list = []
-        for i in range(input_ids_r.shape[0]):
-            masked_ids = input_ids_r[i][mask_r[i]==1].unsqueeze(0)
-            masked_mask = torch.ones_like(masked_ids).unsqueeze(0)
-            if masked_ids.shape[-1] > self.args.max_seq_length:
-                masked_ids = torch.zeros([2, math.ceil(input_ids.shape[1]/2) * input_ids.shape[-1]], dtype=torch.long)
-                masked_mask = torch.zeros([2, math.ceil(mask.shape[1]/2) * mask.shape[-1]], dtype=torch.long)
-                masked_ids[0] = input_ids[i][:math.ceil(input_ids.shape[1]/2)].reshape(1, math.ceil(input_ids.shape[1]/2) * input_ids.shape[-1])
-                masked_mask[0] = mask[i][:math.ceil(mask.shape[1]/2)].reshape(1, math.ceil(mask.shape[1]/2) * mask.shape[-1])
-                masked_ids[1][:(input_ids.shape[1]-math.ceil(input_ids.shape[1]/2)) * input_ids.shape[-1]] = \
-                    input_ids[i][math.ceil(input_ids.shape[1]/2):].reshape(1, (input_ids.shape[1]-math.ceil(input_ids.shape[1]/2)) * input_ids.shape[-1])
-                masked_mask[1][:(mask.shape[1]-math.ceil(mask.shape[1]/2)) * mask.shape[-1]] = \
-                    mask[i][math.ceil(mask.shape[1]/2):].reshape(1, (mask.shape[1]-math.ceil(mask.shape[1]/2)) * mask.shape[-1])
-
-            longformer_emb = self.backbone(masked_ids, attention_mask=masked_mask)[0]
-            longfomer_no_pad_list.append(longformer_emb.reshape(-1, longformer_emb.shape[-1]))
-
         if self.args.random_queries:
             raw_query_embed = torch.normal(torch.zeros_like(self.query_embed.weight), 1) * self.query_sigma + self.query_mu #raw_query_embed = torch.normal(torch.zeros_like(self.query_embed.weight), 0.5)
         else:
             raw_query_embed = self.query_embed.weight
 
-        if not self.args.use_gold_mentions:
-            hs, memory = self.transformer(self.input_proj(longfomer_no_pad_list), mask, raw_query_embed) # [dec_layers, 1, num_queries, emb], [1, seg*seq, emb]
+        if self.args.use_topk_mentions:
+            span_starts, span_ends, longfomer_no_pad_list = self.longformer(input_ids, mask, gold_clusters)
+            span_emb, span_mask = self.get_span_emb([longfomer_no_pad_list.reshape(-1, longfomer_no_pad_list.shape[-1])], [span_starts[0]], [span_ends[0]], torch.tensor([span_ends[0].shape[0]]))  # [mentions, emb']
+            embedding = self.span_proj(span_emb) # [mentions, emb]
+            mentions_list = [[(span_starts.detach().cpu().numpy()[0][i], span_ends.detach().cpu().numpy()[0][i]) for i in range(len(span_ends[0]))]]
+            hs, memory = self.transformer(embedding, span_mask, raw_query_embed)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
         else:
-            span_starts = [torch.tensor([m[0] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
-            span_ends = [torch.tensor([m[1] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
-            span_emb, span_mask = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends, num_mentions)  # [mentions, emb']
-            span_emb = self.span_proj(span_emb) # [mentions, emb]
-            hs, memory = self.transformer(span_emb, span_mask, raw_query_embed)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
+            bs = input_ids.shape[0]
+            input_ids_r = input_ids.reshape(input_ids.shape[0], -1)
+            mask_r = mask.reshape(mask.shape[0], -1)
+            longfomer_no_pad_list = []
+            for i in range(input_ids_r.shape[0]):
+                masked_ids = input_ids_r[i][mask_r[i]==1].unsqueeze(0)
+                masked_mask = torch.ones_like(masked_ids).unsqueeze(0)
+                if masked_ids.shape[-1] > self.args.max_seq_length:
+                    masked_ids = torch.zeros([2, math.ceil(input_ids.shape[1]/2) * input_ids.shape[-1]], dtype=torch.long)
+                    masked_mask = torch.zeros([2, math.ceil(mask.shape[1]/2) * mask.shape[-1]], dtype=torch.long)
+                    masked_ids[0] = input_ids[i][:math.ceil(input_ids.shape[1]/2)].reshape(1, math.ceil(input_ids.shape[1]/2) * input_ids.shape[-1])
+                    masked_mask[0] = mask[i][:math.ceil(mask.shape[1]/2)].reshape(1, math.ceil(mask.shape[1]/2) * mask.shape[-1])
+                    masked_ids[1][:(input_ids.shape[1]-math.ceil(input_ids.shape[1]/2)) * input_ids.shape[-1]] = \
+                        input_ids[i][math.ceil(input_ids.shape[1]/2):].reshape(1, (input_ids.shape[1]-math.ceil(input_ids.shape[1]/2)) * input_ids.shape[-1])
+                    masked_mask[1][:(mask.shape[1]-math.ceil(mask.shape[1]/2)) * mask.shape[-1]] = \
+                        mask[i][math.ceil(mask.shape[1]/2):].reshape(1, (mask.shape[1]-math.ceil(mask.shape[1]/2)) * mask.shape[-1])
+
+                longformer_emb = self.backbone(masked_ids, attention_mask=masked_mask)[0]
+                longfomer_no_pad_list.append(longformer_emb.reshape(-1, longformer_emb.shape[-1]))
+
+            if not self.args.use_gold_mentions:
+                hs, memory = self.transformer(self.input_proj(torch.stack(longfomer_no_pad_list, 0)), mask, raw_query_embed) # [dec_layers, 1, num_queries, emb], [1, seg*seq, emb]
+            else:
+                span_starts = [torch.tensor([m[0] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
+                span_ends = [torch.tensor([m[1] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
+                span_emb, span_mask = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends, num_mentions)  # [mentions, emb']
+                span_emb = self.span_proj(span_emb) # [mentions, emb]
+                hs, memory = self.transformer(span_emb, span_mask, raw_query_embed)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
+            mentions_list = gold_mentions
 
 
         last_hs = hs[-1] # [1, num_queries, emb]
@@ -124,7 +134,8 @@ class DETR(nn.Module):
 
         out = {"coref_logits": coref_logits,
                 "cluster_logits": cluster_logits,
-                "mention_logits": mention_logits}
+                "mention_logits": mention_logits, 
+                'mentions_list': mentions_list}
                 # "aux_coref_logits": aux_coref_logits}
         return out
 
@@ -327,8 +338,17 @@ def build_DETR(args):
     else:
         config = CONFIG_MAPPING[args.model_type]()
         logger.warning("You are instantiating a new config instance from scratch.")
+    
+    if args.use_topk_mentions:
+        backbone = MenPropose(AutoConfig.from_pretrained('allenai/longformer-large-4096', cache_dir=args.cache_dir), args)
+        backbone.load_state_dict(torch.load('/home/gamir/adiz/tmpCode/s2e-coref/s2e_mention_proposal.pt'))
 
-    backbone = build_backbone(args, config)
+        for param in backbone.parameters():
+            param.requires_grad = False
+    else:
+        backbone = LongformerModel.from_pretrained(args.model_name_or_path,
+                                            config=config,
+                                            cache_dir=args.cache_dir)
 
     transformer = build_transformer(args)
 
@@ -355,3 +375,145 @@ def build_DETR(args):
     # postprocessors = {'bbox': PostProcess()}
 
     return model, criterion
+
+class FullyConnectedLayer(Module):
+    def __init__(self, config, input_dim, output_dim, dropout_prob):
+        super(FullyConnectedLayer, self).__init__()
+
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.dropout_prob = dropout_prob
+
+        self.dense = Linear(self.input_dim, self.output_dim)
+        self.layer_norm = LayerNorm(self.output_dim, eps=config.layer_norm_eps)
+        self.activation_func = ACT2FN[config.hidden_act]
+        self.dropout = Dropout(self.dropout_prob)
+
+    def forward(self, inputs):
+        temp = inputs
+        temp = self.dense(temp)
+        temp = self.activation_func(temp)
+        temp = self.layer_norm(temp)
+        temp = self.dropout(temp)
+        return temp
+
+class MenPropose(BertPreTrainedModel):
+    def __init__(self, config, args):
+        super().__init__(config)
+        self.max_span_length = 30
+        self.top_lambda = 0.4
+        self.ffnn_size = 3072
+        self.do_mlps = True
+        self.normalise_loss = True
+        self.args = args
+
+        self.longformer = LongformerModel(config)
+
+        self.start_mention_mlp = FullyConnectedLayer(config, config.hidden_size, self.ffnn_size, 0.3) if self.do_mlps else None
+        self.end_mention_mlp = FullyConnectedLayer(config, config.hidden_size, self.ffnn_size, 0.3) if self.do_mlps else None
+        self.start_coref_mlp = FullyConnectedLayer(config, config.hidden_size, self.ffnn_size, 0.3) if self.do_mlps else None
+        self.end_coref_mlp = FullyConnectedLayer(config, config.hidden_size, self.ffnn_size, 0.3) if self.do_mlps else None
+
+        self.mention_start_classifier = Linear(self.ffnn_size, 1)
+        self.mention_end_classifier = Linear(self.ffnn_size, 1)
+        self.mention_s2e_classifier = Linear(self.ffnn_size, self.ffnn_size)
+
+    def _get_span_mask(self, batch_size, k, max_k):
+        """
+        :param batch_size: int
+        :param k: tensor of size [batch_size], with the required k for each example
+        :param max_k: int
+        :return: [batch_size, max_k] of zero-ones, where 1 stands for a valid span and 0 for a padded span
+        """
+        size = (batch_size, max_k)
+        idx = torch.arange(max_k, device=self.device).unsqueeze(0).expand(size)
+        len_expanded = k.unsqueeze(1).expand(size)
+        return (idx < len_expanded).int()
+
+    def _prune_topk_mentions(self, mention_logits, attention_mask, gold_clusters):
+        """
+        :param mention_logits: Shape [batch_size, seq_length, seq_length]
+        :param attention_mask: [batch_size, seq_length]
+        :param top_lambda:
+        :return:
+        """
+        batch_size, seq_length, _ = mention_logits.size()
+        actual_seq_lengths = torch.sum(attention_mask, dim=-1)  # [batch_size]
+        if self.args.use_gold_mentions:
+            topk_mention_start_ids = [[m[0] for i in range(gold_clusters.shape[1]) for m in gold_clusters[b][i] if m[0] != 0 and m[1] != 0] for b in range(gold_clusters.shape[0])]
+            topk_mention_end_ids = [[m[1] for i in range(gold_clusters.shape[1]) for m in gold_clusters[b][i] if m[0] != 0 and m[1] != 0] for b in range(gold_clusters.shape[0])]
+            k = torch.tensor([len(tmsi) for tmsi in topk_mention_start_ids], device=mention_logits.device)
+            max_k = int(torch.max(k))  # This is the k for the largest input in the batch, we will need to pad
+            topk_mention_start_ids = torch.tensor([[seq_length-1 if j >= len(topk_mention_start_ids[i]) else topk_mention_start_ids[i][j] \
+                for j in range(max_k)] for i in range(len(topk_mention_start_ids))], device=mention_logits.device, dtype=torch.long)
+            topk_mention_end_ids = torch.tensor([[seq_length-1 if j >= len(topk_mention_end_ids[i]) else topk_mention_end_ids[i][j] \
+                for j in range(max_k)] for i in range(len(topk_mention_end_ids))], device=mention_logits.device, dtype=torch.long)
+
+            topk_mention_logits = mention_logits[torch.arange(batch_size, dtype=torch.long).unsqueeze(-1).expand(batch_size, max_k),
+                                              topk_mention_start_ids, topk_mention_end_ids]  # [batch_size, max_k]
+            span_mask = self._get_span_mask(batch_size, k, max_k)  # [batch_size, max_k]
+        else:
+
+            k = (actual_seq_lengths * self.top_lambda).int()  # [batch_size]
+            max_k = int(torch.max(k))  # This is the k for the largest input in the batch, we will need to pad
+
+            _, topk_1d_indices = torch.topk(mention_logits.view(batch_size, -1), dim=-1, k=max_k)  # [batch_size, max_k]
+            # span_mask = self._get_span_mask(batch_size, k, max_k)  # [batch_size, max_k]
+            span_mask = torch.ones([1, max_k], device=mention_logits.device)  # [batch_size, max_k]   #TODO batch
+            topk_1d_indices = (topk_1d_indices * span_mask) + (1 - span_mask) * ((seq_length ** 2) - 1)  # We take different k for each example
+            sorted_topk_1d_indices, _ = torch.sort(topk_1d_indices, dim=-1)  # [batch_size, max_k]
+
+            topk_mention_start_ids = (sorted_topk_1d_indices // seq_length).long()  # [batch_size, max_k]
+            topk_mention_end_ids = (sorted_topk_1d_indices % seq_length).long()  # [batch_size, max_k]
+
+            topk_mention_logits = mention_logits[torch.arange(batch_size).unsqueeze(-1).expand(batch_size, max_k),
+                                                topk_mention_start_ids, topk_mention_end_ids]  # [batch_size, max_k]
+        
+        # topk_mention_logits = topk_mention_logits.unsqueeze(-1) + topk_mention_logits.unsqueeze(-2)  # [batch_size, max_k, max_k]
+
+        return topk_mention_start_ids, topk_mention_end_ids, span_mask, topk_mention_logits
+
+    def _get_mention_mask(self, mention_logits_or_weights):
+        """
+        Returns a tensor of size [batch_size, seq_length, seq_length] where valid spans
+        (start <= end < start + max_span_length) are 1 and the rest are 0
+        :param mention_logits_or_weights: Either the span mention logits or weights, size [batch_size, seq_length, seq_length]
+        """
+        mention_mask = torch.ones_like(mention_logits_or_weights, dtype=self.dtype)
+        mention_mask = mention_mask.triu(diagonal=0)
+        mention_mask = mention_mask.tril(diagonal=self.max_span_length - 1)
+        return mention_mask
+
+    def _calc_mention_logits(self, start_mention_reps, end_mention_reps):
+        start_mention_logits = self.mention_start_classifier(start_mention_reps).squeeze(-1)  # [batch_size, seq_length]
+        end_mention_logits = self.mention_end_classifier(end_mention_reps).squeeze(-1)  # [batch_size, seq_length]
+
+        temp = self.mention_s2e_classifier(start_mention_reps)  # [batch_size, seq_length]
+        joint_mention_logits = torch.matmul(temp,
+                                            end_mention_reps.permute([0, 2, 1]))  # [batch_size, seq_length, seq_length]
+
+        mention_logits = joint_mention_logits + start_mention_logits.unsqueeze(-1) + end_mention_logits.unsqueeze(-2)
+        mention_mask = self._get_mention_mask(mention_logits)  # [batch_size, seq_length, seq_length]
+        mention_logits = mask_tensor(mention_logits, mention_mask)  # [batch_size, seq_length, seq_length]
+        return mention_logits
+
+    def forward(self, input_ids, attention_mask=None, gold_clusters=None):
+        outputs = self.longformer(input_ids, attention_mask=attention_mask)
+        sequence_output = outputs[0]  # [batch_size, seq_len, dim]
+
+        # Compute representations
+        start_mention_reps = self.start_mention_mlp(sequence_output) if self.do_mlps else sequence_output
+        end_mention_reps = self.end_mention_mlp(sequence_output) if self.do_mlps else sequence_output
+
+        # mention scores
+        mention_logits = self._calc_mention_logits(start_mention_reps, end_mention_reps)
+
+        # prune mentions
+        mention_start_ids, mention_end_ids, _, _ = self._prune_topk_mentions(mention_logits, attention_mask, gold_clusters)
+
+        return (mention_start_ids, mention_end_ids, sequence_output)
+
+def mask_tensor(t, mask):
+    t = t + ((1.0 - mask.float()) * -10000.0)
+    t = torch.clamp(t, min=-10000.0, max=10000.0)
+    return t
