@@ -2,7 +2,6 @@ import json
 import random
 
 import numpy as np
-import torch
 from torch.utils.data import Dataset
 from transformers import AutoTokenizer
 from consts import TOKENS_PAD, SPEAKER_PAD, GENRES, SPEAKER_END_TOKEN, SPEAKER_START_TOKEN
@@ -98,18 +97,6 @@ class OntonotesDataset(Dataset):
             last_speaker_per_token = speaker_per_token[-1]
         return new_sentence, speaker_per_token, word_idx, total_tokens, word_idx_to_start_token_idx, word_idx_to_end_token_idx
 
-        # for i in range(len(sentence)):
-        #     word = ' ' +sentence[i]
-        #     word_speaker = speaker[i]
-        #     token_ids = self.tokenizer.tokenize(word)
-        #     if word_speaker != speaker_per_token[-1]:
-        #         speaker_prefix = [SPEAKER_START_TOKEN] + self.tokenizer.tokenize(" " + word_speaker, add_special_tokens=False) + [SPEAKER_END_TOKEN]
-        #         token_ids = speaker_prefix + token_ids
-        #         new_sentence = new_sentence + f'{SPEAKER_START_TOKEN} {word_speaker}{SPEAKER_END_TOKEN}'
-        #     new_sentence += word
-        #     speaker_per_token += [word_speaker]
-        # return new_sentence, speaker_per_token
-
     def tensorize_example(self, example, is_training):
         tensorized_example = {}
         old_clusters = example["clusters"]
@@ -129,9 +116,6 @@ class OntonotesDataset(Dataset):
         word_idx_to_start_token_idx = dict()
         sent_idx = 0
         while sent_idx < len(sentences):
-            # concat_sentence = []
-            # concat_speaker = []
-            # unique_speaker = []
             current_total_tokens = 0
             tmp_total_tokens = 0
             sentence = sentences[sent_idx]
@@ -142,9 +126,6 @@ class OntonotesDataset(Dataset):
                 self.get_sentence_with_speaker(sentence, new_sentence, speaker, speaker_per_token[-1], word_idx, total_tokens)
             current_total_tokens += tmp_total_tokens - total_tokens
             while current_total_tokens + 2 < max_sentence_length and sent_idx < len(sentences):
-                # concat_sentence += sentence
-                # concat_speaker += speaker
-                # unique_speaker += set(speaker)
                 total_tokens = tmp_total_tokens
                 speaker_per_token += tmp_speaker_per_token
                 word_idx = tmp_word_idx
@@ -172,28 +153,7 @@ class OntonotesDataset(Dataset):
 
             sent_input_ids = self.tokenizer.encode(new_sentence)
 
-            # speaker_per_token = ['[SPL]']
-            # new_sentence = ''
-            # for i in range(len(concat_sentence)):
-            #     word = concat_sentence[i]
-            #     if self.args.speaker == 'text' or i > 0:
-            #         word = ' ' + word
-            #     speaker = concat_speaker[i]
-            #     token_ids = self.tokenizer.tokenize(word)
-            #     if self.args.speaker == 'text' and speaker != speaker_per_token[-1]:
-            #         speaker_prefix = [SPEAKER_START_TOKEN] + self.tokenizer.tokenize(" " + speaker, add_special_tokens=False) + [SPEAKER_END_TOKEN]
-            #         token_ids = speaker_prefix + token_ids
-            #         new_sentence = new_sentence + f'{SPEAKER_START_TOKEN} {speaker}{SPEAKER_END_TOKEN}'
-            #     new_sentence += word
-            #     word_idx_to_start_token_idx[word_idx] = total_tokens + 1  # +1 for <s>
-            #     total_tokens += len(token_ids)
-            #     word_idx_to_end_token_idx[word_idx] = total_tokens  # old_seq_len + 1 (for <s>) + len(tokenized_word) - 1 (we start counting from zero) = len(token_ids)
-            #     speaker_per_token += [speaker] * len(token_ids)
-            #     word_idx += 1
             speaker_per_token += ['[SPL]']
-
-            # if self.args.speaker == 'text':
-            #     sent_input_ids = self.tokenizer.encode(new_sentence)
 
             total_tokens += 2
 

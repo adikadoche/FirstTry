@@ -64,6 +64,7 @@ def parse_args():
     parser.add_argument("--max_seq_length", default=4096, type=int)
 
     parser.add_argument("--do_profile", action="store_true", help="Whether to run profiling.")
+    parser.add_argument("--is_debug", action="store_true", help="Whether to run profiling.")
     parser.add_argument("--verbose", action="store_true", help="Whether to print debug prints.")
     parser.add_argument("--do_train", action="store_true", help="Whether to run training.")
     parser.add_argument("--add_junk", action="store_true", help="whether to use junk spans")
@@ -77,7 +78,7 @@ def parse_args():
     parser.add_argument('--eval_sleep', type=int, default=10)
     parser.add_argument('--max_eval_print', type=int, default=10)
     parser.add_argument('--eval_skip_until', type=int, default=-1)
-    parser.add_argument("--save_steps", type=int, default=500, help="Save checkpoint every X updates steps.")
+    parser.add_argument("--save_steps", type=int, default=-1, help="Save checkpoint every X updates steps.")
     parser.add_argument('--save_epochs', type=int, default=1)
     parser.add_argument("--no_cuda", action="store_true", help="Whether not to use CUDA when available")
     parser.add_argument("--seed", type=int, default=42, help="random seed for initialization")
@@ -163,29 +164,3 @@ def parse_args():
 
     args = parser.parse_args()
     return args
-
-    # parser.add_argument(
-    #     "--train_file_cache",
-    #     default=None,
-    #     type=str,
-    #     required=True,
-    #     help="The output directory where the datasets will be written and read from.",
-    # )
-    # parser.add_argument(
-    #     "--predict_file_cache",
-    #     default=None,
-    #     type=str,
-    #     required=True,
-    #     help="The output directory where the datasets will be written and read from.",
-    # )
-    # parser.add_argument("--nonfreeze_params", default=None, type=str,
-    #                     help="named parameters to update while training (separated by ,). The rest will kept frozen. If None or empty - train all")
-    # parser.add_argument('--lr_drop', default=200, type=int) #TODO:?
-    # parser.add_argument("--adam_beta1", default=0.9, type=float,
-    #                     help="Epsilon for Adam optimizer.")
-    # parser.add_argument("--adam_beta2", default=0.98, type=float,
-    #                     help="Epsilon for Adam optimizer.")
-    # parser.add_argument("--adam_epsilon", default=1e-8, type=float, help="Epsilon for Adam optimizer.")
-    # parser.add_argument("--normalise_loss", action="store_true")
-    # parser.add_argument("--ffnn_size", type=int, default=3072)
-    # parser.add_argument("--conll_path_for_eval", type=str, default=None)

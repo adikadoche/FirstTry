@@ -369,17 +369,6 @@ def print_predictions(all_cluster_logits, all_coref_logits, all_mention_logits, 
 
 
 def error_analysis(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, all_gold_mentions, all_input_ids, coref_threshold, cluster_threshold):
-    count_clusters = 0
-    count_mentions = 0
-    
-    count_pronouns_mentions = 0
-    count_clusters_with_pronoun_mention = 0
-    
-    count_missed_mentions = 0
-    count_missed_pronouns = 0
-    count_excess_mentions = 0
-    count_excess_pronous = 0
-
     total_sub_clusters_gold = 0
     total_sub_clusters_pred = 0
     total_num_gold_clusters_in_one_pred_cluster = 0

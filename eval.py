@@ -23,8 +23,9 @@ logger = logging.getLogger(__name__)
 def report_eval(args, eval_dataloader, eval_dataset, global_step, model, criterion, coref_threshold, cluster_threshold, thresh_delta=0.02):
     if args.local_rank == -1:  # Only evaluate when single GPU otherwise metrics may not average well
         results = evaluate(args, eval_dataloader, eval_dataset, model, criterion, str(global_step), coref_threshold, cluster_threshold, thresh_delta)
-        for key, value in results.items():
-            wandb.log({'eval_{}'.format(key): value}, step=global_step)
+        if not args.is_debug:
+            for key, value in results.items():
+                wandb.log({'eval_{}'.format(key): value}, step=global_step)
         return results
     return None
 
@@ -32,7 +33,7 @@ def make_evaluation(model, criterion, eval_loader, eval_dataset, args):
     # Evaluation 'no', 'specific', 'all', 'vanilla'
     if args.eval == 'specific':
         checkpoint = args.output_dir
-        loaded_args = load_from_checkpoint(model, checkpoint)
+        loaded_args = load_from_checkpoint(model, checkpoint, args.device)
         global_step = loaded_args['global_step']
         evaluate(args, eval_loader, model, criterion, global_step)
     elif args.eval == 'vanilla':
@@ -88,10 +89,11 @@ def make_evaluation(model, criterion, eval_loader, eval_dataset, args):
             else:
                 logger.info("No new checkpoints. Best F1 is {} in checkpoint {}. Second best F1 is {} in checkpoint {}. Sleep for {} seconds.".format(
                     str(best_f1), best_checkpoint, str(second_best_f1), second_best_checkpoint, args.eval_sleep))
-                wandb.log({'eval_best_f1': best_f1})
-                wandb.log({'eval_best_f1_checkpoint': best_checkpoint})
-                wandb.log({'eval_second_best_f1': second_best_f1})
-                wandb.log({'eval_second_best_f1_checkpoint': second_best_checkpoint})
+                if not args.is_debug:
+                    wandb.log({'eval_best_f1': best_f1})
+                    wandb.log({'eval_best_f1_checkpoint': best_checkpoint})
+                    wandb.log({'eval_second_best_f1': second_best_f1})
+                    wandb.log({'eval_second_best_f1_checkpoint': second_best_checkpoint})
                 return True
 
 def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", coref_threshold=0.5, cluster_threshold=0.5, thresh_delta=0.02):  #TODO: use threshold when resuming from checkpoint rather than searching it
@@ -114,17 +116,6 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", c
     all_mention_logits_cuda = []
     all_gold_clusters = []
     all_gold_mentions = []
-
-    count_clusters = 0
-    count_mentions = 0
-    
-    count_pronouns_mentions = 0
-    count_clusters_with_pronoun_mention = 0
-    
-    count_missed_mentions = 0
-    count_missed_pronouns = 0
-    count_excess_mentions = 0
-    count_excess_pronous = 0
 
     input_ids_pads = torch.ones(1, args.max_segment_len, dtype=torch.int, device=args.device) * TOKENS_PAD
     mask_pads = torch.zeros(1, args.max_segment_len, dtype=torch.int, device=args.device)
