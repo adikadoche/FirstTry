@@ -25,7 +25,7 @@ def train(args, wandb=None):
     if wandb is not None:        
         # trainer = pl.Trainer(max_epochs=args.num_train_epochs, gpus=args.n_gpu, amp_backend='apex', logger= wandb, accumulate_grad_batches=args.gradient_accumulation_steps,\
         #     default_root_dir=args.output_dir, profiler=profiler)
-        trainer = pl.Trainer(max_epochs=args.num_train_epochs, gpus=args.n_gpu, amp_backend='apex', logger= wandb, accumulate_grad_batches=args.gradient_accumulation_steps,\
+        trainer = pl.Trainer(max_epochs=args.num_train_epochs, gpus=args.n_gpu, logger= wandb, accumulate_grad_batches=args.gradient_accumulation_steps,\
             default_root_dir=args.output_dir)
     else:
         trainer = pl.Trainer(max_epochs=args.num_train_epochs, gpus=args.n_gpu, amp_backend='apex', accumulate_grad_batches=args.gradient_accumulation_steps,\
