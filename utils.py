@@ -17,44 +17,31 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-
-def save_checkpoint(args, global_step, threshold, model, optimizer, amp=None):
+def save_checkpoint(args, global_step, coref_threshold, cluster_threshold, model, optimizer, output_dir, amp=None):
     # Save model checkpoint
-    output_dir = os.path.join(args.output_dir, 'threshold-{}_checkpoint-{}'.format(threshold, global_step))
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
     model_to_save = model.module if hasattr(model, 'module') else model  # Take care of distributed/parallel training
     # model_to_save.save_pretrained(output_dir)
-    torch.save(model_to_save.state_dict(), os.path.join(output_dir, 'model.step-{}.pt'.format(global_step)))
-    torch.save(optimizer.state_dict(), os.path.join(output_dir, 'optimizer.pt'))
-    if amp is not None:
-        torch.save(amp.state_dict(), os.path.join(output_dir, 'amp.pt'))
-    torch.save(args, os.path.join(output_dir, 'training_args.bin'))
+    torch.save({
+        'model': model_to_save.state_dict(),
+        'coref_threshold': coref_threshold,
+        'cluster_threshold': cluster_threshold,
+        'optimizer': optimizer.state_dict(),
+        'args': args
+        }, os.path.join(output_dir, 'model.step-{}.pt'.format(global_step)))
     logger.info("Saved model checkpoint to %s", output_dir)
 
 
-def load_from_checkpoint(model, checkpoint_path, device=None, optimizer=None, amp=None):
-    global_step = checkpoint_path.rstrip('/').split('-')[-1]
-    threshold = float(checkpoint_path.rstrip('/').split('-')[-2].split('_')[0])
+def load_from_checkpoint(model, resume_from, device=None, optimizer=None, amp=None):
+    global_step = resume_from.rstrip('/').split('-')[-1]
+    checkpoint = torch.load(resume_from + '/model.step-' + global_step + '.pt', map_location=device)
     model_to_load = model.module if hasattr(model, 'module') else model  # Take care of distributed/parallel training
-    try:
-        model_to_load.load_state_dict(torch.load(checkpoint_path + '/model.step-' + global_step + '.pt', map_location=device))
-    except Exception as e:
-        logger.error(e)
-        model_to_load.load_state_dict(
-            torch.load(checkpoint_path + '/model.step-' + global_step + '.pt', map_location=device), strict=False)
-    if optimizer is not None:
-        opt_path = os.path.join(checkpoint_path, 'optimizer.pt')
-        if os.path.exists(opt_path):
-            optimizer.load_state_dict(torch.load(opt_path, map_location=device))
-            # TODO make this more robust for different trees of states
-            for state in optimizer.state.values():
-                for k, v in state.items():
-                    if torch.is_tensor(v):
-                        state[k] = v.to(device)
-    if amp is not None:
-        amp.load_state_dict(torch.load(os.path.join(checkpoint_path, 'amp.pt')))
-    return {'global_step':global_step, 'threshold':threshold}
+    model_to_load.load_state_dict(checkpoint['model'])
+    coref_threshold = checkpoint['coref_threshold']
+    cluster_threshold = checkpoint['cluster_threshold']
+            
+    return {'global_step':global_step, 'coref_threshold':coref_threshold, 'cluster_threshold':cluster_threshold}
 
 
 def extract_clusters(gold_clusters):
@@ -184,14 +171,14 @@ def create_gold_matrix(device, doc_len, num_queries, gold_clusters, gold_mention
 def make_mentions_from_clustered_tokens(self, coref_logits):
     pass
 
-def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, threshold, gold_mentions: List):
+def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, coref_threshold, cluster_threshold, gold_mentions: List):
     # when we are using gold mentions, we get coref_logits at the size of the gold mentions ([bs, clusters, gold_mentions]) (because we know they are mentions, what we are predicting is the clustering)
     
     bs = cluster_logits.shape[0]
 
     if gold_mentions is None:
-        cluster_bools = cluster_logits.numpy() >= threshold #TODO: should the cluster and coref share the same threshold?
-        coref_bools = coref_logits.numpy() >= threshold
+        cluster_bools = cluster_logits.numpy() >= cluster_threshold #TODO: should the cluster and coref share the same threshold?
+        coref_bools = coref_logits.numpy() >= coref_threshold
 
         true_coref_indices = np.asarray(np.where(coref_bools)).T
         cluster_id_to_tokens = {k: list(v) for k, v in itertools.groupby(sorted(true_coref_indices, key=lambda x: x[-1]), lambda x: x[-1])}
@@ -216,7 +203,7 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, thresh
             if len(current_cluster) > 0:
                 clusters.append(current_cluster)
     else:
-        cluster_bools = cluster_logits.squeeze(-1).numpy() >= threshold #TODO: should the cluster and coref share the same threshold?
+        cluster_bools = cluster_logits.squeeze(-1).numpy() >= cluster_threshold #TODO: should the cluster and coref share the same threshold?
         clusters = []
         for i in range(bs):
             cur_cluster_bool = cluster_bools[i]
@@ -224,14 +211,14 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, thresh
             cur_cluster_bool = np.tile(cur_cluster_bool.reshape([1, -1, 1]), (1, 1, cur_coref_logits.shape[-1]))
             cluster_mention_mask = cur_cluster_bool
             if len(mention_logits) > 0:
-                cur_mention_bools = mention_logits[i].squeeze(-1).numpy() >= threshold
+                cur_mention_bools = mention_logits[i].squeeze(-1).numpy() >= cluster_threshold
                 cur_mention_bools = np.tile(cur_mention_bools.reshape([1, 1, -1]), (1, cur_cluster_bool.shape[1], 1))
                 cluster_mention_mask = cur_mention_bools & cur_cluster_bool
             cluster_mention_mask = cluster_mention_mask.astype(int)
             
             coref_logits_after_cluster_bool = np.multiply(cluster_mention_mask, cur_coref_logits.unsqueeze(0))
             max_coref_score, max_coref_cluster_ind = coref_logits_after_cluster_bool[0].max(-2) #[gold_mention] choosing the index of the best cluster per gold mention
-            coref_bools = max_coref_score >= threshold #[gold_mention] is the chosen cluster's score passes the threshold
+            coref_bools = max_coref_score >= coref_threshold #[gold_mention] is the chosen cluster's score passes the threshold
 
             true_coref_indices = np.where(coref_bools)[0] #indices of the gold mention that their clusters pass threshold
             max_coref_cluster_ind_filtered = max_coref_cluster_ind[coref_bools] #index of the best clusters per gold mention, if it passes the threshold
@@ -247,37 +234,48 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, thresh
                         current_cluster.append(gold_mentions[i][mention_id[0]])
                     except:
                         print('here')
-                b_clusters.append(current_cluster)
+                if len(current_cluster) > 1:
+                    b_clusters.append(current_cluster)
             clusters.append(b_clusters)
 
     return clusters
 
-def calc_best_avg_f1(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, all_gold_mentions):
+def calc_best_avg_f1(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, all_gold_mentions, coref_threshold, cluster_threshold, thresh_delta):
     best = [-1, -1, -1]
     best_metrics = []
-    best_threshold = None
-    thres_start = 0.05
-    thres_stop = 1
-    thres_step = 0.05
-    for threshold in tqdm(np.arange(thres_start, thres_stop, thres_step), desc='Searching for best threshold'):
-        p, r, f1, metrics = evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, threshold, all_gold_mentions)
-        if f1 > best[-1]:
-            best = p,r,f1
-            best_metrics = metrics
-            best_threshold = threshold
+    best_coref_threshold = None
+    best_cluster_threshold = None
+    if thresh_delta == 0.2:
+        thresh_coref_start = 0.05
+        thresh_coref_end = 1
+        thresh_cluster_start = 0.05
+        thresh_cluster_end = 1
+    else:
+        thresh_coref_start = max(0.01, coref_threshold - 2*thresh_delta)
+        thresh_coref_end = min(1, coref_threshold + 2.5*thresh_delta)
+        thresh_cluster_start = max(0.01, cluster_threshold - 2*thresh_delta)
+        thresh_cluster_end = min(1, cluster_threshold + 2.5*thresh_delta)
+    for coref_threshold in tqdm(np.arange(thresh_coref_start, thresh_coref_end, thresh_delta), desc='Searching for best threshold'):
+        for cluster_threshold in np.arange(thresh_cluster_start, thresh_cluster_end, thresh_delta):
+            p, r, f1, metrics = evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, coref_threshold, cluster_threshold, all_gold_mentions)
+            if f1 > best[-1]:
+                best = p,r,f1
+                best_metrics = metrics
+                best_coref_threshold = coref_threshold
+                best_cluster_threshold = cluster_threshold
 
-    return best + (best_threshold,) + (best_metrics,)
+    return best + (best_coref_threshold, best_cluster_threshold,) + (best_metrics,)
 
-def evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, threshold, all_gold_mentions):
+def evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, coref_threshold, cluster_threshold, all_gold_mentions):
     evaluator = CorefEvaluator()
     metrics = [0] * 5
     for i, (cluster_logits, coref_logits, gold_clusters, gold_mentions) in enumerate(
             zip(all_cluster_logits, all_coref_logits, all_gold_clusters, all_gold_mentions)):
         if len(all_mention_logits) > 0:
             mention_logits = all_mention_logits[i]
-            predicted_clusters = calc_predicted_clusters(cluster_logits.unsqueeze(0), coref_logits.unsqueeze(0), mention_logits.unsqueeze(0), threshold, [gold_mentions])
+            predicted_clusters = calc_predicted_clusters(cluster_logits.unsqueeze(0), coref_logits.unsqueeze(0), mention_logits.unsqueeze(0), coref_threshold, cluster_threshold, [gold_mentions])
         else:
-            predicted_clusters = calc_predicted_clusters(cluster_logits.unsqueeze(0), coref_logits.unsqueeze(0), [], threshold, [gold_mentions])
+            predicted_clusters = calc_predicted_clusters(cluster_logits.unsqueeze(0), coref_logits.unsqueeze(0), [], coref_threshold, cluster_threshold, [gold_mentions])
         # prec_correct_mentions, prec_gold, prec_junk, prec_correct_gold_clusters, prec_correct_predict_clusters = \
         #     get_more_metrics(predicted_clusters, gold_clusters, gold_mentions)  #TODO: predicted_clusters[0]?
         # metrics[0] += prec_correct_mentions / len(all_cluster_logits)
@@ -365,33 +363,29 @@ def create_junk_gold_mentions(gold_mentions, text_len, device):
     return all_mentions, real_mentions_bools
 
 
-def pad_input_ids_and_mask_to_max_sentences(input_ids, mask, speaker_ids, input_ids_pads, mask_pads, speaker_ids_pads, max_sentences):
+def pad_input_ids_and_mask_to_max_sentences(input_ids, mask, input_ids_pads, mask_pads, max_sentences):
     if input_ids.shape[0] == max_sentences:
-        return input_ids.unsqueeze(0), mask.unsqueeze(0), speaker_ids.unsqueeze(0)
+        return input_ids.unsqueeze(0), mask.unsqueeze(0)
     padded_input_ids = torch.cat([input_ids, input_ids_pads.repeat(max_sentences - input_ids.shape[0], 1)]).unsqueeze(0)
     padded_mask = torch.cat([mask, mask_pads.repeat(max_sentences - input_ids.shape[0], 1)]).unsqueeze(0)
-    padded_speaker_ids = torch.cat([speaker_ids, speaker_ids_pads.repeat(max_sentences - input_ids.shape[0], 1, 1)]).unsqueeze(0)
-    return padded_input_ids, padded_mask, padded_speaker_ids
+    return padded_input_ids, padded_mask
 
 def pad_mentions(gold_mentions, max_mentions):
     padded_gold_mentions = torch.tensor(np.asarray(gold_mentions + (max_mentions-len(gold_mentions)) * [(-1, -1)])).unsqueeze(0)
     return padded_gold_mentions
 
-def tensor_and_remove_empty(batch, gold_mentions, args, input_ids_pads, mask_pads, speaker_ids_pads):
-    input_ids, input_mask, sum_text_len, num_mentions, new_gold_mentions, speaker_ids, genre = [], [], [], [], [], [], []
+def tensor_and_remove_empty(batch, gold_mentions, args, input_ids_pads, mask_pads):
+    input_ids, input_mask, sum_text_len, num_mentions, new_gold_mentions = [], [], [], [], []
     max_mentions = max([len(gm) for gm in gold_mentions])
     max_sentences = max([ii.shape[0] for ii in batch['input_ids']])
     num_examples = len(gold_mentions)
     for i in range(num_examples):
-        padded_input_ids, padded_mask, padded_speaker_ids = pad_input_ids_and_mask_to_max_sentences(\
+        padded_input_ids, padded_mask = pad_input_ids_and_mask_to_max_sentences(\
             torch.tensor(batch['input_ids'][i]).to(args.device), 
-            torch.tensor(batch['input_mask'][i]).to(args.device), 
-            torch.tensor(batch['speaker_ids'][i]).to(args.device),
-            input_ids_pads, mask_pads, speaker_ids_pads, max_sentences)
+            torch.tensor(batch['input_mask'][i]).to(args.device),
+            input_ids_pads, mask_pads, max_sentences)
         input_ids.append(padded_input_ids)
         input_mask.append(padded_mask)
-        speaker_ids.append(padded_speaker_ids)
-        genre.append(torch.tensor([batch['genre'][i]]).to(args.device))
         sum_text_len.append(torch.tensor([sum(batch['text_len'][i])]).to(args.device))
         new_gold_mentions.append(pad_mentions(gold_mentions[i], max_mentions))
         num_mentions.append(torch.tensor([len(gold_mentions[i])]).to(args.device))
@@ -399,6 +393,4 @@ def tensor_and_remove_empty(batch, gold_mentions, args, input_ids_pads, mask_pad
         torch.cat(input_mask).reshape(num_examples, max_sentences, -1), \
             torch.cat(sum_text_len).reshape(num_examples), \
                 torch.cat(new_gold_mentions).reshape(num_examples, max_mentions, 2),\
-                    torch.cat(num_mentions).reshape(num_examples),\
-                        torch.cat(speaker_ids).reshape(num_examples, max_sentences, args.max_segment_len, -1),\
-                    torch.cat(genre).reshape(num_examples, -1)
+                    torch.cat(num_mentions).reshape(num_examples)

@@ -1,4 +1,4 @@
-import json
+import shutil
 import os
 import logging
 import random
@@ -23,7 +23,8 @@ logger = logging.getLogger(__name__)
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     epoch_iterator, optimizer: torch.optim.Optimizer, scaler: torch.cuda.amp.GradScaler,
                     args, evaluator, skip_steps, recent_grad_norms, recent_cluster_logits,
-        recent_coref_logits, recent_losses, recent_losses_parts, recent_logits_sums, global_step, lr_scheduler, eval_loader, eval_dataset, threshold):
+        recent_coref_logits, recent_losses, recent_losses_parts, recent_logits_sums, global_step, lr_scheduler, eval_loader, eval_dataset, 
+        coref_threshold, cluster_threshold):
     input_ids_pads = torch.ones(1, args.max_segment_len, dtype=torch.int, device=args.device) * TOKENS_PAD
     speaker_ids_pads = torch.ones(1, args.max_segment_len, args.max_num_speakers, dtype=torch.int, device=args.device) * SPEAKER_PAD
     mask_pads = torch.zeros(1, args.max_segment_len, dtype=torch.int, device=args.device)
@@ -47,8 +48,10 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             else:
                 gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=args.device) for gm in gold_mentions_list]
 
-        input_ids, input_mask, sum_text_len, gold_mentions, num_mentions, speaker_ids, genre = tensor_and_remove_empty(batch, gold_mentions_list, args, input_ids_pads, mask_pads, speaker_ids_pads)
+        input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = tensor_and_remove_empty(batch, gold_mentions_list, args, input_ids_pads, mask_pads)
+        # if len(input_ids) == 0 or input_ids.shape[1] > 1:
         if len(input_ids) == 0:
+            print(f"skipped {step}")
             continue
 
         gold_matrix = create_gold_matrix(args.device, sum_text_len, args.num_queries, gold_clusters, gold_mentions_list)
@@ -58,23 +61,23 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         # input_mask = torch.reshape(input_mask, (1, -1))
         if args.amp:
             with torch.cuda.amp.autocast():
-                outputs = model(input_ids, sum_text_len, input_mask, gold_mentions, num_mentions, speaker_ids, genre)
+                outputs = model(input_ids, sum_text_len, input_mask, gold_mentions, num_mentions)
                 cluster_logits, coref_logits = outputs['cluster_logits'], outputs['coref_logits']
 
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(),
-                                                            threshold, gold_mentions_list)
+                                                            coref_threshold, cluster_threshold, gold_mentions_list)
                 evaluator.update(predicted_clusters, gold_clusters)
                 loss = criterion(outputs, gold_matrix)
         else:
-            outputs = model(input_ids, sum_text_len, input_mask, gold_mentions, num_mentions, speaker_ids, genre)
+            outputs = model(input_ids, sum_text_len, input_mask, gold_mentions, num_mentions)
             cluster_logits, coref_logits, mention_logits = outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits']
 
             if args.add_junk:
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), mention_logits.cpu().detach(),
-                                                            threshold, gold_mentions_list)
+                                                            coref_threshold, cluster_threshold, gold_mentions_list)
             else:
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
-                                                            threshold, gold_mentions_list)
+                                                            coref_threshold, cluster_threshold, gold_mentions_list)
             evaluator.update(predicted_clusters, gold_clusters)
             loss, loss_parts = criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
 
@@ -122,12 +125,12 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             model.zero_grad()
             global_step += args.train_batch_size
 
-            if args.local_rank in [-1, 0] and args.eval_steps > 0 and global_step % args.eval_steps == 0:
-                results = report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, threshold)
-                threshold = results['threshold']
+            # if args.local_rank in [-1, 0] and args.eval_steps > 0 and global_step % args.eval_steps == 0:
+            #     results = report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, coref_threshold, cluster_threshold, threshold_delta)
+            #     threshold = results['threshold']
 
-            if args.local_rank in [-1, 0] and args.save_steps > 0 and global_step % args.save_steps == 0:
-                save_checkpoint(args, global_step, threshold, model, optimizer)
+            # if args.local_rank in [-1, 0] and args.save_steps > 0 and global_step % args.save_steps == 0:
+            #     save_checkpoint(args, global_step, coref_threshold, cluster_threshold, model, optimizer)
 
             if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
                 # logits = np.concatenate(recent_cluster_logits)
@@ -155,7 +158,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         if args.max_steps > 0 and global_step > args.max_steps:
             epoch_iterator.close()
             break
-    return global_step, threshold
+    return global_step, coref_threshold, cluster_threshold
 
 
 def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
@@ -255,7 +258,12 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
     train_iterator = tqdm(train_iterator, desc="Epoch", disable=args.local_rank not in [-1, 0])
     set_seed(args)  # Added here for reproducibility (even between python 2 and 3)
     skip_steps = args.skip_steps
-    threshold = 0.5 # starting threshold, later fixed by eval
+    coref_threshold, cluster_threshold = 0.5, 0.5 # starting threshold, later fixed by eval
+    thresh_delta = 0.2
+    same_thresh_count = 0
+    best_f1 = -1
+    best_f1_global_step = -1
+    last_saved_global_step = -1
 
     start_time = time.time()
     for epoch in train_iterator:
@@ -263,10 +271,10 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
         #     args.add_junk = True
         evaluator = CorefEvaluator()
         epoch_iterator = tqdm(train_loader, desc="Iteration in Epoch {}".format(epoch), disable=args.local_rank not in [-1, 0], leave=False)
-        global_step, threshold = train_one_epoch(   #TODO: do I need to let the threshold return to 0.5 every time? or is it correct to update it?
+        global_step, coref_threshold, cluster_threshold = train_one_epoch(   #TODO: do I need to let the threshold return to 0.5 every time? or is it correct to update it?
             model, criterion, epoch_iterator, optimizer, scaler, args, evaluator, skip_steps, recent_grad_norms,
             recent_cluster_logits, recent_coref_logits, recent_losses, recent_losses_parts, recent_logits_sums, global_step,
-            lr_scheduler, eval_loader, eval_dataset, threshold)
+            lr_scheduler, eval_loader, eval_dataset, coref_threshold, cluster_threshold)
 
         p, r, f1 = evaluator.get_prf()
         if args.local_rank in [-1, 0]:
@@ -279,12 +287,50 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
             lr_scheduler.step()  # Update learning rate schedule
 
         if args.local_rank in [-1, 0]:
-            if args.save_epochs > 0 and (epoch + 1) % args.save_epochs == 0 or epoch + 1 == args.num_train_epochs:
-                save_checkpoint(args, global_step, threshold, model, optimizer)
-
             if args.eval_epochs > 0 and (epoch + 1) % args.eval_epochs == 0 or \
                     epoch + 1 == args.num_train_epochs and (args.eval_epochs > 0 or args.eval_steps > 0):
-                report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, threshold)
+                results = report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, coref_threshold, cluster_threshold, thresh_delta)
+                new_coref_threshold, new_cluster_threshold, eval_f1 = results['coref_threshold'], results['cluster_threshold'], results['avg_f1']
+
+                if new_cluster_threshold == cluster_threshold and new_coref_threshold == coref_threshold:
+                    same_thresh_count += 1
+                    if same_thresh_count == 5 and thresh_delta == 0.2:
+                        thresh_delta = 0.02
+                        same_thresh_count = 0
+                else:
+                    same_thresh_count = 0
+                cluster_threshold = new_cluster_threshold
+                coref_threshold = new_coref_threshold
+
+            if args.save_epochs > 0 and (epoch + 1) % args.save_epochs == 0 or epoch + 1 == args.num_train_epochs:
+                if eval_f1 > best_f1:
+                    prev_best_f1 = best_f1
+                    prev_best_f1_global_step = best_f1_global_step
+                    output_dir = os.path.join(args.output_dir, 'checkpoint-{}'.format(global_step))
+                    save_checkpoint(args, global_step, coref_threshold, cluster_threshold, model, optimizer, output_dir)
+                    print(f'previous checkpoint with f1 {prev_best_f1} was {prev_best_f1_global_step}')
+                    best_f1 = eval_f1
+                    best_f1_global_step = global_step
+                    print(f'saved checkpoint with f1 {best_f1} in step {best_f1_global_step} to {output_dir}')
+                    if prev_best_f1_global_step > -1:
+                        path_to_remove = os.path.join(args.output_dir, 'checkpoint-{}'.format(prev_best_f1_global_step))
+                        shutil.rmtree(path_to_remove)
+                        print(f'removed checkpoint with f1 {prev_best_f1} from {path_to_remove}')
+                else:
+                    output_dir = os.path.join(args.output_dir, 'checkpoint-{}'.format(global_step))
+                    save_checkpoint(args, global_step, coref_threshold, cluster_threshold, model, optimizer, output_dir)
+                    print(f'saved checkpoint in global_step {global_step}')
+                    path_to_remove = os.path.join(args.output_dir, 'checkpoint-{}'.format(last_saved_global_step))
+                    if last_saved_global_step > -1 and last_saved_global_step != best_f1_global_step and os.path.exists(path_to_remove):
+                        shutil.rmtree(path_to_remove)
+                        print(f'removed previous checkpoint in global_step {last_saved_global_step}')
+                    last_saved_global_step = global_step
+                wandb.log({'eval_best_f1':best_f1}, step=global_step)
+                try:
+                    wandb.log({'eval_best_f1_checkpoint':os.path.join(args.output_dir, 'checkpoint-{}'.format(best_f1_global_step))}, step=global_step)
+                except:
+                    pass
+
 
         if 0 < args.max_steps < global_step:
             train_iterator.close()
