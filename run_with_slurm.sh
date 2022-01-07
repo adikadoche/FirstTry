@@ -4,7 +4,7 @@
 # The script to run must begin with a she-bang (script header), e.g. #! /bin/bash
 # Run `run_with_slurm.sh` from the desired working directory.
 
-JOB_NAME=$1
+export JOB_NAME=$1
 SCRIPT_PATH=$2
 SCRIPT_PARAMS="${@:3:99999}"
 export GIT_HASH="$(git rev-parse HEAD)"
@@ -43,7 +43,7 @@ sbatch \
   --nodes=1  \
   --ntasks=1  \
   --gpus=1  \
-  --export GIT_HASH \
+  --export JOB_NAME,GIT_HASH \
   --constraint="geforce_rtx_3090|quadro_rtx_8000|tesla_v100"  \
   ${SCRIPT_PATH} ${SCRIPT_PARAMS}  |  tee ${TEMPFILE_PATH}
 

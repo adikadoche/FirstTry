@@ -26,10 +26,10 @@ def train(args, wandb=None):
         # trainer = pl.Trainer(max_epochs=args.num_train_epochs, gpus=args.n_gpu, amp_backend='apex', logger= wandb, accumulate_grad_batches=args.gradient_accumulation_steps,\
         #     default_root_dir=args.output_dir, profiler=profiler)
         trainer = pl.Trainer(max_epochs=args.num_train_epochs, gpus=args.n_gpu, logger= wandb, accumulate_grad_batches=args.gradient_accumulation_steps,\
-            default_root_dir=args.output_dir)
+            default_root_dir=args.output_dir, gradient_clip_val=args.max_grad_norm, num_sanity_val_steps=0)
     else:
-        trainer = pl.Trainer(max_epochs=args.num_train_epochs, gpus=args.n_gpu, amp_backend='apex', accumulate_grad_batches=args.gradient_accumulation_steps,\
-            default_root_dir=args.output_dir, detect_anomaly=True)
+        trainer = pl.Trainer(max_epochs=args.num_train_epochs, gpus=args.n_gpu, accumulate_grad_batches=args.gradient_accumulation_steps,\
+            default_root_dir=args.output_dir, detect_anomaly=True, gradient_clip_val=args.max_grad_norm, num_sanity_val_steps=0)
 
     set_seed(args)  # Added here for reproducibility (even between python 2 and 3)
 

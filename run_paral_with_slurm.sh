@@ -5,7 +5,7 @@
 # Run `run_with_slurm.sh` from the desired working directory.
 
 GPU_NUM=$1
-JOB_NAME=$2
+export JOB_NAME=$2
 SCRIPT_PATH=$3
 SCRIPT_PARAMS="${@:4:99999}"
 export GIT_HASH="$(git rev-parse HEAD)"
@@ -44,7 +44,7 @@ sbatch \
   --nodes=1  \
   --ntasks=1  \
   --gpus=${GPU_NUM}  \
-  --export GIT_HASH \
+  --export JOB_NAME,GIT_HASH \
   --constraint="tesla_v100|quadro_rtx_8000|geforce_rtx_3090"  \
   ${SCRIPT_PATH} ${SCRIPT_PARAMS}  |  tee ${TEMPFILE_PATH}
 
