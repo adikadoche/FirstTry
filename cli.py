@@ -122,6 +122,8 @@ def parse_args():
                         help="L1 box coefficient in the matching cost")
     parser.add_argument('--eos_coef', default=0.1, type=float,
                         help="Relative classification weight of the no-object class")
+    parser.add_argument('--threshold', default=-1, type=float,
+                        help="L1 box coefficient in the matching cost")
 
     parser.add_argument('--max_training_sentences', default=3, type=int)
     parser.add_argument('--max_num_speakers', default=20, type=int)

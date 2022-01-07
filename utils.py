@@ -168,8 +168,6 @@ def create_gold_matrix(device, doc_len, num_queries, gold_clusters, gold_mention
 
     return gold_per_token_batch
 
-def make_mentions_from_clustered_tokens(self, coref_logits):
-    pass
 
 def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, coref_threshold, cluster_threshold, gold_mentions: List):
     # when we are using gold mentions, we get coref_logits at the size of the gold mentions ([bs, clusters, gold_mentions]) (because we know they are mentions, what we are predicting is the clustering)

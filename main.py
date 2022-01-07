@@ -12,14 +12,11 @@ import io
 import logging
 from cli import parse_args
 import torch
-import wandb 
+from pytorch_lightning.loggers import WandbLogger
 
 # from modeling import Adi
 from datetime import datetime
-from detr import build_DETR
 from training import set_seed, train
-from eval import make_evaluation
-from data import get_dataset, get_data_objects
 
 
 logger = logging.getLogger(__name__)
@@ -38,7 +35,7 @@ def main():
     transformers_logger = logging.getLogger("transformers")
     transformers_logger.setLevel(logging.ERROR)
     if not args.is_debug:
-        wandb.init(project='coref-detr', entity='adizicher', name=run_name)
+        wandb = WandbLogger(project='coref-detr', entity='adizicher', name=run_name)
 
     # Setup CUDA, GPU & distributed training
     if args.is_debug:
@@ -69,16 +66,14 @@ def main():
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
                         datefmt='%m/%d/%Y %H:%M:%S',
                         level=logging.INFO if args.local_rank in [-1, 0] else logging.WARN)
-    if not args.is_debug:    
-        wb_config = wandb.config
-        for key, val in vars(args).items():
-            logger.info(f"{key} - {val}")
-            wb_config[key] = val
-        if "GIT_HASH" in os.environ:
-            wb_config["GIT_HASH"] = os.environ["GIT_HASH"]
-    else:
-        for key, val in vars(args).items():
-            logger.info(f"{key} - {val}")
+    wb_config = {}
+    for key, val in vars(args).items():
+        logger.info(f"{key} - {val}")
+        wb_config[key] = val
+    if "GIT_HASH" in os.environ:
+        wb_config["GIT_HASH"] = os.environ["GIT_HASH"]
+    if not args.is_debug:
+        wandb.experiment.config.update(wb_config)
     set_seed(args)
 
     # Load pretrained model and tokenizer
@@ -86,42 +81,10 @@ def main():
         # Barrier to make sure only the first process in distributed training download model & vocab
         torch.distributed.barrier()
 
-
-    # config_class = LongformerConfig
-    # base_model_prefix = "longformer"
-    model, criterion = build_DETR(args)
-    if not args.is_debug:    
-        wandb.watch(model, criterion, log="all")
-
-    if args.local_rank == 0:
-        torch.distributed.barrier()  # Make sure only the first process in distributed training will download model & vocab
-
-    model.to(args.device)
-
-    eval_dataset, eval_sampler, eval_loader, args.eval_batch_size = get_data_objects(args, args.predict_file, False)
-
-    if args.do_train:
-        train_dataset, train_sampler, train_loader, args.train_batch_size = get_data_objects(args, args.train_file, True)
-        # if args.do_profile:
-        #     profiler = cProfile.Profile()
-        #     profiler.enable()
-        #     global_step = train(args, model, criterion, train_loader, eval_loader, eval_dataset)
-        #     profiler.disable()
-        #     result = io.StringIO()
-        #     pstats.Stats(profiler,stream=result).sort_stats('tottime').print_stats()
-        #     result=result.getvalue()
-        #     # chop the string into a csv-like buffer
-        #     result='ncalls'+result.split('ncalls')[-1]
-        #     result='\n'.join([','.join(line.rstrip().split(None,5)) for line in result.split('\n')])
-        #     # save it to disk
-            
-        #     with open('test.csv', 'w+') as f:
-        #         #f=open(result.rsplit('.')[0]+'.csv','w')
-        #         f.write(result)
-        #         f.close()
-        # else:
-        global_step = train(args, model, criterion, train_loader, eval_loader, eval_dataset)
-    make_evaluation(model, criterion, eval_loader, eval_dataset, args) #TODO: report_eval won't work in here because of missing parameters
+    if not args.is_debug:
+        train(args, wandb)
+    else:
+        train(args)
 
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':

@@ -128,7 +128,3 @@ class HungarianMatcher(nn.Module):
             matched_gold_cluster_id.append(torch.as_tensor(ind2, dtype=torch.int64))
 
         return matched_predicted_cluster_id, matched_gold_cluster_id
-
-
-def build_matcher(args):
-    return HungarianMatcher(cost_is_cluster=args.cost_is_cluster, cost_coref=args.cost_coref, args=args)
