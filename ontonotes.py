@@ -16,10 +16,10 @@ class OntonotesDataset(Dataset):
             self.examples = [json.loads(jsonline) for jsonline in lines]
         if args.limit_trainset >= 0:
             self.examples = self.examples[:args.limit_trainset]
-        #TODO:REMOVE
-        for i, e in reversed(list(enumerate(self.examples))):
-            if len(e['clusters']) == 0:
-                del self.examples[i]
+        if args.use_gold_mentions:
+            for i, e in reversed(list(enumerate(self.examples))):
+                if len(e['clusters']) == 0:
+                    del self.examples[i]
         self.is_training = is_training
         self.args = args
         self.batch_size = batch_size
@@ -33,6 +33,9 @@ class OntonotesDataset(Dataset):
                 "You are instantiating a new tokenizer from scratch. This is not supported, but you can do it from another script, save it,"
                 "and load it from here, using --tokenizer_name"
             )
+
+        if is_training and len(self.examples)>1908:
+            self.examples.pop(1908)
         # self.tensorized_examples = self.get_all_tensorized_examples()
 
 
