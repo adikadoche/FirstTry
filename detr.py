@@ -68,7 +68,7 @@ class DETR(nn.Module):
         self.query_token_IO_score = nn.Linear(150, 1)  #TODO: change to 3 so it would be BIO instead of IO
  
 
-    def forward(self, input_ids, sum_text_len, mask, gold_mentions, gold_clusters, num_mentions):
+    def forward(self, input_ids, max_mentions_len, mask, gold_mentions, gold_clusters, num_mentions):
         """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
@@ -103,15 +103,15 @@ class DETR(nn.Module):
                 span_starts[i] = span_starts[i].squeeze(0)
                 span_ends[i] = span_ends[i].squeeze(0)
                 new_num_mentions[i] = torch.sum(mentions_mask)
-                start, end = span_starts[i].detach().cpu().numpy(), span_ends[i].detach().cpu().numpy()
-                mentions[i] = [(start[j], end[j]) for j in range(span_starts[i].shape[0])]
+                # start, end = span_starts[i].detach().cpu().numpy(), span_ends[i].detach().cpu().numpy()
+                # mentions[i] = [(start[j], end[j]) for j in range(span_starts[i].shape[0])]
             span_emb, span_mask = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends, new_num_mentions)  # [mentions, emb']
             embedding = self.span_proj(span_emb) # [mentions, emb]
-            # mentions = torch.cat([\
-            #     torch.cat([\
-            #         torch.cat([span_starts[i].unsqueeze(-1), span_ends[i].unsqueeze(-1)], -1), \
-            #             torch.ones(new_num_mentions.max() - new_num_mentions[i], 2, device=span_starts[i].device, dtype=torch.long)*-1], 0).unsqueeze(0)\
-            #                  for i in range(bs)], 0)
+            mentions = torch.cat([\
+                torch.cat([\
+                    torch.cat([span_starts[i].unsqueeze(-1), span_ends[i].unsqueeze(-1)], -1), \
+                        torch.ones(max_mentions_len[0] - new_num_mentions[i], 2, device=span_starts[i].device, dtype=torch.long)*-1], 0).unsqueeze(0)\
+                             for i in range(bs)], 0)
             # mentions = [torch.cat([span_starts[i].unsqueeze(-1), span_ends[i].unsqueeze(-1)], -1) for i in range(bs)]
             hs, memory = self.transformer(embedding, span_mask, raw_query_embed)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
         else:
@@ -141,17 +141,15 @@ class DETR(nn.Module):
                 span_emb = self.span_proj(span_emb) # [mentions, emb]
                 hs, memory = self.transformer(span_emb, span_mask, raw_query_embed)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
             mentions = gold_mentions
-            new_num_mentions = num_mentions
 
 
         last_hs = hs[-1] # [1, num_queries, emb]
-        cluster_logits, coref_logits, mention_logits = self.calc_cluster_and_coref_logits(last_hs, memory, gold_mentions is not None, span_mask, new_num_mentions.max())
+        cluster_logits, coref_logits, mention_logits = self.calc_cluster_and_coref_logits(last_hs, memory, gold_mentions is not None, span_mask, max_mentions_len[0])
 
         out = {"coref_logits": coref_logits,
                 "cluster_logits": cluster_logits,
                 "mention_logits": mention_logits, 
-                'mentions': mentions, 
-                "new_num_mentions": new_num_mentions}
+                'mentions': mentions}
                 # "aux_coref_logits": aux_coref_logits}
         return out
 
@@ -359,8 +357,8 @@ def build_DETR(args):
         backbone = MenPropose(AutoConfig.from_pretrained('allenai/longformer-large-4096', cache_dir=args.cache_dir), args)
         backbone.load_state_dict(torch.load('/home/gamir/adiz/tmpCode/s2e-coref/s2e_mention_proposal.pt'))
 
-        for param in backbone.parameters():
-            param.requires_grad = False
+        # for param in backbone.parameters():
+        #     param.requires_grad = False
     else:
         backbone = LongformerModel.from_pretrained(args.model_name_or_path,
                                             config=config,

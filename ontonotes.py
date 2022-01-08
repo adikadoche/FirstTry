@@ -34,7 +34,7 @@ class OntonotesDataset(Dataset):
                 "and load it from here, using --tokenizer_name"
             )
 
-        if is_training:
+        if is_training and len(self.examples)>1908:
             self.examples.pop(1908)
         # self.tensorized_examples = self.get_all_tensorized_examples()
 

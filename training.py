@@ -46,10 +46,12 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             continue
 
         gold_matrix = create_gold_matrix(args.device, sum_text_len, args.num_queries, gold_clusters, gold_mentions_list)
+        max_mentions = gold_mentions.shape[1] if args.use_gold_mentions else sum_text_len.max()//2
+        max_mentions = max_mentions.repeat([input_ids.shape[0], 1])
 
         if args.amp:
             with torch.cuda.amp.autocast():
-                outputs = model(input_ids, sum_text_len, input_mask, gold_mentions, gold_clusters, num_mentions)
+                outputs = model(input_ids, max_mentions, input_mask, gold_mentions, gold_clusters, num_mentions)
                 cluster_logits, coref_logits = outputs['cluster_logits'], outputs['coref_logits']
 
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(),
@@ -57,11 +59,13 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                 evaluator.update(predicted_clusters, gold_clusters)
                 loss = criterion(outputs, gold_matrix)
         else:
-            outputs = model(input_ids, sum_text_len, input_mask, gold_mentions, gold_clusters, num_mentions)
+            outputs = model(input_ids, max_mentions, input_mask, gold_mentions, gold_clusters, num_mentions)
             cluster_logits, coref_logits, mention_logits, mentions_list = \
                 outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits'], outputs['mentions']
 
             if args.use_topk_mentions:
+                mentions_list = mentions_list.detach().cpu().numpy()
+                mentions_list = [[(m[0], m[1]) for m in mentions_list[j] if m[0] != -1 and m[1] != -1] for j in range(mentions_list.shape[0])]
                 gold_matrix = create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_matrix)
             if args.add_junk:
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), mention_logits.cpu().detach(),
