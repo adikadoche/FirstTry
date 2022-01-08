@@ -109,11 +109,13 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
             if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
                 if not args.is_debug:
-                    wandb.log({'lr': optimizer.param_groups[0]['lr']}, step=global_step)
-                    wandb.log({'lr_bert': optimizer.param_groups[1]['lr']}, step=global_step)
-                    wandb.log({'loss': np.mean(recent_losses)}, step=global_step)
+                    dict_to_log = {}
+                    dict_to_log['lr'] = optimizer.param_groups[0]['lr']
+                    dict_to_log['lr_bert'] = optimizer.param_groups[1]['lr']
+                    dict_to_log['loss'] = np.mean(recent_losses)
                     for key in recent_losses_parts.keys():
-                        wandb.log({key: np.mean(recent_losses_parts[key])}, step=global_step)
+                        dict_to_log[key] = np.mean(recent_losses_parts[key])
+                    wandb.log(dict_to_log, step=global_step)
                 recent_losses.clear()
                 recent_losses_parts.clear()
         if args.max_steps > 0 and global_step > args.max_steps:
@@ -229,9 +231,11 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
         p_train, r_train, f1_train = evaluator.get_prf()
         if args.local_rank in [-1, 0]:
             if not args.is_debug:
-                wandb.log({'Train Precision':p_train}, step=global_step)
-                wandb.log({'Train Recall': r_train}, step=global_step)
-                wandb.log({'Train F1': f1_train}, step=global_step)
+                dict_to_log = {}
+                dict_to_log['Train Precision'] = p_train
+                dict_to_log['Train Recall'] = r_train
+                dict_to_log['Train F1'] = f1_train
+                wandb.log(dict_to_log, step=global_step)
             logger.info('Train f1, precision, recall: {}'.format((f1_train, p_train, r_train)))
 
         if args.lr_drop_interval == 'epoch':
