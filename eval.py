@@ -71,11 +71,12 @@ def make_evaluation(model, criterion, eval_loader, eval_dataset, args):
 
                 try:
                     for checkpoint in checkpoints:
-                        loaded_args = load_from_checkpoint(model, checkpoint, device=args.device)
+                        loaded_args = load_from_checkpoint(model, args.resume_from, args.device)
                         global_step = int(loaded_args['global_step'])
-                        coref_threshold = loaded_args['coref_threshold']
-                        cluster_threshold = loaded_args['cluster_threshold']
-                        results = report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, coref_threshold, cluster_threshold)
+                        coref_threshold = loaded_args['numbers']['coref_threshold']
+                        cluster_threshold = loaded_args['numbers']['cluster_threshold']
+                        thresh_delta = loaded_args['numbers']['thresh_delta']
+                        results = report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, coref_threshold, cluster_threshold, thresh_delta)
                         if results['avg_f1'] > best_f1:
                             best_checkpoint = checkpoint
                             best_f1 = results['avg_f1']
