@@ -45,7 +45,7 @@ def main():
         if args.no_cuda:
             args.n_gpu = 0
         else:
-            args.n_gpu = 1 
+            args.n_gpu = 2
             os.environ["CUDA_VISIBLE_DEVICES"] = "1"
             os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
     if args.local_rank == -1 or args.no_cuda:
@@ -61,7 +61,7 @@ def main():
         if args.no_cuda:
             args.n_gpu = 0
         else:
-            args.n_gpu = 1 
+            args.n_gpu = 2
             os.environ["CUDA_VISIBLE_DEVICES"] = "1"
             os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
