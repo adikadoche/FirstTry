@@ -91,16 +91,16 @@ class DETR(nn.Module):
         else:
             raw_query_embed = self.query_embed.weight
 
-        if self.args.use_topk_mentions:
-            span_starts, span_ends, longfomer_no_pad_list = self.longformer(input_ids, mask, gold_clusters)
+        bs = input_ids.shape[0]
+        input_ids_r = input_ids.reshape(bs, -1)
+        mask_r = mask.reshape(bs, -1)
+        if self.args.use_topk_mentions:  #TODO: batches
+            span_starts, span_ends, longfomer_no_pad_list = self.backbone(input_ids_r, mask_r, gold_clusters)
             span_emb, span_mask = self.get_span_emb([longfomer_no_pad_list.reshape(-1, longfomer_no_pad_list.shape[-1])], [span_starts[0]], [span_ends[0]], torch.tensor([span_ends[0].shape[0]]))  # [mentions, emb']
             embedding = self.span_proj(span_emb) # [mentions, emb]
-            mentions_list = [[(span_starts.detach().cpu().numpy()[0][i], span_ends.detach().cpu().numpy()[0][i]) for i in range(len(span_ends[0]))]]
+            mentions = [[(span_starts.detach().cpu().numpy()[0][i], span_ends.detach().cpu().numpy()[0][i]) for i in range(len(span_ends[0]))]]
             hs, memory = self.transformer(embedding, span_mask, raw_query_embed)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
         else:
-            bs = input_ids.shape[0]
-            input_ids_r = input_ids.reshape(input_ids.shape[0], -1)
-            mask_r = mask.reshape(mask.shape[0], -1)
             longfomer_no_pad_list = []
             for i in range(input_ids_r.shape[0]):
                 masked_ids = input_ids_r[i][mask_r[i]==1].unsqueeze(0)
@@ -126,7 +126,7 @@ class DETR(nn.Module):
                 span_emb, span_mask = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends, num_mentions)  # [mentions, emb']
                 span_emb = self.span_proj(span_emb) # [mentions, emb]
                 hs, memory = self.transformer(span_emb, span_mask, raw_query_embed)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
-            mentions_list = gold_mentions
+            mentions = gold_mentions
 
 
         last_hs = hs[-1] # [1, num_queries, emb]
@@ -135,7 +135,7 @@ class DETR(nn.Module):
         out = {"coref_logits": coref_logits,
                 "cluster_logits": cluster_logits,
                 "mention_logits": mention_logits, 
-                'mentions_list': mentions_list}
+                'mentions': mentions}
                 # "aux_coref_logits": aux_coref_logits}
         return out
 
@@ -222,7 +222,7 @@ class DETR(nn.Module):
         num_words = encoded_doc.shape[0]  # T
         num_c = len(span_starts)  # NC
 
-        doc_range = torch.arange(0, num_words).unsqueeze(0).repeat(num_c, 1)  # [K, T]
+        doc_range = torch.arange(0, num_words, device=span_starts.device).unsqueeze(0).repeat(num_c, 1)  # [K, T]
         mention_mask = torch.logical_and(doc_range >= span_starts.unsqueeze(1),
                                       doc_range <= span_ends.unsqueeze(1))  # [K, T]
 

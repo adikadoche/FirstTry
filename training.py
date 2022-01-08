@@ -13,7 +13,7 @@ from utils import tensor_and_remove_empty, create_gold_matrix, calc_predicted_cl
 from optimization import WarmupLinearSchedule, WarmupExponentialSchedule
 import itertools
 from metrics import CorefEvaluator
-from utils import load_from_checkpoint, save_checkpoint
+from utils import load_from_checkpoint, save_checkpoint, create_target_and_predict_matrix
 from consts import TOKENS_PAD, SPEAKER_PAD
 
 from transformers import AdamW, get_constant_schedule_with_warmup
@@ -36,15 +36,11 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         sum_text_len = [sum(tl) for tl in batch['text_len']]
         gold_clusters = batch['clusters']
 
-        gold_mentions_list = None
-        if args.use_gold_mentions:
-            # gold_mentions = []
-            # if len(gold_clusters) > 0:  #TODO: create junk clusters even if 0 gold clusters
-            gold_mentions_list = [list(set([tuple(m) for c in gc for m in c])) for gc in gold_clusters]
-            if args.add_junk:
-                gold_mentions_list, gold_mentions_vector = create_junk_gold_mentions(gold_mentions_list, sum_text_len, args.device)
-            else:
-                gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=args.device) for gm in gold_mentions_list]
+        gold_mentions_list = [list(set([tuple(m) for c in gc for m in c])) for gc in gold_clusters]
+        if args.add_junk:
+            gold_mentions_list, gold_mentions_vector = create_junk_gold_mentions(gold_mentions_list, sum_text_len, args.device)
+        else:
+            gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=args.device) for gm in gold_mentions_list]
 
         input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = tensor_and_remove_empty(batch, gold_mentions_list, args, input_ids_pads, mask_pads)
         # if len(input_ids) == 0 or input_ids.shape[1] > 1:
@@ -65,14 +61,18 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                 loss = criterion(outputs, gold_matrix)
         else:
             outputs = model(input_ids, sum_text_len, input_mask, gold_mentions, gold_clusters, num_mentions)
-            cluster_logits, coref_logits, mention_logits = outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits']
+            cluster_logits, coref_logits, mention_logits, mentions = \
+                outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits'], outputs['mentions']
 
+            if args.use_topk_mentions:
+                gold_matrix = create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_matrix)
+                gold_mentions_list = None
             if args.add_junk:
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), mention_logits.cpu().detach(),
-                                                            coref_threshold, cluster_threshold, gold_mentions_list)
+                                                            coref_threshold, cluster_threshold, mentions_list)
             else:
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
-                                                            coref_threshold, cluster_threshold, gold_mentions_list)
+                                                            coref_threshold, cluster_threshold, mentions_list)
             evaluator.update(predicted_clusters, gold_clusters)
             loss, loss_parts = criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
 

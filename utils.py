@@ -200,6 +200,25 @@ def create_gold_matrix(device, doc_len, num_queries, gold_clusters, gold_mention
 
     return gold_per_token_batch
 
+def create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_matrix):
+    target_matrix_list = []
+    for b in range(len(gold_matrix)):
+        common_mentions = [m for m in mentions_list[b] if m in gold_mentions_list[b]]
+        common_gold_ind = torch.zeros(len(common_mentions), dtype=torch.long, device=gold_matrix[0].device)
+        ind = 0
+        for i in range(len(mentions_list[b])):
+            if mentions_list[b][i] in common_mentions:
+                for j in range(len(gold_mentions_list[b])):
+                    if gold_mentions_list[b][j] == mentions_list[b][i]:
+                        common_gold_ind[ind] = j
+                        ind += 1
+
+        junk_mentions_indices = torch.tensor([i for i, m in enumerate(mentions_list[b]) if m not in gold_mentions_list[b]], dtype=torch.long, device=gold_matrix[0].device)
+        target_matrix = torch.zeros(gold_matrix[b].shape[0], len(common_mentions)+len(junk_mentions_indices), device=gold_matrix[b].device)
+        target_matrix[:len(common_mentions)] = torch.index_select(gold_matrix[b], 1, common_gold_ind)         
+        target_matrix_list.append(target_matrix)
+    return target_matrix_list
+
 def make_mentions_from_clustered_tokens(self, coref_logits):
     pass
 
