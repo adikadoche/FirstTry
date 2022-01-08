@@ -138,13 +138,37 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
 
     optimizer = torch.optim.AdamW(param_dicts, lr=args.lr,
                                   weight_decay=args.weight_decay)
-    
+
+    if args.max_steps > 0:
+        args.t_total = args.max_steps
+        args.num_train_epochs = args.max_steps // (len(train_loader) // args.gradient_accumulation_steps) + 1
+    else:
+        args.t_total = len(train_loader) // args.gradient_accumulation_steps * args.num_train_epochs
+
+    # lr_scheduler = get_constant_schedule_with_warmup(optimizer, num_warmup_steps=int(args.warmup_steps / args.train_batch_size))
+    lr_scheduler = WarmupLinearSchedule(optimizer, warmup_steps=args.warmup_steps // args.train_batch_size,
+                                        t_total=args.t_total)  # ConstantLRSchedule(optimizer)
+    # lr_scheduler = WarmupExponentialSchedule(optimizer, warmup_steps=int(args.warmup_steps / args.train_batch_size),
+    #                                     gamma=0.99998)  # ConstantLRSchedule(optimizer)
+
+    thresh_delta = 0.2    
+    coref_threshold, cluster_threshold = 0.5, 0.5 # starting threshold, later fixed by eval
+    best_f1 = -1
+    best_f1_global_step = -1
+    last_saved_global_step = -1
     if args.resume_from:
         logger.info("Loading from checkpoint {}".format(args.resume_from))
-        loaded_args = load_from_checkpoint(model, args.resume_from, args.device, optimizer)
+        loaded_args = load_from_checkpoint(model, args.resume_from, args.device, optimizer, lr_scheduler)
         args.resume_global_step = int(loaded_args['global_step'])
+        coref_threshold = loaded_args['numbers']['coref_threshold']
+        cluster_threshold = loaded_args['numbers']['cluster_threshold']
+        best_f1_global_step = loaded_args['numbers']['best_f1_global_step']
+        last_saved_global_step = loaded_args['numbers']['last_saved_global_step']
+        best_f1 = loaded_args['numbers']['best_f1']
+        thresh_delta = loaded_args['numbers']['thresh_delta']   
         if not args.do_train:
             return args.resume_global_step
+        args.num_train_epochs = (args.t_total - args.resume_global_step) * args.gradient_accumulation_steps // len(train_loader)
 
     scaler = None
     if args.amp:
@@ -160,17 +184,6 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
                                                           output_device=args.local_rank,
                                                           find_unused_parameters=True)
     
-    if args.max_steps > 0:
-        args.t_total = args.max_steps
-        args.num_train_epochs = args.max_steps // (len(train_loader) // args.gradient_accumulation_steps) + 1
-    else:
-        args.t_total = len(train_loader) // args.gradient_accumulation_steps * args.num_train_epochs
-
-    # lr_scheduler = get_constant_schedule_with_warmup(optimizer, num_warmup_steps=int(args.warmup_steps / args.train_batch_size))
-    lr_scheduler = WarmupLinearSchedule(optimizer, warmup_steps=args.warmup_steps // args.train_batch_size,
-                                        t_total=args.t_total)  # ConstantLRSchedule(optimizer)
-    # lr_scheduler = WarmupExponentialSchedule(optimizer, warmup_steps=int(args.warmup_steps / args.train_batch_size),
-    #                                     gamma=0.99998)  # ConstantLRSchedule(optimizer)
     
     if args.train_batch_size > 1:
         args.eval_steps = -1 if args.eval_steps == -1 else max(1, int(round(args.eval_steps / args.train_batch_size)))
@@ -201,12 +214,7 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
     train_iterator = tqdm(train_iterator, desc="Epoch", disable=args.local_rank not in [-1, 0])
     set_seed(args)  # Added here for reproducibility (even between python 2 and 3)
     skip_steps = args.skip_steps
-    coref_threshold, cluster_threshold = 0.5, 0.5 # starting threshold, later fixed by eval
-    thresh_delta = 0.2
     same_thresh_count = 0
-    best_f1 = -1
-    best_f1_global_step = -1
-    last_saved_global_step = -1
 
     start_time = time.time()
     for epoch in train_iterator:
@@ -247,21 +255,33 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
 
             if args.save_epochs > 0 and (epoch + 1) % args.save_epochs == 0 or epoch + 1 == args.num_train_epochs:
                 if eval_f1 > best_f1:
+                    numbers = {'coref_threshold':coref_threshold, 
+                        'cluster_threshold': cluster_threshold, 
+                        'thresh_delta': thresh_delta,
+                        'best_f1_global_step': global_step,
+                        'last_saved_global_step': last_saved_global_step,
+                        'best_f1': eval_f1}
                     prev_best_f1 = best_f1
                     prev_best_f1_global_step = best_f1_global_step
                     output_dir = os.path.join(args.output_dir, 'checkpoint-{}'.format(global_step))
-                    save_checkpoint(args, global_step, coref_threshold, cluster_threshold, model, optimizer, output_dir)
+                    save_checkpoint(args, global_step, numbers, model, optimizer, lr_scheduler, output_dir)
                     print(f'previous checkpoint with f1 {prev_best_f1} was {prev_best_f1_global_step}')
                     best_f1 = eval_f1
                     best_f1_global_step = global_step
                     print(f'saved checkpoint with f1 {best_f1} in step {best_f1_global_step} to {output_dir}')
-                    if prev_best_f1_global_step > -1:
-                        path_to_remove = os.path.join(args.output_dir, 'checkpoint-{}'.format(prev_best_f1_global_step))
+                    path_to_remove = os.path.join(args.output_dir, 'checkpoint-{}'.format(prev_best_f1_global_step))
+                    if prev_best_f1_global_step > -1 and os.path.exists(path_to_remove):
                         shutil.rmtree(path_to_remove)
                         print(f'removed checkpoint with f1 {prev_best_f1} from {path_to_remove}')
                 else:
+                    numbers = {'coref_threshold':coref_threshold, 
+                        'cluster_threshold': cluster_threshold, 
+                        'thresh_delta': thresh_delta,
+                        'best_f1_global_step': best_f1_global_step,
+                        'last_saved_global_step': global_step,
+                        'best_f1': best_f1}
                     output_dir = os.path.join(args.output_dir, 'checkpoint-{}'.format(global_step))
-                    save_checkpoint(args, global_step, coref_threshold, cluster_threshold, model, optimizer, output_dir)
+                    save_checkpoint(args, global_step, numbers, model, optimizer, lr_scheduler, output_dir)
                     print(f'saved checkpoint in global_step {global_step}')
                     path_to_remove = os.path.join(args.output_dir, 'checkpoint-{}'.format(last_saved_global_step))
                     if last_saved_global_step > -1 and last_saved_global_step != best_f1_global_step and os.path.exists(path_to_remove):
