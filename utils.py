@@ -436,7 +436,7 @@ def pad_mentions(gold_mentions, max_mentions):
     return padded_gold_mentions
 
 def tensor_and_remove_empty(batch, gold_mentions, gold_clusters, args):
-    bs = len(batch['text_len']) / args.n_gpu
+    bs = len(batch['text_len'])
     # if args.use_gold_mentions:
     #     zero_mentions_inds = [i for i in range(len(gold_mentions)) if len(gold_mentions[i]) == 0]
     #     if len(zero_mentions_inds) == bs:
@@ -461,8 +461,8 @@ def tensor_and_remove_empty(batch, gold_mentions, gold_clusters, args):
     #     gold_clusters.pop(index_to_remove)
     #     max_len = max([sum(batch['text_len'][i]) for i in range(len(batch['text_len']))])
     #     bs = len(batch['text_len'])
-    input_ids = torch.ones(args.n_gpu, bs, max_len, dtype=torch.int, device=args.device) * TOKENS_PAD
-    input_mask = torch.ones(args.n_gpu, bs, max_len, dtype=torch.int, device=args.device) * MASK_PAD
+    input_ids = torch.ones(bs, max_len, dtype=torch.int, device=args.device) * TOKENS_PAD
+    input_mask = torch.ones(bs, max_len, dtype=torch.int, device=args.device) * MASK_PAD
 
     sum_text_len, num_mentions, new_gold_mentions = [], [], []
     max_mentions = max([len(gm) for gm in gold_mentions])
