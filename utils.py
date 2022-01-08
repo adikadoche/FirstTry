@@ -56,8 +56,10 @@ def load_from_checkpoint(model, resume_from, device=None, optimizer=None, lr_sch
     checkpoint = torch.load(resume_from + '/model.step-' + global_step + '.pt', map_location=device)
     model_to_load = model.module if hasattr(model, 'module') else model  # Take care of distributed/parallel training
     model_to_load.load_state_dict(checkpoint['model'])
-    optimizer.load_state_dict(checkpoint['optimizer'])
-    lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+    if optimizer is not None:
+        optimizer.load_state_dict(checkpoint['optimizer'])
+    if lr_scheduler is not None:
+        lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
     numbers = checkpoint['numbers']
             
     return {'global_step':global_step, 'numbers':numbers}
