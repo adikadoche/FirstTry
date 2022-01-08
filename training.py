@@ -14,7 +14,6 @@ from optimization import WarmupLinearSchedule, WarmupExponentialSchedule
 import itertools
 from metrics import CorefEvaluator
 from utils import load_from_checkpoint, save_checkpoint, create_target_and_predict_matrix
-from consts import TOKENS_PAD, SPEAKER_PAD
 
 from transformers import AdamW, get_constant_schedule_with_warmup
 
@@ -24,8 +23,6 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     epoch_iterator, optimizer: torch.optim.Optimizer, scaler: torch.cuda.amp.GradScaler,
                     args, evaluator, skip_steps, recent_losses, recent_losses_parts, global_step, lr_scheduler,
         coref_threshold, cluster_threshold):
-    input_ids_pads = torch.ones(1, args.max_segment_len, dtype=torch.int, device=args.device) * TOKENS_PAD
-    mask_pads = torch.zeros(1, args.max_segment_len, dtype=torch.int, device=args.device)
     for step, batch in enumerate(epoch_iterator):
         if skip_steps > 0:
             skip_steps -= 1
@@ -42,7 +39,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         else:
             gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=args.device) for gm in gold_mentions_list]
 
-        input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = tensor_and_remove_empty(batch, gold_mentions_list, args, input_ids_pads, mask_pads)
+        input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = tensor_and_remove_empty(batch, gold_mentions_list, args)
         # if len(input_ids) == 0 or input_ids.shape[1] > 1:
         if len(input_ids) == 0:
             print(f"skipped {step}")
@@ -61,12 +58,11 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                 loss = criterion(outputs, gold_matrix)
         else:
             outputs = model(input_ids, sum_text_len, input_mask, gold_mentions, gold_clusters, num_mentions)
-            cluster_logits, coref_logits, mention_logits, mentions = \
+            cluster_logits, coref_logits, mention_logits, mentions_list = \
                 outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits'], outputs['mentions']
 
             if args.use_topk_mentions:
                 gold_matrix = create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_matrix)
-                gold_mentions_list = None
             if args.add_junk:
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), mention_logits.cpu().detach(),
                                                             coref_threshold, cluster_threshold, mentions_list)

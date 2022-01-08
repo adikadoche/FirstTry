@@ -125,7 +125,7 @@ def parse_args():
 
     parser.add_argument('--max_training_sentences', default=3, type=int)
     parser.add_argument('--max_num_speakers', default=20, type=int)
-    parser.add_argument('--max_segment_len', default=512, type=int)
+    parser.add_argument('--max_segment_len', default=4096, type=int)
     parser.add_argument('--limit_trainset', default=-1, type=int)
     parser.add_argument('--use_gold_mentions', action='store_true')
     parser.add_argument('--use_topk_mentions', action='store_true')

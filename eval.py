@@ -12,9 +12,8 @@ from tqdm import tqdm
 from coref_bucket_batch_sampler import BucketBatchSampler
 from coref_analysis import print_predictions, error_analysis
 from data import get_dataset
-from utils import tensor_and_remove_empty, calc_best_avg_f1, create_gold_matrix, try_measure_len, load_from_checkpoint, create_junk_gold_mentions
+from utils import tensor_and_remove_empty, create_target_and_predict_matrix, calc_best_avg_f1, create_gold_matrix, try_measure_len, load_from_checkpoint, create_junk_gold_mentions
 from conll import evaluate_conll
-from consts import TOKENS_PAD, SPEAKER_PAD
 import wandb
 logger = logging.getLogger(__name__)
 
@@ -122,9 +121,6 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", c
     all_gold_clusters = []
     all_gold_mentions = []
 
-    input_ids_pads = torch.ones(1, args.max_segment_len, dtype=torch.int, device=args.device) * TOKENS_PAD
-    mask_pads = torch.zeros(1, args.max_segment_len, dtype=torch.int, device=args.device)
-
     for batch in tqdm(eval_dataloader, desc="Evaluating"):
         model.eval()
 
@@ -142,20 +138,20 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", c
         
         gold_matrix = create_gold_matrix(args.device, sum_text_len, args.num_queries, gold_clusters, gold_mentions_list)
 
-        input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = tensor_and_remove_empty(batch, gold_mentions_list, args, input_ids_pads, mask_pads)
+        input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = tensor_and_remove_empty(batch, gold_mentions_list, args)
         if len(input_ids) == 0:
             continue
             
-        all_gold_mentions += gold_mentions_list
-        all_input_ids += input_ids    
-        all_gold_clusters += gold_clusters
-
         with torch.no_grad():
             # orig_input_dim = input_ids.shape
             # input_ids = torch.reshape(input_ids, (1, -1))
             # input_mask = torch.reshape(input_mask, (1, -1))
             outputs = model(input_ids, sum_text_len, input_mask, gold_mentions, gold_clusters, num_mentions)
-            cluster_logits, coref_logits, mention_logits = outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits']
+            cluster_logits, coref_logits, mention_logits, mentions_list = \
+                outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits'], outputs['mentions']
+
+            if args.use_topk_mentions:
+                gold_matrix = create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_matrix)
 
             loss, loss_parts = criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
             losses.append(loss.mean().detach().cpu())
@@ -165,6 +161,10 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", c
                 else:
                     losses_parts[key] = loss_parts[key]
             batch_sizes.append(loss.shape[0]) 
+
+        all_gold_mentions += mentions_list
+        all_input_ids += input_ids    
+        all_gold_clusters += gold_clusters
 
         if args.add_junk:
             all_mention_logits_cuda += [ml.detach().clone() for ml in mention_logits]

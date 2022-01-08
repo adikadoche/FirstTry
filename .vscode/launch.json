@@ -63,7 +63,7 @@
                 "--max_seq_length",
                 "4096",
                 "--per_gpu_train_batch_size",
-                "1",
+                "2",
                 "--per_gpu_eval_batch_size",
                 "1",
                 // "--train_file_cache", "/home/gamir/adiz/Code/runs/s2e-coref/cache_dir/train.english.4096.pkl",
