@@ -312,7 +312,7 @@ class MatchingLoss(nn.Module):
 
             coref_logits = torch.index_select(coref_logits, 1, torch.arange(0, targets_clusters[i].shape[1]).to(coref_logits.device))
 
-            cost_coref = 0
+            cost_coref = torch.tensor(0)
             if matched_predicted_cluster_id[i] is not False:
                 permuted_coref_logits = coref_logits[matched_predicted_cluster_id[i].numpy()]
                 permuted_gold = targets_clusters[i][matched_gold_cluster_id[i].numpy()]
