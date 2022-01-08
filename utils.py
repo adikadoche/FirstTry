@@ -17,31 +17,63 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def save_checkpoint(args, global_step, coref_threshold, cluster_threshold, model, optimizer, output_dir, amp=None):
+# def save_checkpoint(args, global_step, numbers, model, optimizer, lr_scheduler, output_dir, amp=None):
+#     # Save model checkpoint
+#     if not os.path.exists(output_dir):
+#         os.makedirs(output_dir)
+#     model_to_save = model.module if hasattr(model, 'module') else model  # Take care of distributed/parallel training
+#     torch.save({
+#         'model': model_to_save.state_dict(),
+#         'coref_threshold': numbers['coref_threshold'],
+#         'cluster_threshold': numbers['cluster_threshold'],
+#         'thresh_delta': numbers['thresh_delta'],
+#         'best_f1_global_step': numbers['best_f1_global_step'],
+#         'last_saved_global_step': numbers['last_saved_global_step'],
+#         'best_f1': numbers['best_f1'],
+#         'optimizer': optimizer.state_dict(),
+#         'lr_scheduler': lr_scheduler.state_dict(),
+#         'args': args
+#         }, os.path.join(output_dir, 'model.step-{}.pt'.format(global_step)))
+#     logger.info("Saved model checkpoint to %s", output_dir)
+
+def save_checkpoint(args, global_step, numbers, model, optimizer, lr_scheduler, output_dir, amp=None):
     # Save model checkpoint
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
     model_to_save = model.module if hasattr(model, 'module') else model  # Take care of distributed/parallel training
-    # model_to_save.save_pretrained(output_dir)
     torch.save({
         'model': model_to_save.state_dict(),
-        'coref_threshold': coref_threshold,
-        'cluster_threshold': cluster_threshold,
+        'numbers': numbers,
         'optimizer': optimizer.state_dict(),
+        'lr_scheduler': lr_scheduler.state_dict(),
         'args': args
         }, os.path.join(output_dir, 'model.step-{}.pt'.format(global_step)))
     logger.info("Saved model checkpoint to %s", output_dir)
 
 
-def load_from_checkpoint(model, resume_from, device=None, optimizer=None, amp=None):
+def load_from_checkpoint(model, resume_from, device=None, optimizer=None, lr_scheduler=None, amp=None):
     global_step = resume_from.rstrip('/').split('-')[-1]
     checkpoint = torch.load(resume_from + '/model.step-' + global_step + '.pt', map_location=device)
     model_to_load = model.module if hasattr(model, 'module') else model  # Take care of distributed/parallel training
     model_to_load.load_state_dict(checkpoint['model'])
-    coref_threshold = checkpoint['coref_threshold']
-    cluster_threshold = checkpoint['cluster_threshold']
+    optimizer.load_state_dict(checkpoint['optimizer'])
+    lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+    numbers = checkpoint['numbers']
             
-    return {'global_step':global_step, 'coref_threshold':coref_threshold, 'cluster_threshold':cluster_threshold}
+    return {'global_step':global_step, 'numbers':numbers}
+
+# def load_from_checkpoint(model, resume_from, device=None, optimizer=None, lr_scheduler=None, amp=None):
+#     global_step = resume_from.rstrip('/').split('-')[-1]
+#     checkpoint = torch.load(resume_from + '/model.step-' + global_step + '.pt', map_location=device)
+#     model_to_load = model.module if hasattr(model, 'module') else model  # Take care of distributed/parallel training
+#     model_to_load.load_state_dict(checkpoint['model'])
+#     for _ in range(int(global_step)):
+#         lr_scheduler.step()
+#     optimizer.load_state_dict(checkpoint['optimizer'])
+#     coref_threshold = checkpoint['coref_threshold']
+#     cluster_threshold = checkpoint['cluster_threshold']
+            
+#     return {'global_step':global_step, 'coref_threshold':coref_threshold, 'cluster_threshold':cluster_threshold}
 
 
 def extract_clusters(gold_clusters):

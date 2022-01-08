@@ -24,8 +24,10 @@ def report_eval(args, eval_dataloader, eval_dataset, global_step, model, criteri
     if args.local_rank == -1:  # Only evaluate when single GPU otherwise metrics may not average well
         results = evaluate(args, eval_dataloader, eval_dataset, model, criterion, str(global_step), coref_threshold, cluster_threshold, thresh_delta)
         if not args.is_debug:
+            dict_to_log = {}
             for key, value in results.items():
-                wandb.log({'eval_{}'.format(key): value}, step=global_step)
+                dict_to_log['eval_{}'.format(key)] = value
+            wandb.log(dict_to_log, step=global_step)
         return results
     return None
 
@@ -90,10 +92,12 @@ def make_evaluation(model, criterion, eval_loader, eval_dataset, args):
                 logger.info("No new checkpoints. Best F1 is {} in checkpoint {}. Second best F1 is {} in checkpoint {}. Sleep for {} seconds.".format(
                     str(best_f1), best_checkpoint, str(second_best_f1), second_best_checkpoint, args.eval_sleep))
                 if not args.is_debug:
-                    wandb.log({'eval_best_f1': best_f1})
-                    wandb.log({'eval_best_f1_checkpoint': best_checkpoint})
-                    wandb.log({'eval_second_best_f1': second_best_f1})
-                    wandb.log({'eval_second_best_f1_checkpoint': second_best_checkpoint})
+                    dict_to_log = {}
+                    dict_to_log['eval_best_f1'] = best_f1
+                    dict_to_log['eval_best_f1_checkpoint'] = best_checkpoint
+                    dict_to_log['eval_second_best_f1'] = second_best_f1
+                    dict_to_log['eval_second_best_f1_checkpoint'] = second_best_checkpoint
+                    wandb.log(dict_to_log, step=global_step)
                 return True
 
 def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", coref_threshold=0.5, cluster_threshold=0.5, thresh_delta=0.02):  #TODO: use threshold when resuming from checkpoint rather than searching it
