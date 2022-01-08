@@ -435,8 +435,20 @@ def pad_mentions(gold_mentions, max_mentions):
     padded_gold_mentions = torch.tensor(np.asarray(gold_mentions + (max_mentions-len(gold_mentions)) * [(-1, -1)])).unsqueeze(0)
     return padded_gold_mentions
 
-def tensor_and_remove_empty(batch, gold_mentions, args):
+def tensor_and_remove_empty(batch, gold_mentions, gold_clusters, args):
     bs = len(batch['text_len'])
+    if args.use_gold_mentions:
+        zero_mentions_inds = [i for i in range(len(gold_mentions)) if len(gold_mentions[i]) == 0]
+        if len(zero_mentions_inds) == bs:
+            return [],[],[],[],[]
+        elif len(zero_mentions_inds) > 0:
+            for index_to_remove in zero_mentions_inds:
+                batch['text_len'].pop(index_to_remove)
+                batch['input_ids'].pop(index_to_remove)
+                batch['input_mask'].pop(index_to_remove)
+                gold_mentions.pop(index_to_remove)
+                gold_clusters.pop(index_to_remove)
+            bs = len(batch['text_len'])
     max_len = max([sum(batch['text_len'][i]) for i in range(len(batch['text_len']))])
     if max_len > args.max_seq_length:
         if bs == 1:
@@ -445,9 +457,10 @@ def tensor_and_remove_empty(batch, gold_mentions, args):
         batch['text_len'].pop(index_to_remove)
         batch['input_ids'].pop(index_to_remove)
         batch['input_mask'].pop(index_to_remove)
-        batch['text_len'].pop(index_to_remove)
+        gold_mentions.pop(index_to_remove)
+        gold_clusters.pop(index_to_remove)
         max_len = max([sum(batch['text_len'][i]) for i in range(len(batch['text_len']))])
-        bs -= 1
+        bs = len(batch['text_len'])
     input_ids = torch.ones(bs, max_len, dtype=torch.int, device=args.device) * TOKENS_PAD
     input_mask = torch.ones(bs, max_len, dtype=torch.int, device=args.device) * MASK_PAD
 
