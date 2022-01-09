@@ -94,18 +94,16 @@ class DETR(nn.Module):
 
         bs = input_ids.shape[0]
         if self.args.use_topk_mentions:  #TODO: batches
-            longfomer_no_pad_list, span_starts, span_ends, mentions, mention_probs_list, gold_mention_probs_list = [[]]*bs, [[]]*bs, [[]]*bs, [[]]*bs, [[]]*bs, [[]]*bs
+            longfomer_no_pad_list, span_starts, span_ends, mentions, cost_is_mention = [[]]*bs, [[]]*bs, [[]]*bs, [[]]*bs, [[]]*bs
             new_num_mentions = torch.zeros(num_mentions.shape, dtype=torch.long)
             for i in range(bs):
                 masked_ids = input_ids[i][mask[i]==1].unsqueeze(0)
                 masked_mask = torch.ones_like(masked_ids).unsqueeze(0)
-                span_starts[i], span_ends[i], mentions_mask, longfomer_no_pad_list[i], gold_mention_probs_list[i], mention_probs_list[i] = self.backbone(masked_ids, masked_mask, gold_mentions[i])
+                span_starts[i], span_ends[i], mentions_mask, longfomer_no_pad_list[i], cost_is_mention[i] = self.backbone(masked_ids, masked_mask, gold_mentions[i])
                 longfomer_no_pad_list[i] = longfomer_no_pad_list[i].squeeze(0)
                 span_starts[i] = span_starts[i].squeeze(0)
                 span_ends[i] = span_ends[i].squeeze(0)
                 new_num_mentions[i] = torch.sum(mentions_mask)
-                mention_probs_list[i] = torch.cat([mention_probs_list[i], torch.zeros(1, max_mentions_len[0] - mention_probs_list[i].shape[1], device=mention_probs_list[i].device)], 1)
-                gold_mention_probs_list[i] = torch.cat([gold_mention_probs_list[i], torch.zeros(1, gold_mentions.shape[1] - gold_mention_probs_list[i].shape[1], device=gold_mention_probs_list[i].device)], 1)
                 # start, end = span_starts[i].detach().cpu().numpy(), span_ends[i].detach().cpu().numpy()
                 # mentions[i] = [(start[j], end[j]) for j in range(span_starts[i].shape[0])]
             span_emb, span_mask = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends, new_num_mentions)  # [mentions, emb']
@@ -144,13 +142,12 @@ class DETR(nn.Module):
                 'mentions': mentions}
 
         if self.args.use_topk_mentions:
-            mention_logits = torch.cat(mention_probs_list, 0)
-            gold_mention_logits = torch.cat(gold_mention_probs_list, 0)
+            cost_is_mention = torch.cat(cost_is_mention, 0)
             out = {"coref_logits": coref_logits,
                     "cluster_logits": cluster_logits,
                     "mention_logits": mention_logits,  #mention_probs
                     'mentions': mentions,
-                    'gold_mention_probs': gold_mention_logits}
+                    'cost_is_mention': cost_is_mention}
                 # "aux_coref_logits": aux_coref_logits}
         return out
 
@@ -300,17 +297,7 @@ class MatchingLoss(nn.Module):
             cost_is_cluster = F.binary_cross_entropy(cluster_logits, gold_is_cluster, weight=weight_cluster)
                 
             if self.args.use_topk_mentions and not self.args.is_frozen:
-                mention_probs = outputs["mention_logits"][i].unsqueeze(0) # [tokens]
-                mention_probs = torch.index_select(mention_probs, 1, torch.arange(0, targets_mentions[i].shape[0]).to(mention_probs.device))
-                mention_probs = mention_probs[0][targets_mentions[i]==0].unsqueeze(0)
-                gold_mention_probs = outputs["gold_mention_probs"][i].unsqueeze(0) # [gold]
-                gold_mention_probs = torch.index_select(gold_mention_probs, 1, torch.arange(0, int(torch.sum(targets_mentions[i]))).to(gold_mention_probs.device))
-
-                predict_prob = torch.cat([mention_probs, gold_mention_probs], 1)
-                gold_mentions = torch.cat([torch.zeros_like(mention_probs), torch.ones_like(gold_mention_probs)], 1)
-                weight_mention = torch.cat([self.eos_coef * torch.ones_like(mention_probs), torch.ones_like(gold_mention_probs)], 1)
-
-                cost_is_mention = F.binary_cross_entropy(predict_prob, gold_mentions, weight=weight_mention)
+                cost_is_mention = outputs["cost_is_mention"][i]
             elif not self.args.add_junk or sum(targets_mentions[i].shape) == 0:
                 cost_is_mention = torch.tensor(0)
             else:
@@ -373,10 +360,10 @@ class Backbone(nn.Module):
 
     def forward(self, input_ids, mask, gold_clusters=None):
         if self.args.use_topk_mentions:
-            span_starts, span_ends, mentions_mask, longfomer_no_pad_list, gold_mention_probs, topk_mention_probs = self.men_proposal(input_ids, mask, gold_clusters)
+            span_starts, span_ends, mentions_mask, longfomer_no_pad_list, cost_is_mention = self.men_proposal(input_ids, mask, gold_clusters)
             if self.args.is_frozen and self.longformer is not None:
                 longfomer_no_pad_list = self.longformer(input_ids, attention_mask=mask)[0]
-            return span_starts, span_ends, mentions_mask, longfomer_no_pad_list, gold_mention_probs, topk_mention_probs
+            return span_starts, span_ends, mentions_mask, longfomer_no_pad_list, cost_is_mention
         else: 
             return self.longformer(input_ids, mask)
 
@@ -525,7 +512,7 @@ class MenPropose(BertPreTrainedModel):
         mention_logits = joint_mention_logits + start_mention_logits.unsqueeze(-1) + end_mention_logits.unsqueeze(-2)
         mention_mask = self._get_mention_mask(mention_logits)  # [batch_size, seq_length, seq_length]
         mention_logits = mask_tensor(mention_logits, mention_mask)  # [batch_size, seq_length, seq_length]
-        return mention_logits
+        return mention_logits, mention_mask
 
     def forward(self, input_ids, attention_mask=None, gold_mentions=None):
         outputs = self.longformer(input_ids, attention_mask=attention_mask)
@@ -536,15 +523,28 @@ class MenPropose(BertPreTrainedModel):
         end_mention_reps = self.end_mention_mlp(sequence_output) if self.do_mlps else sequence_output
 
         # mention scores
-        mention_logits = self._calc_mention_logits(start_mention_reps, end_mention_reps)
+        mention_logits, mention_mask = self._calc_mention_logits(start_mention_reps, end_mention_reps)
 
         # prune mentions
         mention_start_ids, mention_end_ids, span_mask, topk_mention_logits = self._prune_topk_mentions(mention_logits, attention_mask)
+
+        mention_probs = mention_logits.sigmoid()
+        junk_probs = torch.clone(mention_probs)
 
         gold_start = gold_mentions.transpose(0,1)[0]
         gold_start = gold_start[gold_start>0].unsqueeze(0)
         gold_end = gold_mentions.transpose(0,1)[1]
         gold_end = gold_end[gold_end>0].unsqueeze(0)
-        gold_mention_probs = mention_logits[torch.arange(input_ids.shape[0]).unsqueeze(-1).expand(input_ids.shape[0], gold_start.shape[1]),
-                                            gold_start, gold_end].sigmoid()  # [batch_size, gold]
-        return (mention_start_ids, mention_end_ids, span_mask, sequence_output, gold_mention_probs, topk_mention_logits.sigmoid())
+        cost_gold = torch.tensor(0)
+        if gold_end.shape[1] > 0:
+            gold_probs = torch.clone(mention_probs)[torch.arange(input_ids.shape[0]).unsqueeze(-1).expand(input_ids.shape[0], gold_start.shape[1]),
+                                                        gold_start, gold_end].reshape(1,-1)
+            cost_gold = F.binary_cross_entropy(gold_probs, torch.ones_like(gold_probs))
+            junk_probs[torch.arange(input_ids.shape[0]).unsqueeze(-1).expand(input_ids.shape[0], gold_start.shape[1]),
+                                                        gold_start, gold_end] = 0
+        junk_probs = torch.masked_select(junk_probs, mention_mask==1).reshape(1,-1)
+ 
+        cost_is_mention = cost_gold + F.binary_cross_entropy(junk_probs, torch.zeros_like(junk_probs))
+       
+        return (mention_start_ids, mention_end_ids, span_mask, sequence_output, cost_is_mention.unsqueeze(0))
+ 
