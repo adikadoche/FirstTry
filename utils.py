@@ -11,7 +11,7 @@ import torch.distributed as dist
 from tqdm import tqdm
 from metrics import CorefEvaluator
 
-from consts import NULL_ID_FOR_COREF
+from consts import NULL_ID_FOR_COREF, TOKENS_PAD, MASK_PAD
 
 import logging
 logger = logging.getLogger(__name__)
@@ -397,34 +397,37 @@ def create_junk_gold_mentions(gold_mentions, text_len, device):
     return all_mentions, real_mentions_bools
 
 
-def pad_input_ids_and_mask_to_max_sentences(input_ids, mask, input_ids_pads, mask_pads, max_sentences):
-    if input_ids.shape[0] == max_sentences:
-        return input_ids.unsqueeze(0), mask.unsqueeze(0)
-    padded_input_ids = torch.cat([input_ids, input_ids_pads.repeat(max_sentences - input_ids.shape[0], 1)]).unsqueeze(0)
-    padded_mask = torch.cat([mask, mask_pads.repeat(max_sentences - input_ids.shape[0], 1)]).unsqueeze(0)
-    return padded_input_ids, padded_mask
+
+def pad_input_ids_and_mask_to_max_tokens(cur_input_ids, cur_mask, input_ids, mask, i):
+    cur_input_ids = cur_input_ids.reshape(cur_input_ids.shape[0], -1)
+    cur_mask = cur_mask.reshape(cur_mask.shape[0], -1)
+    cur_input_ids = cur_input_ids[cur_mask==1]
+    cur_mask = torch.ones_like(cur_input_ids)
+
+    input_ids[i][:len(cur_input_ids)] = cur_input_ids
+    mask[i][:len(cur_mask)] = cur_mask
+
+    return input_ids, mask
 
 def pad_mentions(gold_mentions, max_mentions):
     padded_gold_mentions = torch.tensor(np.asarray(gold_mentions + (max_mentions-len(gold_mentions)) * [(-1, -1)])).unsqueeze(0)
     return padded_gold_mentions
 
-def tensor_and_remove_empty(batch, gold_mentions, args, input_ids_pads, mask_pads):
-    input_ids, input_mask, sum_text_len, num_mentions, new_gold_mentions = [], [], [], [], []
+def tensor_and_remove_empty(batch, gold_mentions, args):
+    bs = len(batch['text_len'])
+    max_len = max([sum(batch['text_len'][i]) for i in range(len(batch['text_len']))])
+    input_ids = torch.ones(bs, max_len, dtype=torch.int, device=args.device) * TOKENS_PAD
+    input_mask = torch.ones(bs, max_len, dtype=torch.int, device=args.device) * MASK_PAD
+
+    sum_text_len, num_mentions, new_gold_mentions = [], [], []
     max_mentions = max([len(gm) for gm in gold_mentions])
-    max_sentences = max([ii.shape[0] for ii in batch['input_ids']])
-    num_examples = len(gold_mentions)
-    for i in range(num_examples):
-        padded_input_ids, padded_mask = pad_input_ids_and_mask_to_max_sentences(\
-            torch.tensor(batch['input_ids'][i]).to(args.device), 
-            torch.tensor(batch['input_mask'][i]).to(args.device),
-            input_ids_pads, mask_pads, max_sentences)
-        input_ids.append(padded_input_ids)
-        input_mask.append(padded_mask)
+    for i in range(bs):
+        input_ids, input_mask = pad_input_ids_and_mask_to_max_tokens(\
+            torch.tensor(batch['input_ids'][i], device=args.device), torch.tensor(batch['input_mask'][i], device=args.device), input_ids, input_mask, i)
         sum_text_len.append(torch.tensor([sum(batch['text_len'][i])]).to(args.device))
         new_gold_mentions.append(pad_mentions(gold_mentions[i], max_mentions))
         num_mentions.append(torch.tensor([len(gold_mentions[i])]).to(args.device))
-    return torch.cat(input_ids).reshape(num_examples, max_sentences, -1), \
-        torch.cat(input_mask).reshape(num_examples, max_sentences, -1), \
-            torch.cat(sum_text_len).reshape(num_examples), \
-                torch.cat(new_gold_mentions).reshape(num_examples, max_mentions, 2),\
-                    torch.cat(num_mentions).reshape(num_examples)
+    return input_ids, input_mask, \
+            torch.cat(sum_text_len).reshape(bs), \
+                torch.cat(new_gold_mentions).reshape(bs, max_mentions, 2),\
+                    torch.cat(num_mentions).reshape(bs)

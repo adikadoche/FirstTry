@@ -66,7 +66,7 @@ class DETR(nn.Module):
         self.query_token_IO_score = nn.Linear(150, 1)  #TODO: change to 3 so it would be BIO instead of IO
  
 
-    def forward(self, input_ids, sum_text_len, mask, gold_mentions, num_mentions):
+    def forward(self, input_ids, max_mentions_len, mask, gold_mentions, num_mentions):
         """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
@@ -83,13 +83,15 @@ class DETR(nn.Module):
         """
         # input_ids_cat = torch.cat(input_ids, dim=1).squeeze(0)
         # mask_cat = torch.cat(mask, dim=1).squeeze(0)
+        if self.args.random_queries:
+            raw_query_embed = torch.normal(torch.zeros_like(self.query_embed.weight), 1) * self.query_sigma + self.query_mu #raw_query_embed = torch.normal(torch.zeros_like(self.query_embed.weight), 0.5)
+        else:
+            raw_query_embed = self.query_embed.weight
 
         bs = input_ids.shape[0]
-        input_ids_r = input_ids.reshape(input_ids.shape[0], -1)
-        mask_r = mask.reshape(mask.shape[0], -1)
         longfomer_no_pad_list = []
-        for i in range(input_ids_r.shape[0]):
-            masked_ids = input_ids_r[i][mask_r[i]==1].unsqueeze(0)
+        for i in range(bs):
+            masked_ids = input_ids[i][mask[i]==1].unsqueeze(0)
             masked_mask = torch.ones_like(masked_ids).unsqueeze(0)
             if masked_ids.shape[-1] > self.args.max_seq_length:
                 masked_ids = torch.zeros([2, math.ceil(input_ids.shape[1]/2) * input_ids.shape[-1]], dtype=torch.long)
@@ -104,13 +106,8 @@ class DETR(nn.Module):
             longformer_emb = self.backbone(masked_ids, attention_mask=masked_mask)[0]
             longfomer_no_pad_list.append(longformer_emb.reshape(-1, longformer_emb.shape[-1]))
 
-        if self.args.random_queries:
-            raw_query_embed = torch.normal(torch.zeros_like(self.query_embed.weight), 1) * self.query_sigma + self.query_mu #raw_query_embed = torch.normal(torch.zeros_like(self.query_embed.weight), 0.5)
-        else:
-            raw_query_embed = self.query_embed.weight
-
         if not self.args.use_gold_mentions:
-            hs, memory = self.transformer(self.input_proj(longfomer_no_pad_list), mask, raw_query_embed) # [dec_layers, 1, num_queries, emb], [1, seg*seq, emb]
+            hs, memory = self.transformer(self.input_proj(torch.stack(longfomer_no_pad_list, 0)), mask, raw_query_embed) # [dec_layers, 1, num_queries, emb], [1, seg*seq, emb]
         else:
             span_starts = [torch.tensor([m[0] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
             span_ends = [torch.tensor([m[1] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
@@ -120,7 +117,7 @@ class DETR(nn.Module):
 
 
         last_hs = hs[-1] # [1, num_queries, emb]
-        cluster_logits, coref_logits, mention_logits = self.calc_cluster_and_coref_logits(last_hs, memory, gold_mentions is not None, span_mask, gold_mentions.shape[1])
+        cluster_logits, coref_logits, mention_logits = self.calc_cluster_and_coref_logits(last_hs, memory, gold_mentions is not None, span_mask, max_mentions_len[0])
 
         out = {"coref_logits": coref_logits,
                 "cluster_logits": cluster_logits,
@@ -211,7 +208,7 @@ class DETR(nn.Module):
         num_words = encoded_doc.shape[0]  # T
         num_c = len(span_starts)  # NC
 
-        doc_range = torch.arange(0, num_words).unsqueeze(0).repeat(num_c, 1)  # [K, T]
+        doc_range = torch.arange(0, num_words, device=span_starts.device).unsqueeze(0).repeat(num_c, 1)  # [K, T]
         mention_mask = torch.logical_and(doc_range >= span_starts.unsqueeze(1),
                                       doc_range <= span_ends.unsqueeze(1))  # [K, T]
 
@@ -285,7 +282,7 @@ class MatchingLoss(nn.Module):
 
             coref_logits = torch.index_select(coref_logits, 1, torch.arange(0, targets_clusters[i].shape[1]).to(coref_logits.device))
 
-            cost_coref = 0
+            cost_coref = torch.tensor(0)
             if matched_predicted_cluster_id[i] is not False:
                 permuted_coref_logits = coref_logits[matched_predicted_cluster_id[i].numpy()]
                 permuted_gold = targets_clusters[i][matched_gold_cluster_id[i].numpy()]

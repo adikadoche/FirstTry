@@ -24,8 +24,6 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     epoch_iterator, optimizer: torch.optim.Optimizer, scaler: torch.cuda.amp.GradScaler,
                     args, evaluator, skip_steps, recent_losses, recent_losses_parts, global_step, lr_scheduler,
         coref_threshold, cluster_threshold):
-    input_ids_pads = torch.ones(1, args.max_segment_len, dtype=torch.int, device=args.device) * TOKENS_PAD
-    mask_pads = torch.zeros(1, args.max_segment_len, dtype=torch.int, device=args.device)
     for step, batch in enumerate(epoch_iterator):
         if skip_steps > 0:
             skip_steps -= 1
@@ -36,27 +34,24 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         sum_text_len = [sum(tl) for tl in batch['text_len']]
         gold_clusters = batch['clusters']
 
-        gold_mentions_list = None
-        if args.use_gold_mentions:
-            # gold_mentions = []
-            # if len(gold_clusters) > 0:  #TODO: create junk clusters even if 0 gold clusters
-            gold_mentions_list = [list(set([tuple(m) for c in gc for m in c])) for gc in gold_clusters]
-            if args.add_junk:
-                gold_mentions_list, gold_mentions_vector = create_junk_gold_mentions(gold_mentions_list, sum_text_len, args.device)
-            else:
-                gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=args.device) for gm in gold_mentions_list]
+        gold_mentions_list = [list(set([tuple(m) for c in gc for m in c])) for gc in gold_clusters]
+        if args.add_junk:
+            gold_mentions_list, gold_mentions_vector = create_junk_gold_mentions(gold_mentions_list, sum_text_len, args.device)
+        else:
+            gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=args.device) for gm in gold_mentions_list]
 
-        input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = tensor_and_remove_empty(batch, gold_mentions_list, args, input_ids_pads, mask_pads)
-        # if len(input_ids) == 0 or input_ids.shape[1] > 1:
+        input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = tensor_and_remove_empty(batch, gold_mentions_list, args)
         if len(input_ids) == 0:
             print(f"skipped {step}")
             continue
 
         gold_matrix = create_gold_matrix(args.device, sum_text_len, args.num_queries, gold_clusters, gold_mentions_list)
+        max_mentions = torch.tensor(gold_mentions.shape[1], device=gold_mentions.device) if args.use_gold_mentions else sum_text_len.max()//2
+        max_mentions = max_mentions.repeat([input_ids.shape[0], 1])
 
         if args.amp:
             with torch.cuda.amp.autocast():
-                outputs = model(input_ids, sum_text_len, input_mask, gold_mentions, num_mentions)
+                outputs = model(input_ids, max_mentions, input_mask, gold_mentions, num_mentions)
                 cluster_logits, coref_logits = outputs['cluster_logits'], outputs['coref_logits']
 
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(),
@@ -64,7 +59,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                 evaluator.update(predicted_clusters, gold_clusters)
                 loss = criterion(outputs, gold_matrix)
         else:
-            outputs = model(input_ids, sum_text_len, input_mask, gold_mentions, num_mentions)
+            outputs = model(input_ids, max_mentions, input_mask, gold_mentions, num_mentions)
             cluster_logits, coref_logits, mention_logits = outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits']
 
             if args.add_junk:
