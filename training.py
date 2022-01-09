@@ -131,9 +131,9 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
     logger.info("Training/evaluation parameters %s", args)
 
     param_dicts = [
-        {"params": [p for n, p in model.named_parameters() if "backbone" not in n and p.requires_grad]},
+        {"params": [p for n, p in model.named_parameters() if args.backbone_name not in n and p.requires_grad]},
         {
-            "params": [p for n, p in model.named_parameters() if "backbone" in n and p.requires_grad],
+            "params": [p for n, p in model.named_parameters() if args.backbone_name in n and p.requires_grad],
             "lr": args.lr_backbone, #TODO: learn how to freeze backbone
         },
     ]

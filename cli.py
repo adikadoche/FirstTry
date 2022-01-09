@@ -159,6 +159,7 @@ def parse_args():
 
 
     parser.add_argument('--lr_backbone', default=1e-5, type=float) #TODO: remove
+    parser.add_argument("--backbone_name", type=str, choices=['backbone', 'longformer'], default='backbone')
     parser.add_argument('--lr', default=1e-4, type=float) #TODO:?
     parser.add_argument("--max_grad_norm", default=0.1, type=float,
                     help="Max gradient norm.")
