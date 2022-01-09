@@ -17,6 +17,7 @@ import numpy as np
 from matcher import build_matcher
 from transformer import build_transformer
 from transformers import AutoConfig, CONFIG_MAPPING
+from utils import mask_tensor
 
 logger = logging.getLogger(__name__)
 
@@ -93,16 +94,17 @@ class DETR(nn.Module):
 
         bs = input_ids.shape[0]
         if self.args.use_topk_mentions:  #TODO: batches
-            longfomer_no_pad_list, span_starts, span_ends, mentions = [[]]*bs, [[]]*bs, [[]]*bs, [[]]*bs
+            longfomer_no_pad_list, span_starts, span_ends, mentions, mention_logits_list = [[]]*bs, [[]]*bs, [[]]*bs, [[]]*bs, [[]]*bs
             new_num_mentions = torch.zeros(num_mentions.shape, dtype=torch.long)
             for i in range(bs):
                 masked_ids = input_ids[i][mask[i]==1].unsqueeze(0)
                 masked_mask = torch.ones_like(masked_ids).unsqueeze(0)
-                span_starts[i], span_ends[i], mentions_mask, longfomer_no_pad_list[i] = self.backbone(masked_ids, masked_mask, gold_clusters[i])
+                span_starts[i], span_ends[i], mentions_mask, longfomer_no_pad_list[i], mention_logits_list[i] = self.backbone(masked_ids, masked_mask, gold_clusters[i])
                 longfomer_no_pad_list[i] = longfomer_no_pad_list[i].squeeze(0)
                 span_starts[i] = span_starts[i].squeeze(0)
                 span_ends[i] = span_ends[i].squeeze(0)
                 new_num_mentions[i] = torch.sum(mentions_mask)
+                mention_logits_list[i] = torch.cat([mention_logits_list[i], torch.zeros(1, max_mentions_len[0] - mention_logits_list[i].shape[1], device=mention_logits_list[i].device)], 1)
                 # start, end = span_starts[i].detach().cpu().numpy(), span_ends[i].detach().cpu().numpy()
                 # mentions[i] = [(start[j], end[j]) for j in range(span_starts[i].shape[0])]
             span_emb, span_mask = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends, new_num_mentions)  # [mentions, emb']
@@ -135,6 +137,8 @@ class DETR(nn.Module):
 
         last_hs = hs[-1] # [1, num_queries, emb]
         cluster_logits, coref_logits, mention_logits = self.calc_cluster_and_coref_logits(last_hs, memory, gold_mentions is not None, span_mask, max_mentions_len[0])
+        if self.args.use_topk_mentions:
+            mention_logits = torch.cat(mention_logits_list, 0)
 
         out = {"coref_logits": coref_logits,
                 "cluster_logits": cluster_logits,
@@ -288,6 +292,14 @@ class MatchingLoss(nn.Module):
                 weight_cluster[matched_predicted_cluster_id[i]] = 1
             cost_is_cluster = F.binary_cross_entropy(cluster_logits, gold_is_cluster, weight=weight_cluster)
                 
+            # if self.args.use_topk_mentions and not self.args.is_frozen:
+            #     mention_logits = outputs["mention_logits"][i].unsqueeze(0) # [tokens]
+            #     mention_logits = torch.index_select(mention_logits, 1, torch.arange(0, targets_clusters[i].shape[1]).to(mention_logits.device))
+            #     gold_coref_logits = mask_tensor(mention_logits, targets_mentions[i])
+            #     gold_log_sum_exp = torch.logsumexp(gold_coref_logits, dim=-1)  # [batch_size, max_k]
+            #     all_log_sum_exp = torch.logsumexp(mention_logits, dim=-1)  # [batch_size, max_k]
+
+            #     cost_is_mention = - (gold_log_sum_exp - all_log_sum_exp)
             if not self.args.add_junk or sum(targets_mentions[i].shape) == 0:
                 cost_is_mention = torch.tensor(0)
             else:
@@ -309,9 +321,9 @@ class MatchingLoss(nn.Module):
                 cost_coref = F.binary_cross_entropy(coref_logits, torch.zeros_like(coref_logits), reduction='mean')
 
             costs_parts['loss_is_cluster'].append(self.cost_is_cluster * cost_is_cluster.detach().cpu())
-            costs_parts['loss_is_mention'].append(self.cost_is_mention * cost_is_mention.detach().cpu())
+            costs_parts['loss_is_mention'].append(self.cost_coref * cost_is_mention.detach().cpu())
             costs_parts['loss_coref'].append(self.cost_coref * cost_coref.detach().cpu())
-            total_cost = self.cost_coref * cost_coref + self.cost_is_cluster * cost_is_cluster + self.cost_is_mention * cost_is_mention
+            total_cost = self.cost_coref * cost_coref + self.cost_is_cluster * cost_is_cluster + self.cost_coref * cost_is_mention
             costs.append(total_cost)
         return torch.stack(costs), costs_parts
 
@@ -330,8 +342,11 @@ class Backbone(nn.Module):
         self.men_proposal = None
         self.longformer = None
         if args.use_topk_mentions:
-            self.men_proposal = MenPropose(AutoConfig.from_pretrained('allenai/longformer-large-4096', cache_dir=args.cache_dir), args)
-            self.men_proposal.load_state_dict(torch.load('/home/gamir/adiz/tmpCode/s2e-coref/s2e_mention_proposal.pt'))
+            if args.topk_pre:
+                self.men_proposal = MenPropose(AutoConfig.from_pretrained('allenai/longformer-large-4096', cache_dir=args.cache_dir), args) 
+                self.men_proposal.load_state_dict(torch.load('/home/gamir/adiz/tmpCode/s2e-coref/s2e_mention_proposal.pt'))
+            else:
+                self.men_proposal = MenPropose(self.config, args)
 
             if args.is_frozen:
                 for param in self.men_proposal.parameters():
@@ -343,13 +358,14 @@ class Backbone(nn.Module):
             self.longformer = LongformerModel.from_pretrained(args.model_name_or_path,
                                                 config=self.config,
                                                 cache_dir=args.cache_dir)
+        self.hidden_size = self.longformer.config.hidden_size if self.longformer is not None else self.men_proposal.longformer.config.hidden_size
 
     def forward(self, input_ids, mask, gold_clusters=None):
         if self.args.use_topk_mentions:
-            span_starts, span_ends, mentions_mask, longfomer_no_pad_list = self.men_proposal(input_ids, mask, gold_clusters)
+            span_starts, span_ends, mentions_mask, longfomer_no_pad_list, mentions_logits = self.men_proposal(input_ids, mask, gold_clusters)
             if self.args.is_frozen and self.longformer is not None:
                 longfomer_no_pad_list = self.longformer(input_ids, attention_mask=mask)[0]
-            return span_starts, span_ends, mentions_mask, longfomer_no_pad_list
+            return span_starts, span_ends, mentions_mask, longfomer_no_pad_list, mentions_logits
         else: 
             return self.longformer(input_ids, mask)
 
@@ -373,7 +389,7 @@ def build_DETR(args):
         backbone,
         transformer,
         num_queries=args.num_queries,
-        hidden_size=backbone.config.hidden_size,
+        hidden_size=backbone.hidden_size,
         args=args,
         aux_loss=args.aux_loss
     )
@@ -527,11 +543,6 @@ class MenPropose(BertPreTrainedModel):
         mention_logits = self._calc_mention_logits(start_mention_reps, end_mention_reps)
 
         # prune mentions
-        mention_start_ids, mention_end_ids, span_mask, _ = self._prune_topk_mentions(mention_logits, attention_mask, gold_clusters)
+        mention_start_ids, mention_end_ids, span_mask, topk_mention_logits = self._prune_topk_mentions(mention_logits, attention_mask, gold_clusters)
 
-        return (mention_start_ids, mention_end_ids, span_mask, sequence_output)
-
-def mask_tensor(t, mask):
-    t = t + ((1.0 - mask.float()) * -10000.0)
-    t = torch.clamp(t, min=-10000.0, max=10000.0)
-    return t
+        return (mention_start_ids, mention_end_ids, span_mask, sequence_output, topk_mention_logits)

@@ -204,12 +204,13 @@ def create_gold_matrix(device, doc_len, num_queries, gold_clusters, gold_mention
 
 def create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_matrix):
     target_matrix_list = []
+    is_gold_mention = []
     for b in range(len(gold_matrix)):
         junk_mentions_indices = torch.tensor([i for i, m in enumerate(mentions_list[b]) if m not in gold_mentions_list[b]], dtype=torch.long, device=gold_matrix[0].device)
         common_mentions = [m for m in mentions_list[b] if m in gold_mentions_list[b]]
 
         common_gold_ind = torch.zeros(len(common_mentions), dtype=torch.long, device=gold_matrix[0].device)
-        common_predict_ind = torch.zeros(len(common_mentions)+len(junk_mentions_indices), device=gold_matrix[0].device) == 1
+        common_predict_ind = torch.zeros(len(common_mentions)+len(junk_mentions_indices), device=gold_matrix[0].device)
 
         ind = 0
         for i in range(len(mentions_list[b])):
@@ -217,13 +218,14 @@ def create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_mat
                 for j in range(len(gold_mentions_list[b])):
                     if gold_mentions_list[b][j] == mentions_list[b][i]:
                         common_gold_ind[ind] = j
-                        common_predict_ind[i] = True
+                        common_predict_ind[i] = 1
                         ind += 1
 
         target_matrix = torch.zeros(len(common_mentions)+len(junk_mentions_indices), gold_matrix[b].shape[0], device=gold_matrix[b].device)
-        target_matrix[common_predict_ind] = torch.index_select(gold_matrix[b].transpose(0,1), 0, common_gold_ind)         
+        target_matrix[common_predict_ind == 1] = torch.index_select(gold_matrix[b].transpose(0,1), 0, common_gold_ind)         
         target_matrix_list.append(target_matrix.transpose(0,1))
-    return target_matrix_list
+        is_gold_mention.append(common_predict_ind)
+    return target_matrix_list, is_gold_mention
 
 def make_mentions_from_clustered_tokens(self, coref_logits):
     pass
