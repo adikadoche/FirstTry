@@ -141,7 +141,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", c
         input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = tensor_and_remove_empty(batch, gold_mentions_list, gold_clusters, args)
         if len(input_ids) == 0:
             continue
-        max_mentions = gold_mentions.shape[1] if args.use_gold_mentions else sum_text_len.max()//2
+        max_mentions = torch.tensor(gold_mentions.shape[1]) if args.use_gold_mentions else sum_text_len.max()//2
         max_mentions = max_mentions.repeat([input_ids.shape[0], 1])
             
         with torch.no_grad():
