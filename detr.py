@@ -299,7 +299,7 @@ class MatchingLoss(nn.Module):
                 gold_log_sum_exp = torch.logsumexp(gold_coref_logits, dim=-1)  # [batch_size, max_k]
                 all_log_sum_exp = torch.logsumexp(mention_logits, dim=-1)  # [batch_size, max_k]
 
-                cost_is_mention = - (gold_log_sum_exp - all_log_sum_exp)
+                cost_is_mention = - (gold_log_sum_exp[0] - all_log_sum_exp[0])
             elif not self.args.add_junk or sum(targets_mentions[i].shape) == 0:
                 cost_is_mention = torch.tensor(0)
             else:
