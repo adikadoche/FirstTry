@@ -94,17 +94,18 @@ class DETR(nn.Module):
 
         bs = input_ids.shape[0]
         if self.args.use_topk_mentions:  #TODO: batches
-            longfomer_no_pad_list, span_starts, span_ends, mentions, mention_logits_list = [[]]*bs, [[]]*bs, [[]]*bs, [[]]*bs, [[]]*bs
+            longfomer_no_pad_list, span_starts, span_ends, mentions, mention_logits_list, gold_mention_logits_list = [[]]*bs, [[]]*bs, [[]]*bs, [[]]*bs, [[]]*bs, [[]]*bs
             new_num_mentions = torch.zeros(num_mentions.shape, dtype=torch.long)
             for i in range(bs):
                 masked_ids = input_ids[i][mask[i]==1].unsqueeze(0)
                 masked_mask = torch.ones_like(masked_ids).unsqueeze(0)
-                span_starts[i], span_ends[i], mentions_mask, longfomer_no_pad_list[i], mention_logits_list[i] = self.backbone(masked_ids, masked_mask, gold_clusters[i])
+                span_starts[i], span_ends[i], mentions_mask, longfomer_no_pad_list[i], gold_mention_logits_list[i], mention_logits_list[i] = self.backbone(masked_ids, masked_mask, gold_mentions[i])
                 longfomer_no_pad_list[i] = longfomer_no_pad_list[i].squeeze(0)
                 span_starts[i] = span_starts[i].squeeze(0)
                 span_ends[i] = span_ends[i].squeeze(0)
                 new_num_mentions[i] = torch.sum(mentions_mask)
                 mention_logits_list[i] = torch.cat([mention_logits_list[i], torch.zeros(1, max_mentions_len[0] - mention_logits_list[i].shape[1], device=mention_logits_list[i].device)], 1)
+                gold_mention_logits_list[i] = torch.cat([gold_mention_logits_list[i], torch.zeros(1, gold_mentions.shape[1] - gold_mention_logits_list[i].shape[1], device=gold_mention_logits_list[i].device)], 1)
                 # start, end = span_starts[i].detach().cpu().numpy(), span_ends[i].detach().cpu().numpy()
                 # mentions[i] = [(start[j], end[j]) for j in range(span_starts[i].shape[0])]
             span_emb, span_mask = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends, new_num_mentions)  # [mentions, emb']
@@ -137,13 +138,19 @@ class DETR(nn.Module):
 
         last_hs = hs[-1] # [1, num_queries, emb]
         cluster_logits, coref_logits, mention_logits = self.calc_cluster_and_coref_logits(last_hs, memory, gold_mentions is not None, span_mask, max_mentions_len[0])
-        if self.args.use_topk_mentions:
-            mention_logits = torch.cat(mention_logits_list, 0)
-
         out = {"coref_logits": coref_logits,
                 "cluster_logits": cluster_logits,
                 "mention_logits": mention_logits, 
                 'mentions': mentions}
+
+        if self.args.use_topk_mentions:
+            mention_logits = torch.cat(mention_logits_list, 0)
+            gold_mention_logits = torch.cat(gold_mention_logits_list, 0)
+            out = {"coref_logits": coref_logits,
+                    "cluster_logits": cluster_logits,
+                    "mention_logits": mention_logits, 
+                    'mentions': mentions,
+                    'gold_mention_logits': gold_mention_logits}
                 # "aux_coref_logits": aux_coref_logits}
         return out
 
@@ -294,12 +301,13 @@ class MatchingLoss(nn.Module):
                 
             if self.args.use_topk_mentions and not self.args.is_frozen:
                 mention_logits = outputs["mention_logits"][i].unsqueeze(0) # [tokens]
-                mention_logits = torch.index_select(mention_logits, 1, torch.arange(0, targets_clusters[i].shape[1]).to(mention_logits.device))
-                gold_coref_logits = mask_tensor(mention_logits, targets_mentions[i])
-                gold_log_sum_exp = torch.logsumexp(gold_coref_logits, dim=-1)  # [batch_size, max_k]
-                all_log_sum_exp = torch.logsumexp(mention_logits, dim=-1)  # [batch_size, max_k]
+                mention_logits = torch.index_select(mention_logits, 1, torch.arange(0, targets_mentions[i].shape[0]).to(mention_logits.device))
+                gold_mention_logits = outputs["gold_mention_logits"][i].unsqueeze(0) # [gold]
+                gold_mention_logits = torch.index_select(gold_mention_logits, 1, torch.arange(0, int(torch.sum(targets_mentions[i]))).to(gold_mention_logits.device))
+                gold_log_sum_exp = torch.logsumexp(gold_mention_logits[0], dim=-1) / gold_mention_logits.shape[1]  # [batch_size, max_k]
+                junk_log_sum_exp = torch.logsumexp(mention_logits[0][targets_mentions[i]==0], dim=-1) / int(torch.sum(1-targets_mentions[i]))  # [batch_size, max_k]
 
-                cost_is_mention = - (gold_log_sum_exp[0] - all_log_sum_exp[0])
+                cost_is_mention = junk_log_sum_exp - gold_log_sum_exp
             elif not self.args.add_junk or sum(targets_mentions[i].shape) == 0:
                 cost_is_mention = torch.tensor(0)
             else:
@@ -362,10 +370,10 @@ class Backbone(nn.Module):
 
     def forward(self, input_ids, mask, gold_clusters=None):
         if self.args.use_topk_mentions:
-            span_starts, span_ends, mentions_mask, longfomer_no_pad_list, mentions_logits = self.men_proposal(input_ids, mask, gold_clusters)
+            span_starts, span_ends, mentions_mask, longfomer_no_pad_list, gold_mention_logits, topk_mention_logits = self.men_proposal(input_ids, mask, gold_clusters)
             if self.args.is_frozen and self.longformer is not None:
                 longfomer_no_pad_list = self.longformer(input_ids, attention_mask=mask)[0]
-            return span_starts, span_ends, mentions_mask, longfomer_no_pad_list, mentions_logits
+            return span_starts, span_ends, mentions_mask, longfomer_no_pad_list, gold_mention_logits, topk_mention_logits
         else: 
             return self.longformer(input_ids, mask)
 
@@ -464,7 +472,7 @@ class MenPropose(BertPreTrainedModel):
         len_expanded = k.unsqueeze(1).expand(size)
         return (idx < len_expanded).int()
 
-    def _prune_topk_mentions(self, mention_logits, attention_mask, gold_clusters):
+    def _prune_topk_mentions(self, mention_logits, attention_mask):
         """
         :param mention_logits: Shape [batch_size, seq_length, seq_length]
         :param attention_mask: [batch_size, seq_length]
@@ -473,35 +481,20 @@ class MenPropose(BertPreTrainedModel):
         """
         batch_size, seq_length, _ = mention_logits.size()
         actual_seq_lengths = torch.sum(attention_mask, dim=-1)  # [batch_size]
-        if self.args.use_gold_mentions:
-            topk_mention_start_ids = [[m[0] for i in range(gold_clusters.shape[1]) for m in gold_clusters[b][i] if m[0] != 0 and m[1] != 0] for b in range(gold_clusters.shape[0])]
-            topk_mention_end_ids = [[m[1] for i in range(gold_clusters.shape[1]) for m in gold_clusters[b][i] if m[0] != 0 and m[1] != 0] for b in range(gold_clusters.shape[0])]
-            k = torch.tensor([len(tmsi) for tmsi in topk_mention_start_ids], device=mention_logits.device)
-            max_k = int(torch.max(k))  # This is the k for the largest input in the batch, we will need to pad
-            topk_mention_start_ids = torch.tensor([[seq_length-1 if j >= len(topk_mention_start_ids[i]) else topk_mention_start_ids[i][j] \
-                for j in range(max_k)] for i in range(len(topk_mention_start_ids))], device=mention_logits.device, dtype=torch.long)
-            topk_mention_end_ids = torch.tensor([[seq_length-1 if j >= len(topk_mention_end_ids[i]) else topk_mention_end_ids[i][j] \
-                for j in range(max_k)] for i in range(len(topk_mention_end_ids))], device=mention_logits.device, dtype=torch.long)
+        k = (actual_seq_lengths * self.top_lambda).int()  # [batch_size]
+        max_k = int(torch.max(k))  # This is the k for the largest input in the batch, we will need to pad
 
-            topk_mention_logits = mention_logits[torch.arange(batch_size, dtype=torch.long).unsqueeze(-1).expand(batch_size, max_k),
-                                              topk_mention_start_ids, topk_mention_end_ids]  # [batch_size, max_k]
-            span_mask = self._get_span_mask(batch_size, k, max_k)  # [batch_size, max_k]
-        else:
+        _, topk_1d_indices = torch.topk(mention_logits.view(batch_size, -1), dim=-1, k=max_k)  # [batch_size, max_k]
+        # span_mask = self._get_span_mask(batch_size, k, max_k)  # [batch_size, max_k]
+        span_mask = torch.ones([1, max_k], device=mention_logits.device)  # [batch_size, max_k]   #TODO batch
+        topk_1d_indices = (topk_1d_indices * span_mask) + (1 - span_mask) * ((seq_length ** 2) - 1)  # We take different k for each example
+        sorted_topk_1d_indices, _ = torch.sort(topk_1d_indices, dim=-1)  # [batch_size, max_k]
 
-            k = (actual_seq_lengths * self.top_lambda).int()  # [batch_size]
-            max_k = int(torch.max(k))  # This is the k for the largest input in the batch, we will need to pad
+        topk_mention_start_ids = (sorted_topk_1d_indices // seq_length).long()  # [batch_size, max_k]
+        topk_mention_end_ids = (sorted_topk_1d_indices % seq_length).long()  # [batch_size, max_k]
 
-            _, topk_1d_indices = torch.topk(mention_logits.view(batch_size, -1), dim=-1, k=max_k)  # [batch_size, max_k]
-            # span_mask = self._get_span_mask(batch_size, k, max_k)  # [batch_size, max_k]
-            span_mask = torch.ones([1, max_k], device=mention_logits.device)  # [batch_size, max_k]   #TODO batch
-            topk_1d_indices = (topk_1d_indices * span_mask) + (1 - span_mask) * ((seq_length ** 2) - 1)  # We take different k for each example
-            sorted_topk_1d_indices, _ = torch.sort(topk_1d_indices, dim=-1)  # [batch_size, max_k]
-
-            topk_mention_start_ids = (sorted_topk_1d_indices // seq_length).long()  # [batch_size, max_k]
-            topk_mention_end_ids = (sorted_topk_1d_indices % seq_length).long()  # [batch_size, max_k]
-
-            topk_mention_logits = mention_logits[torch.arange(batch_size).unsqueeze(-1).expand(batch_size, max_k),
-                                                topk_mention_start_ids, topk_mention_end_ids]  # [batch_size, max_k]
+        topk_mention_logits = mention_logits[torch.arange(batch_size).unsqueeze(-1).expand(batch_size, max_k),
+                                            topk_mention_start_ids, topk_mention_end_ids]  # [batch_size, max_k]
         
         # topk_mention_logits = topk_mention_logits.unsqueeze(-1) + topk_mention_logits.unsqueeze(-2)  # [batch_size, max_k, max_k]
 
@@ -531,7 +524,7 @@ class MenPropose(BertPreTrainedModel):
         mention_logits = mask_tensor(mention_logits, mention_mask)  # [batch_size, seq_length, seq_length]
         return mention_logits
 
-    def forward(self, input_ids, attention_mask=None, gold_clusters=None):
+    def forward(self, input_ids, attention_mask=None, gold_mentions=None):
         outputs = self.longformer(input_ids, attention_mask=attention_mask)
         sequence_output = outputs[0]  # [batch_size, seq_len, dim]
 
@@ -543,6 +536,12 @@ class MenPropose(BertPreTrainedModel):
         mention_logits = self._calc_mention_logits(start_mention_reps, end_mention_reps)
 
         # prune mentions
-        mention_start_ids, mention_end_ids, span_mask, topk_mention_logits = self._prune_topk_mentions(mention_logits, attention_mask, gold_clusters)
+        mention_start_ids, mention_end_ids, span_mask, topk_mention_logits = self._prune_topk_mentions(mention_logits, attention_mask)
 
-        return (mention_start_ids, mention_end_ids, span_mask, sequence_output, topk_mention_logits)
+        gold_start = gold_mentions.transpose(0,1)[0]
+        gold_start = gold_start[gold_start>0].unsqueeze(0)
+        gold_end = gold_mentions.transpose(0,1)[1]
+        gold_end = gold_end[gold_end>0].unsqueeze(0)
+        gold_mention_logits = mention_logits[torch.arange(input_ids.shape[0]).unsqueeze(-1).expand(input_ids.shape[0], gold_start.shape[1]),
+                                            gold_start, gold_end]  # [batch_size, gold]
+        return (mention_start_ids, mention_end_ids, span_mask, sequence_output, gold_mention_logits, topk_mention_logits)
