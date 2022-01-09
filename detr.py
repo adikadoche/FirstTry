@@ -292,15 +292,15 @@ class MatchingLoss(nn.Module):
                 weight_cluster[matched_predicted_cluster_id[i]] = 1
             cost_is_cluster = F.binary_cross_entropy(cluster_logits, gold_is_cluster, weight=weight_cluster)
                 
-            # if self.args.use_topk_mentions and not self.args.is_frozen:
-            #     mention_logits = outputs["mention_logits"][i].unsqueeze(0) # [tokens]
-            #     mention_logits = torch.index_select(mention_logits, 1, torch.arange(0, targets_clusters[i].shape[1]).to(mention_logits.device))
-            #     gold_coref_logits = mask_tensor(mention_logits, targets_mentions[i])
-            #     gold_log_sum_exp = torch.logsumexp(gold_coref_logits, dim=-1)  # [batch_size, max_k]
-            #     all_log_sum_exp = torch.logsumexp(mention_logits, dim=-1)  # [batch_size, max_k]
+            if self.args.use_topk_mentions and not self.args.is_frozen:
+                mention_logits = outputs["mention_logits"][i].unsqueeze(0) # [tokens]
+                mention_logits = torch.index_select(mention_logits, 1, torch.arange(0, targets_clusters[i].shape[1]).to(mention_logits.device))
+                gold_coref_logits = mask_tensor(mention_logits, targets_mentions[i])
+                gold_log_sum_exp = torch.logsumexp(gold_coref_logits, dim=-1)  # [batch_size, max_k]
+                all_log_sum_exp = torch.logsumexp(mention_logits, dim=-1)  # [batch_size, max_k]
 
-            #     cost_is_mention = - (gold_log_sum_exp - all_log_sum_exp)
-            if not self.args.add_junk or sum(targets_mentions[i].shape) == 0:
+                cost_is_mention = - (gold_log_sum_exp - all_log_sum_exp)
+            elif not self.args.add_junk or sum(targets_mentions[i].shape) == 0:
                 cost_is_mention = torch.tensor(0)
             else:
                 if sum(mention_logits.shape) == 0:
