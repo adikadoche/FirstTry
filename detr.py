@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 class DETR(nn.Module):
     """ This is the DETR module that performs object detection """
-    def __init__(self, longformer, men_proposal, transformer, num_queries, hidden_size, args, aux_loss=False):
+    def __init__(self, backbone, transformer, num_queries, hidden_size, args, aux_loss=False):
         """ Initializes the model.
         Parameters:
             backbone: torch module of the backbone to be used. See backbone.py
@@ -39,8 +39,7 @@ class DETR(nn.Module):
         self.input_proj = nn.Linear(hidden_size, hidden_dim)
         self.query_embed = nn.Embedding(num_queries, hidden_dim)
         self.is_cluster = nn.Linear(hidden_dim, 1)
-        self.longformer = longformer
-        self.men_proposal = men_proposal
+        self.backbone = backbone
         self.aux_loss = aux_loss
         self.args = args
         if args.single_distribution_queries:
@@ -99,9 +98,7 @@ class DETR(nn.Module):
             for i in range(bs):
                 masked_ids = input_ids[i][mask[i]==1].unsqueeze(0)
                 masked_mask = torch.ones_like(masked_ids).unsqueeze(0)
-                span_starts[i], span_ends[i], mentions_mask, longfomer_no_pad_list[i] = self.men_proposal(masked_ids, masked_mask, gold_clusters[i])
-                if self.args.is_frozen and self.longformer is not None:
-                    longfomer_no_pad_list[i] = self.longformer(masked_ids, attention_mask=masked_mask)[0]
+                span_starts[i], span_ends[i], mentions_mask, longfomer_no_pad_list[i] = self.backbone(masked_ids, masked_mask, gold_clusters[i])
                 longfomer_no_pad_list[i] = longfomer_no_pad_list[i].squeeze(0)
                 span_starts[i] = span_starts[i].squeeze(0)
                 span_ends[i] = span_ends[i].squeeze(0)
@@ -122,7 +119,7 @@ class DETR(nn.Module):
             for i in range(bs):
                 masked_ids = input_ids[i][mask[i]==1].unsqueeze(0)
                 masked_mask = torch.ones_like(masked_ids).unsqueeze(0)
-                longformer_emb = self.longformer(masked_ids, attention_mask=masked_mask)[0]
+                longformer_emb = self.backbone(masked_ids, attention_mask=masked_mask)[0]
                 longfomer_no_pad_list.append(longformer_emb.reshape(-1, longformer_emb.shape[-1]))
 
             if not self.args.use_gold_mentions:
@@ -318,6 +315,43 @@ class MatchingLoss(nn.Module):
             costs.append(total_cost)
         return torch.stack(costs), costs_parts
 
+class Backbone(nn.Module):
+    def __init__(self, args):
+        super().__init__()
+        self.args = args
+        if args.config_name:
+            self.config = AutoConfig.from_pretrained(args.config_name, cache_dir=args.cache_dir)
+        elif args.model_name_or_path:
+            self.config = AutoConfig.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir)
+        else:
+            self.config = CONFIG_MAPPING[args.model_type]()
+            logger.warning("You are instantiating a new config instance from scratch.")
+        
+        self.men_proposal = None
+        self.longformer = None
+        if args.use_topk_mentions:
+            self.men_proposal = MenPropose(AutoConfig.from_pretrained('allenai/longformer-large-4096', cache_dir=args.cache_dir), args)
+            self.men_proposal.load_state_dict(torch.load('/home/gamir/adiz/tmpCode/s2e-coref/s2e_mention_proposal.pt'))
+
+            if args.is_frozen:
+                for param in self.men_proposal.parameters():
+                    param.requires_grad = False
+                self.longformer = LongformerModel.from_pretrained(args.model_name_or_path,
+                                                    config=self.config,
+                                                    cache_dir=args.cache_dir)
+        else:
+            self.longformer = LongformerModel.from_pretrained(args.model_name_or_path,
+                                                config=self.config,
+                                                cache_dir=args.cache_dir)
+
+    def forward(self, input_ids, mask, gold_clusters=None):
+        if self.args.use_topk_mentions:
+            span_starts, span_ends, mentions_mask, longfomer_no_pad_list = self.men_proposal(input_ids, mask, gold_clusters)
+            if self.args.is_frozen and self.longformer is not None:
+                longfomer_no_pad_list = self.longformer(input_ids, attention_mask=mask)[0]
+            return span_starts, span_ends, mentions_mask, longfomer_no_pad_list
+        else: 
+            return self.longformer(input_ids, mask)
 
 def build_DETR(args):
     # the `num_classes` naming here is somewhat misleading.
@@ -331,39 +365,15 @@ def build_DETR(args):
 
     device = torch.device(args.device)
 
-    if args.config_name:
-        config = AutoConfig.from_pretrained(args.config_name, cache_dir=args.cache_dir)
-    elif args.model_name_or_path:
-        config = AutoConfig.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir)
-    else:
-        config = CONFIG_MAPPING[args.model_type]()
-        logger.warning("You are instantiating a new config instance from scratch.")
-    
-    men_proposal = None
-    longformer = None
-    if args.use_topk_mentions:
-        men_proposal = MenPropose(AutoConfig.from_pretrained('allenai/longformer-large-4096', cache_dir=args.cache_dir), args)
-        men_proposal.load_state_dict(torch.load('/home/gamir/adiz/tmpCode/s2e-coref/s2e_mention_proposal.pt'))
-
-        if args.is_frozen:
-            for param in men_proposal.parameters():
-                param.requires_grad = False
-            longformer = LongformerModel.from_pretrained(args.model_name_or_path,
-                                                config=config,
-                                                cache_dir=args.cache_dir)
-    else:
-        longformer = LongformerModel.from_pretrained(args.model_name_or_path,
-                                            config=config,
-                                            cache_dir=args.cache_dir)
-
     transformer = build_transformer(args)
 
+    backbone = Backbone(args)
+
     model = DETR(
-        longformer,
-        men_proposal,
+        backbone,
         transformer,
         num_queries=args.num_queries,
-        hidden_size=config.hidden_size,
+        hidden_size=backbone.config.hidden_size,
         args=args,
         aux_loss=args.aux_loss
     )
