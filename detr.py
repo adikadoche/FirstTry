@@ -113,7 +113,7 @@ class DETR(nn.Module):
             span_ends = [torch.tensor([m[1] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
             span_emb, span_mask = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends, num_mentions)  # [mentions, emb']
             span_emb = self.span_proj(span_emb) # [mentions, emb]
-            hs, memory = self.transformer(span_emb, span_mask, raw_query_embed)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
+            hs, memory = self.transformer(span_emb, span_mask, raw_query_embed, self.is_cluster, self.IO_score)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
 
 
         last_hs = hs[-1] # [1, num_queries, emb]

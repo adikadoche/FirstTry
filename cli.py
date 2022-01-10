@@ -154,6 +154,8 @@ def parse_args():
                         help="Linear warmup over warmup_steps.")
     parser.add_argument("--skip_steps", default=0, type=int)
 
+    parser.add_argument('--sequential', action='store_true',
+                        help="L1 box coefficient in the matching cost")
 
     parser.add_argument('--lr_backbone', default=1e-5, type=float) #TODO: remove
     parser.add_argument('--lr', default=1e-4, type=float) #TODO:?
