@@ -39,7 +39,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         else:
             gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=args.device) for gm in gold_mentions_list]
 
-        input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = tensor_and_remove_empty(batch, gold_mentions_list, gold_clusters, args)
+        input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = tensor_and_remove_empty(batch, gold_mentions_list, args)
         # if len(input_ids) == 0 or input_ids.shape[1] > 1:
         if len(input_ids) == 0:
             print(f"skipped {step}")
@@ -73,7 +73,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                                                             coref_threshold, cluster_threshold, mentions_list)
             else:
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
-                                                            coref_threshold, cluster_threshold, gold_mentions_list)
+                                                            coref_threshold, cluster_threshold, mentions_list)
             cluster_evaluator.update(predicted_clusters, gold_clusters)
             if predicted_clusters == [[]]:
                 mention_evaluator.update([[]], [[[m for c in gold_clusters for d in c for m in d]]])

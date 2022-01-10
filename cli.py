@@ -130,6 +130,7 @@ def parse_args():
     parser.add_argument('--use_gold_mentions', action='store_true')
     parser.add_argument('--is_frozen', action='store_true')
     parser.add_argument('--topk_pre', action='store_true')
+    parser.add_argument('--cluster_block', action='store_true')
     parser.add_argument('--use_topk_mentions', action='store_true')
     parser.add_argument('--softmax_coref', action='store_true')
     parser.add_argument('--random_queries', action='store_true')

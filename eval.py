@@ -138,7 +138,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", c
         
         gold_matrix = create_gold_matrix(args.device, sum_text_len, args.num_queries, gold_clusters, gold_mentions_list)
 
-        input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = tensor_and_remove_empty(batch, gold_mentions_list, gold_clusters, args)
+        input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = tensor_and_remove_empty(batch, gold_mentions_list, args)
         if len(input_ids) == 0:
             continue
         max_mentions = torch.tensor(gold_mentions.shape[1]) if args.use_gold_mentions else sum_text_len.max()//2
