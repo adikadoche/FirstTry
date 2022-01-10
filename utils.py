@@ -179,10 +179,17 @@ def reduce_dict(input_dict, average=True):
 
 def create_gold_matrix(device, doc_len, num_queries, gold_clusters, gold_mentions: List):
     if gold_mentions is None:
-        gold_per_token = torch.zeros(num_queries, doc_len, device=device)
-        for cluster_id, cluster in enumerate(gold_clusters):
-            for start, end in cluster:
-                gold_per_token[cluster_id, start: end + 1] = 1
+        gold_per_token_batch = []
+        for i in range(len(gold_clusters)):
+            gold_per_token = torch.zeros(num_queries, doc_len[i], device=device)
+            if num_queries < len(gold_clusters[i]):
+                logger.info("in utils, exceeds num_queries with length {}".format(len(gold_clusters[i])))
+            for cluster_id, cluster in enumerate(gold_clusters[i]):
+                if cluster_id >= num_queries:
+                    continue
+                for start, end in cluster:
+                    gold_per_token[cluster_id, start:end+1] = 1
+        gold_per_token_batch.append(gold_per_token)
     else:
         gold_per_token_batch = []
         for i in range(len(gold_clusters)):

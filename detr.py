@@ -90,6 +90,7 @@ class DETR(nn.Module):
 
         bs = input_ids.shape[0]
         longfomer_no_pad_list = []
+        longfomer_pad_list = []
         for i in range(bs):
             masked_ids = input_ids[i][mask[i]==1].unsqueeze(0)
             masked_mask = torch.ones_like(masked_ids).unsqueeze(0)
@@ -105,6 +106,8 @@ class DETR(nn.Module):
 
             longformer_emb = self.backbone(masked_ids, attention_mask=masked_mask)[0]
             longfomer_no_pad_list.append(longformer_emb.reshape(-1, longformer_emb.shape[-1]))
+            longfomer_pad_list.append(torch.cat([longfomer_no_pad_list[-1], \
+                torch.zeros(input_ids.shape[-1] - longfomer_no_pad_list[-1].shape[0], longfomer_no_pad_list[-1].shape[-1], device=input_ids.shape)]))
 
         if not self.args.use_gold_mentions:
             hs, memory = self.transformer(self.input_proj(torch.stack(longfomer_no_pad_list, 0)), mask, raw_query_embed) # [dec_layers, 1, num_queries, emb], [1, seg*seq, emb]
