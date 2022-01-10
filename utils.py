@@ -300,7 +300,7 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, coref_
     return clusters
 
 def calc_best_avg_f1(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, all_gold_mentions, coref_threshold, cluster_threshold, thresh_delta):
-    best = [-1, -1, -1]
+    best = [-1, -1, -1, -1, -1, -1]
     best_metrics = []
     best_coref_threshold = None
     best_cluster_threshold = None
@@ -316,9 +316,9 @@ def calc_best_avg_f1(all_cluster_logits, all_coref_logits, all_mention_logits, a
         thresh_cluster_end = min(1, cluster_threshold + 2.5*thresh_delta)
     for coref_threshold in tqdm(np.arange(thresh_coref_start, thresh_coref_end, thresh_delta), desc='Searching for best threshold'):
         for cluster_threshold in np.arange(thresh_cluster_start, thresh_cluster_end, thresh_delta):
-            p, r, f1, metrics = evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, coref_threshold, cluster_threshold, all_gold_mentions)
+            p, r, f1, pm, rm, f1m, metrics = evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, coref_threshold, cluster_threshold, all_gold_mentions)
             if f1 > best[-1]:
-                best = p,r,f1
+                best = pm, rm, f1m, p,r,f1
                 best_metrics = metrics
                 best_coref_threshold = coref_threshold
                 best_cluster_threshold = cluster_threshold
@@ -326,7 +326,8 @@ def calc_best_avg_f1(all_cluster_logits, all_coref_logits, all_mention_logits, a
     return best + (best_coref_threshold, best_cluster_threshold,) + (best_metrics,)
 
 def evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, coref_threshold, cluster_threshold, all_gold_mentions):
-    evaluator = CorefEvaluator()
+    cluster_evaluator = CorefEvaluator()
+    mention_evaluator = CorefEvaluator()
     metrics = [0] * 5
     for i, (cluster_logits, coref_logits, gold_clusters, gold_mentions) in enumerate(
             zip(all_cluster_logits, all_coref_logits, all_gold_clusters, all_gold_mentions)):
@@ -342,9 +343,14 @@ def evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_mention_logi
         # metrics[2] += prec_junk / len(all_cluster_logits)
         # metrics[3] += prec_correct_gold_clusters / len(all_cluster_logits)
         # metrics[4] += prec_correct_predict_clusters / len(all_cluster_logits)
-        evaluator.update(predicted_clusters, [gold_clusters])
-    p, r, f1 = evaluator.get_prf()
-    return p, r, f1, metrics
+        cluster_evaluator.update(predicted_clusters, [gold_clusters])
+        if predicted_clusters == [[]]:
+            mention_evaluator.update([[]], [[[m for c in [gold_clusters] for d in c for m in d]]])
+        else:
+            mention_evaluator.update([[[m for c in predicted_clusters for d in c for m in d]]], [[[m for c in [gold_clusters] for d in c for m in d]]])    
+    p, r, f1 = cluster_evaluator.get_prf()
+    pm, rm, f1m = mention_evaluator.get_prf()
+    return p, r, f1, pm, rm, f1m, metrics
 
 def get_more_metrics(predicted_clusters, gold_clusters, gold_mentions):
     prec_correct_mentions, prec_gold, prec_junk, prec_correct_gold_clusters, prec_correct_predict_clusters = 0,0,0,0,0
@@ -437,32 +443,9 @@ def pad_mentions(gold_mentions, max_mentions):
     padded_gold_mentions = torch.tensor(np.asarray(gold_mentions + (max_mentions-len(gold_mentions)) * [(-1, -1)])).unsqueeze(0)
     return padded_gold_mentions
 
-def tensor_and_remove_empty(batch, gold_mentions, gold_clusters, args):
+def tensor_and_remove_empty(batch, gold_mentions, args):
     bs = len(batch['text_len'])
-    # if args.use_gold_mentions:
-    #     zero_mentions_inds = [i for i in range(len(gold_mentions)) if len(gold_mentions[i]) == 0]
-    #     if len(zero_mentions_inds) == bs:
-    #         return [],[],[],[],[]
-    #     elif len(zero_mentions_inds) > 0:
-    #         for index_to_remove in zero_mentions_inds:
-    #             batch['text_len'].pop(index_to_remove)
-    #             batch['input_ids'].pop(index_to_remove)
-    #             batch['input_mask'].pop(index_to_remove)
-    #             gold_mentions.pop(index_to_remove)
-    #             gold_clusters.pop(index_to_remove)
-    #         bs = len(batch['text_len'])
     max_len = max([sum(batch['text_len'][i]) for i in range(len(batch['text_len']))])
-    # if max_len > args.max_seq_length:
-    #     if bs == 1:
-    #         return [],[],[],[],[]
-    #     index_to_remove = [i for i in range(len(batch['text_len'])) if batch['text_len'][i] > args.max_seq_length]  #we know there is only one like that in the dataset
-    #     batch['text_len'].pop(index_to_remove)
-    #     batch['input_ids'].pop(index_to_remove)
-    #     batch['input_mask'].pop(index_to_remove)
-    #     gold_mentions.pop(index_to_remove)
-    #     gold_clusters.pop(index_to_remove)
-    #     max_len = max([sum(batch['text_len'][i]) for i in range(len(batch['text_len']))])
-    #     bs = len(batch['text_len'])
     input_ids = torch.ones(bs, max_len, dtype=torch.int, device=args.device) * TOKENS_PAD
     input_mask = torch.ones(bs, max_len, dtype=torch.int, device=args.device) * MASK_PAD
 
