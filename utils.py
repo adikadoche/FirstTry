@@ -295,8 +295,11 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, coref_
                         print('here')
                 if len(current_cluster) > 1:
                     b_clusters.append(current_cluster)
-            clusters.append(b_clusters)
+            if len(b_clusters) > 1:
+                clusters.append(b_clusters)
 
+    if clusters == []:
+        return [[]]
     return clusters
 
 def calc_best_avg_f1(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, all_gold_mentions, coref_threshold, cluster_threshold, thresh_delta):
@@ -344,10 +347,9 @@ def evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_mention_logi
         # metrics[3] += prec_correct_gold_clusters / len(all_cluster_logits)
         # metrics[4] += prec_correct_predict_clusters / len(all_cluster_logits)
         cluster_evaluator.update(predicted_clusters, [gold_clusters])
-        if predicted_clusters == [[]]:
-            mention_evaluator.update([[]], [[[m for c in [gold_clusters] for d in c for m in d]]])
-        else:
-            mention_evaluator.update([[[m for c in predicted_clusters for d in c for m in d]]], [[[m for c in [gold_clusters] for d in c for m in d]]])    
+        gold_mentions_e = [[]] if [gold_clusters] == [[]] or [gold_clusters] == [()] else [[[m for c in [gold_clusters] for d in c for m in d]]]
+        predicted_mentions_e = [[]] if predicted_clusters == [[]] or predicted_clusters == [()] else [[[m for c in predicted_clusters for d in c for m in d]]]
+        mention_evaluator.update(predicted_mentions_e, gold_mentions_e)
     p, r, f1 = cluster_evaluator.get_prf()
     pm, rm, f1m = mention_evaluator.get_prf()
     return p, r, f1, pm, rm, f1m, metrics
