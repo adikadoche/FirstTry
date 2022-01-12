@@ -58,27 +58,29 @@ class HungarianMatcher(nn.Module):
         targets_clusters = targets['clusters']
         targets_mentions = targets['mentions']
         bs = outputs["coref_logits"].shape[0]
-        matched_predicted_cluster_id = []
-        matched_gold_cluster_id = []
+        matched_predicted_cluster_id_real, matched_gold_cluster_id_real, matched_predicted_cluster_id_junk, matched_gold_cluster_id_junk = [],[],[],[]
         for i in range(bs):
             if targets_clusters[i].shape[1] == 0 or sum(sum(targets_clusters[i])) == 0:
-                matched_predicted_cluster_id.append(False)
-                matched_gold_cluster_id.append(False)
+                matched_predicted_cluster_id_real.append(False)
+                matched_gold_cluster_id_real.append(False)
+                matched_predicted_cluster_id_junk.append(False)
+                matched_gold_cluster_id_junk.append(False)
                 continue
 
             coref_logits = outputs["coref_logits"][i].squeeze(0) # [num_queries, tokens]
             cluster_logits = outputs["cluster_logits"][i] # [num_queries, 1]
             if self.args.add_junk:
                 mention_logits = outputs["mention_logits"][i].squeeze(-1).unsqueeze(0) # [1, tokens]
-
             if self.args.use_gold_mentions:
                 real_cluster_target_rows = torch.sum(targets_clusters[i], -1) > 0
+                real_token_target_cols = torch.sum(targets_clusters[i], -2) > 0
                 real_cluster_target = targets_clusters[i][real_cluster_target_rows]
                 num_of_gold_clusters = int(real_cluster_target.shape[0])
-                num_queries, doc_len = coref_logits.shape
+                num_queries = coref_logits.shape[0]
 
-                cost_is_cluster = F.binary_cross_entropy(cluster_logits, torch.ones_like(cluster_logits), reduction='none') # [num_queries, 1]
-                cost_is_cluster = cost_is_cluster.repeat(1, num_of_gold_clusters) # [num_queries, gold_clusters]
+                cost_is_cluster = F.binary_cross_entropy(cluster_logits.repeat(1, num_queries), \
+                    torch.cat([torch.ones([num_queries, num_of_gold_clusters], device=coref_logits.device), \
+                        torch.zeros([num_queries, num_queries - num_of_gold_clusters], device=coref_logits.device)], 1), reduction='none') # [num_queries, num_queries]
 
                 if self.args.add_junk:
                     mention_logits = mention_logits.repeat(num_queries, 1) # [num_queries, tokens]
@@ -95,6 +97,16 @@ class HungarianMatcher(nn.Module):
                         losses_for_current_gold_cluster = F.binary_cross_entropy(coref_logits, gold_per_token_repeated, reduction='none').mean(1)
 
                     cost_coref.append(losses_for_current_gold_cluster) # [num_queries]
+                if num_of_gold_clusters < num_queries:
+                    if self.args.cluster_block:
+                        zero_cluster = torch.zeros_like(targets_clusters[i])
+                        junk_cluster_score = F.binary_cross_entropy(cluster_logits * coref_logits, zero_cluster,
+                                                                    reduction='none').mean(-1)
+                    else:
+                        zero_cluster = torch.zeros_like(targets_clusters[i])
+                        junk_cluster_score = F.binary_cross_entropy(coref_logits, zero_cluster,
+                                                                    reduction='none').mean(-1)
+                    cost_coref += (num_queries - num_of_gold_clusters) * [junk_cluster_score]
                 cost_coref = torch.stack(cost_coref, 1) # [num_queries, gold_clusters]
 
                 total_cost = self.cost_is_cluster * cost_is_cluster + self.cost_coref * cost_coref
@@ -119,10 +131,16 @@ class HungarianMatcher(nn.Module):
             indices = linear_sum_assignment(total_cost)
             ind1, ind2 = indices
 
-            matched_predicted_cluster_id.append(torch.as_tensor(ind1, dtype=torch.int64))
-            matched_gold_cluster_id.append(torch.as_tensor(ind2, dtype=torch.int64))
+            matched_predicted_cluster_id_real.append(torch.as_tensor(ind1[real_cluster_target_rows.cpu()], dtype=torch.int64, device=coref_logits.device))
+            matched_gold_cluster_id_real.append(torch.as_tensor(ind2[real_cluster_target_rows.cpu()], dtype=torch.int64, device=coref_logits.device))
+            if len(ind2) > num_of_gold_clusters:
+                matched_predicted_cluster_id_junk.append(torch.as_tensor(ind1[~real_cluster_target_rows.cpu()], dtype=torch.int64, device=coref_logits.device))
+                matched_gold_cluster_id_junk.append(torch.as_tensor(ind2[~real_cluster_target_rows.cpu()], dtype=torch.int64, device=coref_logits.device))
+            else:
+                matched_predicted_cluster_id_junk.append(torch.as_tensor([j for j in range(num_queries) if j not in ind1], dtype=torch.int64, device=coref_logits.device))
+                matched_gold_cluster_id_junk.append(torch.as_tensor(list(range(num_of_gold_clusters, num_queries)), dtype=torch.int64, device=coref_logits.device))
 
-        return matched_predicted_cluster_id, matched_gold_cluster_id
+        return matched_predicted_cluster_id_real, matched_gold_cluster_id_real, matched_predicted_cluster_id_junk, matched_gold_cluster_id_junk
 
 
 def build_matcher(args):
