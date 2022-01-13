@@ -14,7 +14,7 @@ class OntonotesDataset(Dataset):
         with open(filepath) as f:
             lines = f.readlines()
             self.examples = [json.loads(jsonline) for jsonline in lines]
-        if args.limit_trainset >= 0:
+        if is_training and args.limit_trainset >= 0:
             self.examples = self.examples[:args.limit_trainset]
         if args.use_gold_mentions:
             for i, e in reversed(list(enumerate(self.examples))):
