@@ -91,11 +91,6 @@ class DETR(nn.Module):
         else:
             raw_query_embed = self.query_embed.weight
 
-        if self.args.random_queries:
-            raw_query_embed = torch.normal(torch.zeros_like(self.query_embed.weight), 1) * self.query_sigma + self.query_mu #raw_query_embed = torch.normal(torch.zeros_like(self.query_embed.weight), 0.5)
-        else:
-            raw_query_embed = self.query_embed.weight
-
         bs = input_ids.shape[0]
         if self.args.use_topk_mentions:  #TODO: batches
             longfomer_no_pad_list, span_starts, span_ends, mentions, cost_is_mention = [[]]*bs, [[]]*bs, [[]]*bs, [[]]*bs, [[]]*bs
