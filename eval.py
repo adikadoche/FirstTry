@@ -71,7 +71,7 @@ def make_evaluation(model, criterion, eval_loader, eval_dataset, args):
 
                 try:
                     for checkpoint in checkpoints:
-                        loaded_args = load_from_checkpoint(model, args.resume_from, args.device)
+                        loaded_args = load_from_checkpoint(model, checkpoint, args.device)
                         global_step = int(loaded_args['global_step'])
                         coref_threshold = loaded_args['numbers']['coref_threshold']
                         cluster_threshold = loaded_args['numbers']['cluster_threshold']
