@@ -436,6 +436,7 @@ class Backbone(nn.Module):
             if args.is_frozen:
                 for param in self.men_proposal.parameters():
                     param.requires_grad = False
+            if args.sep_long:
                 self.longformer = LongformerModel.from_pretrained(args.model_name_or_path,
                                                     config=self.config,
                                                     cache_dir=args.cache_dir)
