@@ -136,13 +136,14 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", c
             gold_mentions_list, gold_mentions_vector = create_junk_gold_mentions(gold_mentions_list, sum_text_len, args.device)
         else:
             gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=args.device) for gm in gold_mentions_list]
-        
-        gold_matrix = create_gold_matrix(args.device, sum_text_len, args.num_queries, gold_clusters, gold_mentions_list)
 
+        gold_matrix = create_gold_matrix(args.device, sum_text_len, args.num_queries, gold_clusters,
+                                         gold_mentions_list if args.use_gold_mentions else None)
         input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = tensor_and_remove_empty(batch, gold_mentions_list, args)
         if len(input_ids) == 0:
             continue
-        max_mentions = torch.tensor(gold_mentions.shape[1]) if args.use_gold_mentions else sum_text_len.max()//2
+        max_mentions = torch.tensor(gold_mentions.shape[1], device=gold_mentions.device) \
+            if args.use_gold_mentions else sum_text_len.max()
         max_mentions = max_mentions.repeat([input_ids.shape[0], 1])
             
         all_gold_mentions += gold_mentions_list

@@ -45,8 +45,10 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             print(f"skipped {step}")
             continue
 
-        gold_matrix = create_gold_matrix(args.device, sum_text_len, args.num_queries, gold_clusters, gold_mentions_list)
-        max_mentions = torch.tensor(gold_mentions.shape[1], device=gold_mentions.device) if args.use_gold_mentions else sum_text_len.max()//2
+        gold_matrix = create_gold_matrix(args.device, sum_text_len, args.num_queries, gold_clusters,
+                                         gold_mentions_list if args.use_gold_mentions else None)
+        max_mentions = torch.tensor(gold_mentions.shape[1], device=gold_mentions.device) \
+            if args.use_gold_mentions else sum_text_len.max()
         max_mentions = max_mentions.repeat([input_ids.shape[0], 1])
 
         if args.amp:
