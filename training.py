@@ -55,7 +55,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                 cluster_logits, coref_logits = outputs['cluster_logits'], outputs['coref_logits']
 
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(),
-                                                            coref_threshold, cluster_threshold, gold_mentions_list)
+                                                            coref_threshold, cluster_threshold, gold_mentions_list, args.slots)
                 cluster_evaluator.update(predicted_clusters, gold_clusters)
                 mention_evaluator.update([list(set([tuple(m) for c in gc for m in c])) for gc in predicted_clusters], gold_mentions_list)
                 loss = criterion(outputs, gold_matrix)
@@ -70,10 +70,10 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                 gold_matrix, gold_mentions_vector = create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_matrix)
             if args.add_junk:
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), mention_logits.cpu().detach(),
-                                                            coref_threshold, cluster_threshold, mentions_list)
+                                                            coref_threshold, cluster_threshold, mentions_list, args.slots)
             else:
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
-                                                            coref_threshold, cluster_threshold, mentions_list)
+                                                            coref_threshold, cluster_threshold, mentions_list, args.slots)
             cluster_evaluator.update(predicted_clusters, gold_clusters)
             gold_mentions_e = [[]] if gold_clusters == [[]] or gold_clusters == [()] else [[[m for c in gold_clusters for d in c for m in d]]]
             predicted_mentions_e = [[]] if predicted_clusters == [[]] or predicted_clusters == [()] else [[[m for c in predicted_clusters for d in c for m in d]]]

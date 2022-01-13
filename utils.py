@@ -230,7 +230,7 @@ def create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_mat
 def make_mentions_from_clustered_tokens(self, coref_logits):
     pass
 
-def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, coref_threshold, cluster_threshold, gold_mentions: List):
+def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, coref_threshold, cluster_threshold, gold_mentions: List, slots=False):
     # when we are using gold mentions, we get coref_logits at the size of the gold mentions ([bs, clusters, gold_mentions]) (because we know they are mentions, what we are predicting is the clustering)
     
     bs = cluster_logits.shape[0]
@@ -269,15 +269,25 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, coref_
             cur_coref_logits = coref_logits[i]
             cur_cluster_bool = np.tile(cur_cluster_bool.reshape([1, -1, 1]), (1, 1, cur_coref_logits.shape[-1]))
             cluster_mention_mask = cur_cluster_bool
-            if len(mention_logits) > 0:
-                cur_mention_bools = mention_logits[i].squeeze(-1).numpy() >= cluster_threshold
-                cur_mention_bools = np.tile(cur_mention_bools.reshape([1, 1, -1]), (1, cur_cluster_bool.shape[1], 1))
-                cluster_mention_mask = cur_mention_bools & cur_cluster_bool
-            cluster_mention_mask = cluster_mention_mask.astype(int)
-            
-            coref_logits_after_cluster_bool = np.multiply(cluster_mention_mask, cur_coref_logits.unsqueeze(0))
-            max_coref_score, max_coref_cluster_ind = coref_logits_after_cluster_bool[0].max(-2) #[gold_mention] choosing the index of the best cluster per gold mention
-            coref_bools = max_coref_score >= coref_threshold #[gold_mention] is the chosen cluster's score passes the threshold
+
+            if slots:
+                max_bools = torch.max(cur_coref_logits,0)[1].reshape([-1,1]).repeat([1, cur_coref_logits.shape[0]]) == \
+                    torch.arange(cur_coref_logits.shape[0], device=cur_coref_logits.device).reshape([1, -1]).repeat(cur_coref_logits.shape[1], 1)
+                max_bools = max_bools.transpose(0, 1).numpy()
+                coref_bools = cluster_mention_mask & max_bools
+                coref_logits_after_cluster_bool = np.multiply(coref_bools, cur_coref_logits)
+                max_coref_score, max_coref_cluster_ind = coref_logits_after_cluster_bool[0].max(-2) #[gold_mention] choosing the index of the best cluster per gold mention
+                coref_bools = max_coref_score > 0
+            else:
+                if len(mention_logits) > 0:
+                    cur_mention_bools = mention_logits[i].squeeze(-1).numpy() >= cluster_threshold
+                    cur_mention_bools = np.tile(cur_mention_bools.reshape([1, 1, -1]), (1, cur_cluster_bool.shape[1], 1))
+                    cluster_mention_mask = cur_mention_bools & cur_cluster_bool
+                cluster_mention_mask = cluster_mention_mask.astype(int)
+
+                coref_logits_after_cluster_bool = np.multiply(cluster_mention_mask, cur_coref_logits.unsqueeze(0))
+                max_coref_score, max_coref_cluster_ind = coref_logits_after_cluster_bool[0].max(-2) #[gold_mention] choosing the index of the best cluster per gold mention
+                coref_bools = max_coref_score >= coref_threshold #[gold_mention] is the chosen cluster's score passes the threshold
 
             true_coref_indices = np.where(coref_bools)[0] #indices of the gold mention that their clusters pass threshold
             max_coref_cluster_ind_filtered = max_coref_cluster_ind[coref_bools] #index of the best clusters per gold mention, if it passes the threshold
@@ -302,7 +312,7 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, coref_
         return [[]]
     return clusters
 
-def calc_best_avg_f1(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, all_gold_mentions, coref_threshold, cluster_threshold, thresh_delta):
+def calc_best_avg_f1(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, all_gold_mentions, coref_threshold, cluster_threshold, thresh_delta, slots):
     best = [-1, -1, -1, -1, -1, -1]
     best_metrics = []
     best_coref_threshold = None
@@ -319,7 +329,7 @@ def calc_best_avg_f1(all_cluster_logits, all_coref_logits, all_mention_logits, a
         thresh_cluster_end = min(1, cluster_threshold + 2.5*thresh_delta)
     for coref_threshold in tqdm(np.arange(thresh_coref_start, thresh_coref_end, thresh_delta), desc='Searching for best threshold'):
         for cluster_threshold in np.arange(thresh_cluster_start, thresh_cluster_end, thresh_delta):
-            p, r, f1, pm, rm, f1m, metrics = evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, coref_threshold, cluster_threshold, all_gold_mentions)
+            p, r, f1, pm, rm, f1m, metrics = evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, coref_threshold, cluster_threshold, all_gold_mentions, slots)
             if f1 > best[-1]:
                 best = pm, rm, f1m, p,r,f1
                 best_metrics = metrics
@@ -328,7 +338,7 @@ def calc_best_avg_f1(all_cluster_logits, all_coref_logits, all_mention_logits, a
 
     return best + (best_coref_threshold, best_cluster_threshold,) + (best_metrics,)
 
-def evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, coref_threshold, cluster_threshold, all_gold_mentions):
+def evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, coref_threshold, cluster_threshold, all_gold_mentions, slots):
     cluster_evaluator = CorefEvaluator()
     mention_evaluator = CorefEvaluator()
     metrics = [0] * 5
@@ -336,9 +346,9 @@ def evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_mention_logi
             zip(all_cluster_logits, all_coref_logits, all_gold_clusters, all_gold_mentions)):
         if len(all_mention_logits) > 0:
             mention_logits = all_mention_logits[i]
-            predicted_clusters = calc_predicted_clusters(cluster_logits.unsqueeze(0), coref_logits.unsqueeze(0), mention_logits.unsqueeze(0), coref_threshold, cluster_threshold, [gold_mentions])
+            predicted_clusters = calc_predicted_clusters(cluster_logits.unsqueeze(0), coref_logits.unsqueeze(0), mention_logits.unsqueeze(0), coref_threshold, cluster_threshold, [gold_mentions], slots)
         else:
-            predicted_clusters = calc_predicted_clusters(cluster_logits.unsqueeze(0), coref_logits.unsqueeze(0), [], coref_threshold, cluster_threshold, [gold_mentions])
+            predicted_clusters = calc_predicted_clusters(cluster_logits.unsqueeze(0), coref_logits.unsqueeze(0), [], coref_threshold, cluster_threshold, [gold_mentions], slots)
         # prec_correct_mentions, prec_gold, prec_junk, prec_correct_gold_clusters, prec_correct_predict_clusters = \
         #     get_more_metrics(predicted_clusters, gold_clusters, gold_mentions)  #TODO: predicted_clusters[0]?
         # metrics[0] += prec_correct_mentions / len(all_cluster_logits)
