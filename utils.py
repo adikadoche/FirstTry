@@ -217,56 +217,47 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, coref_
     
     bs = cluster_logits.shape[0]
 
-    if gold_mentions is None:
-        cluster_bools = cluster_logits.numpy() >= cluster_threshold #TODO: should the cluster and coref share the same threshold?
-        coref_bools = coref_logits.numpy() >= coref_threshold
-
-        true_coref_indices = np.asarray(np.where(coref_bools)).T
-        cluster_id_to_tokens = {k: list(v) for k, v in itertools.groupby(sorted(true_coref_indices, key=lambda x: x[-1]), lambda x: x[-1])}
-
-        bsz, num_of_clusters, _ = coref_bools.shape
-        clusters = []
-        for i in range(0, num_of_clusters):
-            current_cluster = []
-
-            first_token_index = None
-            for token_index, token_logit in enumerate(coref_bools[0, i]):
-                if token_logit:
-                    if first_token_index is None:
-                        first_token_index = token_index
-                elif first_token_index is not None:
-                    current_cluster.append((first_token_index, token_index-1))
-                    first_token_index = None
-
-            if first_token_index is not None:
-                current_cluster.append((first_token_index, token_index))
-
-            if len(current_cluster) > 0:
-                clusters.append(current_cluster)
-    else:
-        cluster_bools = cluster_logits.squeeze(-1).numpy() >= cluster_threshold #TODO: should the cluster and coref share the same threshold?
-        clusters = []
-        for i in range(bs):
-            cur_cluster_bool = cluster_bools[i]
-            cur_coref_logits = coref_logits[i]
-            cur_cluster_bool = np.tile(cur_cluster_bool.reshape([1, -1, 1]), (1, 1, cur_coref_logits.shape[-1]))
-            cluster_mention_mask = cur_cluster_bool
-            if len(mention_logits) > 0:
-                cur_mention_bools = mention_logits[i].squeeze(-1).numpy() >= cluster_threshold
-                cur_mention_bools = np.tile(cur_mention_bools.reshape([1, 1, -1]), (1, cur_cluster_bool.shape[1], 1))
-                cluster_mention_mask = cur_mention_bools & cur_cluster_bool
-            cluster_mention_mask = cluster_mention_mask.astype(int)
+    cluster_bools = cluster_logits.squeeze(-1).numpy() >= cluster_threshold #TODO: should the cluster and coref share the same threshold?
+    clusters = []
+    for i in range(bs):
+        b_clusters = []
+        cur_cluster_bool = cluster_bools[i]
+        cur_coref_logits = coref_logits[i]
+        cur_cluster_bool = np.tile(cur_cluster_bool.reshape([-1, 1]), (1, cur_coref_logits.shape[-1]))
+        cluster_mention_mask = cur_cluster_bool
+        if len(mention_logits) > 0:
+            cur_mention_bools = mention_logits[i].squeeze(-1).numpy() >= cluster_threshold
+            cur_mention_bools = np.tile(cur_mention_bools.reshape([1, 1, -1]), (1, cur_cluster_bool.shape[1], 1))
+            cluster_mention_mask = cur_mention_bools & cur_cluster_bool
+        cluster_mention_mask = cluster_mention_mask.astype(int)
+        coref_logits_after_cluster_bool = np.multiply(cluster_mention_mask, cur_coref_logits)
             
-            coref_logits_after_cluster_bool = np.multiply(cluster_mention_mask, cur_coref_logits.unsqueeze(0))
-            max_coref_score, max_coref_cluster_ind = coref_logits_after_cluster_bool[0].max(-2) #[gold_mention] choosing the index of the best cluster per gold mention
+        if gold_mentions is None:
+            coref_bools = coref_logits_after_cluster_bool >= coref_threshold #[gold_mention] is the chosen cluster's score passes the threshold
+            for j in range(coref_bools.shape[0]): 
+                true_coref_indices = coref_bools[j].nonzero().detach().cpu().numpy()
+                current_cluster = []
+                k = 0
+                while k < len(true_coref_indices):
+                    start_ind = true_coref_indices[k][0]
+                    end_ind = start_ind
+                    while k+1 < len(true_coref_indices) and true_coref_indices[k+1][0] == true_coref_indices[k][0]+1:
+                        k += 1
+                        end_ind += 1
+                    current_cluster.append((start_ind, end_ind))
+                    if end_ind == true_coref_indices[k][0]:
+                        k += 1
+
+                if len(current_cluster) > 1:
+                    b_clusters.append(current_cluster)
+        else:
+            max_coref_score, max_coref_cluster_ind = coref_logits_after_cluster_bool.max(-2) #[gold_mention] choosing the index of the best cluster per gold mention
             coref_bools = max_coref_score >= coref_threshold #[gold_mention] is the chosen cluster's score passes the threshold
 
             true_coref_indices = np.where(coref_bools)[0] #indices of the gold mention that their clusters pass threshold
             max_coref_cluster_ind_filtered = max_coref_cluster_ind[coref_bools] #index of the best clusters per gold mention, if it passes the threshold
 
             cluster_id_to_tokens = {k: list(v) for k, v in itertools.groupby(sorted(list(zip(true_coref_indices, max_coref_cluster_ind_filtered.numpy())), key=lambda x: x[-1]), lambda x: x[-1])}
-
-            b_clusters = []
 
             for gold_mentions_inds in cluster_id_to_tokens.values():
                 current_cluster = []
@@ -314,13 +305,11 @@ def evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_mention_logi
     cluster_evaluator = CorefEvaluator()
     mention_evaluator = CorefEvaluator()
     metrics = [0] * 5
-    for i, (cluster_logits, coref_logits, gold_clusters, gold_mentions) in enumerate(
-            zip(all_cluster_logits, all_coref_logits, all_gold_clusters, all_gold_mentions)):
-        if len(all_mention_logits) > 0:
-            mention_logits = all_mention_logits[i]
-            predicted_clusters = calc_predicted_clusters(cluster_logits.unsqueeze(0), coref_logits.unsqueeze(0), mention_logits.unsqueeze(0), coref_threshold, cluster_threshold, [gold_mentions])
-        else:
-            predicted_clusters = calc_predicted_clusters(cluster_logits.unsqueeze(0), coref_logits.unsqueeze(0), [], coref_threshold, cluster_threshold, [gold_mentions])
+    for i, (cluster_logits, coref_logits, gold_clusters) in enumerate(
+            zip(all_cluster_logits, all_coref_logits, all_gold_clusters)):
+        mention_logits = all_mention_logits[i].unsqueeze(0) if len(all_mention_logits) > 0 else []
+        gold_mentions = None if all_gold_mentions is None else [all_gold_mentions[i]]
+        predicted_clusters = calc_predicted_clusters(cluster_logits.unsqueeze(0), coref_logits.unsqueeze(0), mention_logits, coref_threshold, cluster_threshold, gold_mentions)
         # prec_correct_mentions, prec_gold, prec_junk, prec_correct_gold_clusters, prec_correct_predict_clusters = \
         #     get_more_metrics(predicted_clusters, gold_clusters, gold_mentions)  #TODO: predicted_clusters[0]?
         # metrics[0] += prec_correct_mentions / len(all_cluster_logits)

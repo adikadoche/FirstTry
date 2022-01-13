@@ -177,6 +177,8 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", c
     eval_loss = np.average(losses, weights=batch_sizes)
     losses_parts = {key:np.average(losses_parts[key]) for key in losses_parts.keys()}
 
+    if not args.use_gold_mentions:
+        all_gold_mentions = None 
     pm, rm, f1m, p,r,f1, best_coref_threshold, best_cluster_threshold, metrics = calc_best_avg_f1(all_cluster_logits_cpu, all_coref_logits_cpu, all_mention_logits_cpu, all_gold_clusters, all_gold_mentions, coref_threshold, cluster_threshold, thresh_delta)
 
     print_predictions(all_cluster_logits_cuda, all_coref_logits_cuda, all_mention_logits_cuda, all_gold_clusters, all_gold_mentions, all_input_ids, coref_threshold, cluster_threshold, args, eval_dataset.tokenizer)
