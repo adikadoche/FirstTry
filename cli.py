@@ -130,6 +130,8 @@ def parse_args():
     parser.add_argument('--cluster_block', action='store_true')
     parser.add_argument('--use_gold_mentions', action='store_true')
     parser.add_argument('--softmax_coref', action='store_true')
+    parser.add_argument('--slots', action='store_true',
+                        help="L1 box coefficient in the matching cost")
     parser.add_argument('--random_queries', action='store_true')
     parser.add_argument('--single_distribution_queries', action='store_true')
     parser.add_argument('--fc_coref_head', action='store_true')
