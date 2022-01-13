@@ -251,7 +251,7 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, coref_
                 max_bools = max_bools.transpose(0, 1).numpy()
                 coref_bools = cluster_mention_mask & max_bools
                 coref_logits_after_cluster_bool = np.multiply(coref_bools, cur_coref_logits)
-                max_coref_score, max_coref_cluster_ind = coref_logits_after_cluster_bool.max(-2) #[gold_mention] choosing the index of the best cluster per gold mention
+                max_coref_score, max_coref_cluster_ind = coref_logits_after_cluster_bool[0].max(-2) #[gold_mention] choosing the index of the best cluster per gold mention
                 coref_bools = max_coref_score > 0
             else:
                 if len(mention_logits) > 0:
