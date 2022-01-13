@@ -119,7 +119,7 @@ class DETR(nn.Module):
             for i in range(bs):
                 masked_ids = input_ids[i][mask[i]==1].unsqueeze(0)
                 masked_mask = torch.ones_like(masked_ids).unsqueeze(0)
-                longformer_emb = self.backbone(masked_ids, attention_mask=masked_mask)[0]
+                longformer_emb = self.backbone(masked_ids, masked_mask)[0]
                 longfomer_no_pad_list.append(longformer_emb.reshape(-1, longformer_emb.shape[-1]))
 
             if not self.args.use_gold_mentions:
