@@ -130,6 +130,8 @@ def parse_args():
     parser.add_argument('--use_gold_mentions', action='store_true')
     parser.add_argument('--is_frozen', action='store_true')
     parser.add_argument('--topk_pre', action='store_true')
+    parser.add_argument('--topk_lambda', default=0.4, type=float,
+                        help="Relative classification weight of the no-object class")
     parser.add_argument('--cluster_block', action='store_true')
     parser.add_argument('--use_topk_mentions', action='store_true')
     parser.add_argument('--softmax_coref', action='store_true')
