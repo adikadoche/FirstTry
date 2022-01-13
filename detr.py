@@ -353,9 +353,7 @@ class Backbone(nn.Module):
                 self.men_proposal.load_state_dict(torch.load('/home/gamir/adiz/tmpCode/s2e-coref/s2e_mention_proposal.pt'))
             else:
                 self.men_proposal = MenPropose(self.config, args)
-            print(self.men_proposal.top_lambda)
             self.men_proposal.top_lambda = args.topk_lambda
-            print(self.men_proposal.top_lambda)
 
             if args.is_frozen:
                 for param in self.men_proposal.parameters():
