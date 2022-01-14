@@ -451,9 +451,9 @@ class Backbone(nn.Module):
                                                 cache_dir=args.cache_dir)
         self.hidden_size = self.longformer.config.hidden_size if self.longformer is not None else self.men_proposal.longformer.config.hidden_size
 
-    def forward(self, input_ids, mask, gold_clusters=None):
+    def forward(self, input_ids, mask, gold_mentions=None):
         if self.args.use_topk_mentions:
-            span_starts, span_ends, mentions_mask, longfomer_no_pad_list, cost_is_mention = self.men_proposal(input_ids, mask, gold_clusters)
+            span_starts, span_ends, mentions_mask, longfomer_no_pad_list, cost_is_mention = self.men_proposal(input_ids, mask, gold_mentions)
             if self.args.is_frozen and self.longformer is not None:
                 longfomer_no_pad_list = self.longformer(input_ids, attention_mask=mask)[0]
             return span_starts, span_ends, mentions_mask, longfomer_no_pad_list, cost_is_mention
@@ -526,7 +526,7 @@ class MenPropose(BertPreTrainedModel):
     def __init__(self, config, args):
         super().__init__(config)
         self.max_span_length = 30
-        self.top_lambda = 0.4
+        self.top_lambda = 0.1
         self.ffnn_size = 3072
         self.do_mlps = True
         self.normalise_loss = True
@@ -555,7 +555,7 @@ class MenPropose(BertPreTrainedModel):
         len_expanded = k.unsqueeze(1).expand(size)
         return (idx < len_expanded).int()
 
-    def _prune_topk_mentions(self, mention_logits, attention_mask):
+    def _prune_topk_mentions(self, mention_logits, attention_mask, gold_mentions):
         """
         :param mention_logits: Shape [batch_size, seq_length, seq_length]
         :param attention_mask: [batch_size, seq_length]
@@ -577,6 +577,42 @@ class MenPropose(BertPreTrainedModel):
         topk_mention_end_ids = (sorted_topk_1d_indices % seq_length).long()  # [batch_size, max_k]
 
         topk_mention_logits = mention_logits[torch.arange(batch_size).unsqueeze(-1).expand(batch_size, max_k),
+                                            topk_mention_start_ids, topk_mention_end_ids]  # [batch_size, max_k]
+
+        if self.args.use_gold_mentions:
+            gold_mention_start_ids = [[m[0] for m in gold_mentions]]
+            gold_mention_end_ids = [[m[1] for m in gold_mentions]]
+            missing_start = []
+            missing_end = []
+            missing_indices = []
+            for b in range(batch_size):
+                missing_start.append([])
+                missing_end.append([])
+                missing_indices.append([])
+                for i in range(len(gold_mention_start_ids)):
+                    found = False
+                    for j in range(topk_mention_start_ids.shape[1]):
+                        if gold_mention_start_ids[b][i] == topk_mention_start_ids[b][j] and gold_mention_end_ids[b][i] == topk_mention_end_ids[b][j]:
+                            found = True
+                    if not found:
+                        missing_start[-1].append(gold_mention_start_ids[b][i])
+                        missing_end[-1].append(gold_mention_end_ids[b][i])
+                        missing_indices[-1].append(gold_mention_start_ids[b][i] * seq_length + gold_mention_end_ids[b][i])
+            new_k = torch.tensor([len(tmsi) for tmsi in missing_start], device=mention_logits.device) + k
+            new_max_k = int(torch.max(new_k))  # This is the k for the largest input in the batch, we will need to pad
+            _, topk_1d_indices = torch.topk(mention_logits.view(batch_size, -1), dim=-1, k=new_max_k)  # [batch_size, max_k]
+            # span_mask = self._get_span_mask(batch_size, k, max_k)  # [batch_size, max_k]
+            span_mask = torch.ones([1, new_max_k], device=mention_logits.device)  # [batch_size, max_k]   #TODO batch
+            for b in range(batch_size):
+                for j in range(len(missing_indices[b])):
+                    topk_1d_indices[b][-j-1] = missing_indices[b][j]
+            topk_1d_indices = (topk_1d_indices * span_mask) + (1 - span_mask) * ((seq_length ** 2) - 1)  # We take different k for each example
+            sorted_topk_1d_indices, _ = torch.sort(topk_1d_indices, dim=-1)  # [batch_size, max_k]
+
+            topk_mention_start_ids = (sorted_topk_1d_indices // seq_length).long()  # [batch_size, max_k]
+            topk_mention_end_ids = (sorted_topk_1d_indices % seq_length).long()  # [batch_size, max_k]
+
+        topk_mention_logits = mention_logits[torch.arange(batch_size).unsqueeze(-1).expand(batch_size, new_max_k),
                                             topk_mention_start_ids, topk_mention_end_ids]  # [batch_size, max_k]
         
         # topk_mention_logits = topk_mention_logits.unsqueeze(-1) + topk_mention_logits.unsqueeze(-2)  # [batch_size, max_k, max_k]
@@ -619,7 +655,7 @@ class MenPropose(BertPreTrainedModel):
         mention_logits, mention_mask = self._calc_mention_logits(start_mention_reps, end_mention_reps)
 
         # prune mentions
-        mention_start_ids, mention_end_ids, span_mask, topk_mention_logits = self._prune_topk_mentions(mention_logits, attention_mask)
+        mention_start_ids, mention_end_ids, span_mask, topk_mention_logits = self._prune_topk_mentions(mention_logits, attention_mask, gold_mentions)
 
         mention_probs = mention_logits.sigmoid()
         junk_probs = torch.clone(mention_probs)

@@ -467,7 +467,7 @@ def tensor_and_remove_empty(batch, gold_mentions, args):
         input_ids, input_mask = pad_input_ids_and_mask_to_max_tokens(\
             torch.tensor(batch['input_ids'][i], device=args.device), torch.tensor(batch['input_mask'][i], device=args.device), input_ids, input_mask, i)
         sum_text_len.append(torch.tensor([sum(batch['text_len'][i])]).to(args.device))
-        new_gold_mentions.append(pad_mentions(gold_mentions[i], max_mentions))
+        new_gold_mentions.append(pad_mentions(gold_mentions[i], max_mentions).to(args.device))
         num_mentions.append(torch.tensor([len(gold_mentions[i])]).to(args.device))
     return input_ids, input_mask, \
             torch.cat(sum_text_len).reshape(bs), \
