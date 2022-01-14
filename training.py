@@ -63,10 +63,10 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             outputs = model(input_ids, max_mentions, input_mask, gold_mentions, gold_clusters, num_mentions)
             cluster_logits, coref_logits, mention_logits, mentions_list = \
                 outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits'], outputs['mentions']
+            mentions_list = mentions_list.detach().cpu().numpy()
+            mentions_list = [[(m[0], m[1]) for m in mentions_list[j] if m[0] != -1 and m[1] != -1] for j in range(mentions_list.shape[0])]
 
             if args.use_topk_mentions:
-                mentions_list = mentions_list.detach().cpu().numpy()
-                mentions_list = [[(m[0], m[1]) for m in mentions_list[j] if m[0] != -1 and m[1] != -1] for j in range(mentions_list.shape[0])]
                 gold_matrix, gold_mentions_vector = create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_matrix)
             if args.add_junk:
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), mention_logits.cpu().detach(),

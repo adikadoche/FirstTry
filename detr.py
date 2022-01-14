@@ -164,14 +164,19 @@ class DETR(nn.Module):
 
             if not self.args.use_gold_mentions:
                 hs, memory = self.transformer(self.input_proj(torch.stack(longfomer_no_pad_list, 0)), mask, raw_query_embed) # [dec_layers, 1, num_queries, emb], [1, seg*seq, emb]
+                last_hs = hs[-1] # [1, num_queries, emb]
+                cluster_logits, coref_logits, mention_logits = self.calc_cluster_and_coref_logits(last_hs, memory, gold_mentions is not None, mask, max_mentions_len[0])
             else:
                 span_starts = [torch.tensor([m[0] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
                 span_ends = [torch.tensor([m[1] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
                 span_emb, span_mask = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends, num_mentions)  # [mentions, emb']
                 span_emb = self.span_proj(span_emb) # [mentions, emb]
-                hs, memory = self.transformer(span_emb, span_mask, raw_query_embed)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
-            last_hs = hs[-1] # [1, num_queries, emb]
-            cluster_logits, coref_logits, mention_logits = self.calc_cluster_and_coref_logits(last_hs, memory, gold_mentions is not None, span_mask, max_mentions_len[0])
+                if self.args.slots:
+                    cluster_logits, coref_logits, mention_logits = self.slot_attention(span_emb)
+                else:
+                    hs, memory = self.transformer(span_emb, span_mask, raw_query_embed)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
+                    last_hs = hs[-1] # [1, num_queries, emb]
+                    cluster_logits, coref_logits, mention_logits = self.calc_cluster_and_coref_logits(last_hs, memory, gold_mentions is not None, span_mask, max_mentions_len[0])
             mentions = gold_mentions
 
 
