@@ -589,7 +589,7 @@ class MenPropose(BertPreTrainedModel):
                 missing_start.append([])
                 missing_end.append([])
                 missing_indices.append([])
-                for i in range(len(gold_mention_start_ids)):
+                for i in range(len(gold_mention_start_ids[b])):
                     found = False
                     for j in range(topk_mention_start_ids.shape[1]):
                         if gold_mention_start_ids[b][i] == topk_mention_start_ids[b][j] and gold_mention_end_ids[b][i] == topk_mention_end_ids[b][j]:
