@@ -526,7 +526,7 @@ class MenPropose(BertPreTrainedModel):
     def __init__(self, config, args):
         super().__init__(config)
         self.max_span_length = 30
-        self.top_lambda = 0.1
+        self.top_lambda = 0.4
         self.ffnn_size = 3072
         self.do_mlps = True
         self.normalise_loss = True
