@@ -72,6 +72,7 @@
                 "1",
                 // "--amp",
                 "--use_gold_mentions",
+                "--slots",
                 // "--no_cuda",
                 // "--normalise_loss",
                 "--max_total_seq_len",
