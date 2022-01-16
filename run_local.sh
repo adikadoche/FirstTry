@@ -1,7 +1,6 @@
 #! /bin/bash
 
 export JOB_NAME=$1
-SCRIPT_PARAMS="${@:2:99999}"
 export GIT_HASH="$(git rev-parse HEAD)"
 LOG_DIR="slurm_logs"
 
