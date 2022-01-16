@@ -176,14 +176,16 @@ class DETR(nn.Module):
                 # start, end = span_starts[i].detach().cpu().numpy(), span_ends[i].detach().cpu().numpy()
                 # mentions[i] = [(start[j], end[j]) for j in range(span_starts[i].shape[0])]
             span_emb, span_mask = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends, new_num_mentions)  # [mentions, emb']
-            embedding = self.span_proj(span_emb) # [mentions, emb]
+            span_emb_proj = self.span_proj(span_emb) # [mentions, emb]
             # mentions = [torch.cat([span_starts[i].unsqueeze(-1), span_ends[i].unsqueeze(-1)], -1) for i in range(bs)]
             if self.args.slots:
-                cluster_logits, coref_logits, mention_logits = self.slot_attention(embedding)
+                cluster_logits, coref_logits, mention_logits = self.slot_attention(span_emb_proj)
+                embedding = span_emb_proj
             else:
-                hs, memory = self.transformer(embedding, span_mask, raw_query_embed)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
+                hs, memory = self.transformer(span_emb_proj, span_mask, raw_query_embed)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
                 last_hs = hs[-1] # [1, num_queries, emb]
                 cluster_logits, coref_logits, mention_logits = self.calc_cluster_and_coref_logits(last_hs, memory, gold_mentions is not None, span_mask, max_mentions_len[0])
+                embedding = memory
             mentions = torch.cat([\
                 torch.cat([\
                     torch.cat([span_starts[i].unsqueeze(-1), span_ends[i].unsqueeze(-1)], -1), \
@@ -201,6 +203,7 @@ class DETR(nn.Module):
                 hs, memory = self.transformer(self.input_proj(torch.stack(longfomer_no_pad_list, 0)), mask, raw_query_embed) # [dec_layers, 1, num_queries, emb], [1, seg*seq, emb]
                 last_hs = hs[-1] # [1, num_queries, emb]
                 cluster_logits, coref_logits, mention_logits = self.calc_cluster_and_coref_logits(last_hs, memory, gold_mentions is not None, mask, max_mentions_len[0])
+                embedding = memory
             else:
                 span_starts = [torch.tensor([m[0] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
                 span_ends = [torch.tensor([m[1] for m in gold_mentions[i]], dtype=torch.long) for i in range(len(gold_mentions))]
@@ -208,25 +211,23 @@ class DETR(nn.Module):
                 span_emb = self.span_proj(span_emb) # [mentions, emb]
                 if self.args.slots:
                     cluster_logits, coref_logits, mention_logits = self.slot_attention(span_emb)
+                    embedding = span_emb
                 else:
                     hs, memory = self.transformer(span_emb, span_mask, raw_query_embed)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
                     last_hs = hs[-1] # [1, num_queries, emb]
                     cluster_logits, coref_logits, mention_logits = self.calc_cluster_and_coref_logits(last_hs, memory, gold_mentions is not None, span_mask, max_mentions_len[0])
+                    embedding = memory
             mentions = gold_mentions
 
         out = {"coref_logits": coref_logits,
                 "cluster_logits": cluster_logits,
                 "mention_logits": mention_logits, 
-                'mentions': mentions}
+                'mentions': mentions,
+                'embedding': embedding}
 
         if self.args.use_topk_mentions:
             cost_is_mention = torch.cat(cost_is_mention, 0)
-            out = {"coref_logits": coref_logits,
-                    "cluster_logits": cluster_logits,
-                    "mention_logits": mention_logits,  #mention_probs
-                    'mentions': mentions,
-                    'cost_is_mention': cost_is_mention}
-                # "aux_coref_logits": aux_coref_logits}
+            out.update({'cost_is_mention': cost_is_mention})
         return out
 
     def slot_attention(self, input_emb):
@@ -400,7 +401,7 @@ class MatchingLoss(nn.Module):
         targets_mentions = targets['mentions']
         bs = outputs["coref_logits"].shape[0]
         costs = []
-        costs_parts = {'loss_is_cluster':[], 'loss_is_mention':[], 'loss_coref':[]}
+        costs_parts = {'loss_is_cluster':[], 'loss_is_mention':[], 'loss_coref':[], 'loss_embedding_num':[], 'loss_embedding_denom':[], 'loss_embedding':[]}
         for i in range(bs):
             # Compute the average number of target boxes accross all nodes, for normalization purposes
             coref_logits = outputs["coref_logits"][i].squeeze(0)  # [num_queries, tokens]
@@ -443,6 +444,32 @@ class MatchingLoss(nn.Module):
                     cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_gold, reduction='mean')
             elif coref_logits.shape[1] > 0:
                 cost_coref = F.binary_cross_entropy(coref_logits, torch.zeros_like(coref_logits), reduction='mean')
+
+            embedding = outputs["embedding"][i].squeeze(0)
+            embedding_loss = torch.tensor(0)
+
+            num_of_gold_clusters = torch.sum(torch.sum(targets_clusters[i], -1) > 0)
+            cluster_inds = targets_clusters[i][:num_of_gold_clusters]
+            if len(embedding.shape) == 1:
+                embedding = embedding.unsqueeze(0)
+            junk_cluster = 1 - torch.sum(cluster_inds, 0)
+            if torch.sum(junk_cluster) > 0:
+                cluster_inds = torch.cat([cluster_inds, junk_cluster.unsqueeze(0)]) #TODO: do we really want it?
+            avg_vector = torch.matmul(cluster_inds, embedding) / torch.sum(cluster_inds, 1).reshape(-1, 1)
+            center_clusters_distances = torch.cdist(avg_vector, avg_vector)
+            diffs = 0
+            for x in range(cluster_inds.shape[0]):
+                diffs += torch.sum(torch.pow((embedding - avg_vector[x]) * cluster_inds[x].unsqueeze(-1), 2)) / torch.sum(cluster_inds[x])
+            incluster_dist = 3 * diffs/cluster_inds.shape[0]
+            outcluster_dist = torch.sum(center_clusters_distances)/(center_clusters_distances.shape[0]*center_clusters_distances.shape[1])
+            if embedding.shape[0] == 1 or outcluster_dist == 0:
+                embedding_loss = incluster_dist
+            else:
+                embedding_loss = incluster_dist + 1 / outcluster_dist  #TODO: change to accurate denom?
+
+            costs_parts['loss_embedding_num'].append(5 * incluster_dist.detach().cpu())
+            costs_parts['loss_embedding_denom'].append(5 * 1 / outcluster_dist.detach().cpu())                        
+            costs_parts['loss_embedding'].append(5 * embedding_loss.detach().cpu())
 
             costs_parts['loss_is_cluster'].append(self.cost_is_cluster * cost_is_cluster.detach().cpu())
             costs_parts['loss_is_mention'].append(self.cost_coref * cost_is_mention.detach().cpu())
