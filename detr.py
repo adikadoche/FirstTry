@@ -448,7 +448,7 @@ class MatchingLoss(nn.Module):
             costs_parts['loss_is_mention'].append(self.cost_is_cluster * cost_is_mention.detach().cpu())
             costs_parts['loss_coref'].append(self.cost_coref * cost_coref.detach().cpu())
             costs_parts['loss_junk'].append(self.cost_coref * cost_junk.detach().cpu())
-            total_cost = self.cost_coref * (cost_coref+cost_junk) + self.cost_is_cluster * cost_is_cluster + self.cost_coref * cost_is_mention
+            total_cost = self.cost_coref * (cost_coref+cost_junk) + self.cost_is_cluster * cost_is_cluster + self.cost_is_cluster * cost_is_mention
             costs.append(total_cost)
         return torch.stack(costs), costs_parts
 
