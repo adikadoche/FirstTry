@@ -232,7 +232,7 @@ class DETR(nn.Module):
         q = self.to_q(slots)
 
         dots = torch.einsum('bid,bjd->bij', q, k) * self.scale
-        coref_logits = dots.softmax(dim=1) + self.eps
+        coref_logits = (dots.softmax(dim=1) + self.eps).clamp(max=1.0)
         cluster_logits = self.mlp_classifier(slots)
 
         coref_logits = torch.cat([coref_logits, (torch.ones(1, coref_logits.shape[1], max_mentions-coref_logits.shape[2]) * -1).to(coref_logits.device)], dim=2)
@@ -367,11 +367,11 @@ class MatchingLoss(nn.Module):
         targets_mentions = targets['mentions']
         bs = outputs["coref_logits"].shape[0]
         costs = []
-        costs_parts = {'loss_is_cluster':[], 'loss_is_mention':[], 'loss_coref':[], 'loss_embedding_num':[], 'loss_embedding_denom':[], 'loss_embedding':[]}
+        costs_parts = {'loss_is_cluster':[], 'loss_is_mention':[], 'loss_coref':[], 'loss_junk':[]}
         for i in range(bs):
             # Compute the average number of target boxes accross all nodes, for normalization purposes
-            coref_logits = outputs["coref_logits"][i].squeeze(0)  # [num_queries, tokens]
-            cluster_logits = outputs["cluster_logits"][i].squeeze() # [num_queries]
+            coref_logits = outputs["coref_logits"][i].squeeze(0)  # [num_queries+num_junk_queries, tokens]
+            cluster_logits = outputs["cluster_logits"][i].squeeze() # [num_queries+num_junk_queries]
             if self.args.add_junk:
                 mention_logits = outputs["mention_logits"][i].squeeze() # [tokens]
             num_queries, doc_len = coref_logits.shape
@@ -411,6 +411,13 @@ class MatchingLoss(nn.Module):
             elif coref_logits.shape[1] > 0:
                 cost_coref = F.binary_cross_entropy(coref_logits, torch.zeros_like(coref_logits), reduction='mean')
 
+            cost_junk = torch.tensor(0)
+            junk_coref = torch.sum(coref_logits[-self.args.num_junk_queries:], 0)
+            target_junk = torch.zeros_like(junk_coref)
+            junk_mention_inds = torch.sum(targets_clusters[i], 0) == 0
+            target_junk[junk_mention_inds] = 1
+            cost_junk = F.binary_cross_entropy(junk_coref, target_junk, reduction='mean')
+
             # embedding = outputs["embedding"][i].squeeze(0)
             # embedding_loss = torch.tensor(0)
 
@@ -438,9 +445,10 @@ class MatchingLoss(nn.Module):
             # costs_parts['loss_embedding'].append(5 * embedding_loss.detach().cpu())
 
             costs_parts['loss_is_cluster'].append(self.cost_is_cluster * cost_is_cluster.detach().cpu())
-            costs_parts['loss_is_mention'].append(self.cost_coref * cost_is_mention.detach().cpu())
+            costs_parts['loss_is_mention'].append(self.cost_is_cluster * cost_is_mention.detach().cpu())
             costs_parts['loss_coref'].append(self.cost_coref * cost_coref.detach().cpu())
-            total_cost = self.cost_coref * cost_coref + self.cost_is_cluster * cost_is_cluster + self.cost_coref * cost_is_mention
+            costs_parts['loss_junk'].append(self.cost_coref * cost_junk.detach().cpu())
+            total_cost = self.cost_coref * (cost_coref+cost_junk) + self.cost_is_cluster * cost_is_cluster + self.cost_coref * cost_is_mention
             costs.append(total_cost)
         return torch.stack(costs), costs_parts
 
@@ -507,7 +515,7 @@ def build_DETR(args):
     model = DETR(
         backbone,
         transformer,
-        num_queries=args.num_queries,
+        num_queries=args.num_queries + args.num_junk_queries,
         hidden_size=backbone.hidden_size,
         args=args,
         aux_loss=args.aux_loss
