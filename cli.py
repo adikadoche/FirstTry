@@ -127,7 +127,6 @@ def parse_args():
     parser.add_argument('--max_num_speakers', default=20, type=int)
     parser.add_argument('--max_segment_len', default=4096, type=int)
     parser.add_argument('--limit_trainset', default=-1, type=int)
-    parser.add_argument('--cluster_block', action='store_true')
     parser.add_argument('--use_gold_mentions', action='store_true')
     parser.add_argument('--is_frozen', action='store_true')
     parser.add_argument('--topk_pre', action='store_true')
