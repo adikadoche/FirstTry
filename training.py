@@ -99,6 +99,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             else:
                 recent_losses_parts[key] = loss_parts[key]
         epoch_iterator.set_postfix({'loss': loss.item()})
+        global_step += args.train_batch_size
 
         if (step + 1) % args.gradient_accumulation_steps == 0:
             if args.amp:
@@ -109,19 +110,18 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             if args.lr_drop_interval == 'step':
                 lr_scheduler.step()  # Update learning rate schedule
             model.zero_grad()
-            global_step += args.train_batch_size
 
-            if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
-                if not args.is_debug:
-                    dict_to_log = {}
-                    dict_to_log['lr'] = optimizer.param_groups[0]['lr']
-                    dict_to_log['lr_bert'] = optimizer.param_groups[1]['lr']
-                    dict_to_log['loss'] = np.mean(recent_losses)
-                    for key in recent_losses_parts.keys():
-                        dict_to_log[key] = np.mean(recent_losses_parts[key])
-                    wandb.log(dict_to_log, step=global_step)
-                recent_losses.clear()
-                recent_losses_parts.clear()
+        if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
+            if not args.is_debug:
+                dict_to_log = {}
+                dict_to_log['lr'] = optimizer.param_groups[0]['lr']
+                dict_to_log['lr_bert'] = optimizer.param_groups[1]['lr']
+                dict_to_log['loss'] = np.mean(recent_losses)
+                for key in recent_losses_parts.keys():
+                    dict_to_log[key] = np.mean(recent_losses_parts[key])
+                wandb.log(dict_to_log, step=global_step)
+            recent_losses.clear()
+            recent_losses_parts.clear()
         if args.max_steps > 0 and global_step > args.max_steps:
             epoch_iterator.close()
             break

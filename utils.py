@@ -357,8 +357,10 @@ def evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_mention_logi
         # metrics[3] += prec_correct_gold_clusters / len(all_cluster_logits)
         # metrics[4] += prec_correct_predict_clusters / len(all_cluster_logits)
         cluster_evaluator.update(predicted_clusters, [gold_clusters])
-        gold_mentions_e = [[]] if [gold_clusters] == [[]] or [gold_clusters] == [()] else [[[m for c in [gold_clusters] for d in c for m in d]]]
-        predicted_mentions_e = [[]] if predicted_clusters == [[]] or predicted_clusters == [()] else [[[m for c in predicted_clusters for d in c for m in d]]]
+        gold_mentions_e = [[]] if [gold_clusters] == [[]] or [gold_clusters] == [()] else \
+            [[[m for c in [gold_clusters] for d in c for m in d]]]
+        predicted_mentions_e = [[]] if predicted_clusters == [[]] or predicted_clusters == [()] else [
+            [[m for c in predicted_clusters for d in c for m in d]]]
         mention_evaluator.update(predicted_mentions_e, gold_mentions_e)
     p, r, f1 = cluster_evaluator.get_prf()
     pm, rm, f1m = mention_evaluator.get_prf()

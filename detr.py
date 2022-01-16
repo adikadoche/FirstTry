@@ -102,6 +102,41 @@ class DETR(nn.Module):
                 nn.ReLU(inplace=True),
                 nn.Linear(int(dim / 2), 1),
                 nn.Sigmoid()
+            )
+
+        if self.args.slots:
+            dim = args.hidden_dim
+            self.num_slots = self.num_queries
+            self.iters = 3
+            self.eps = 1e-8
+            self.scale = dim ** -0.5
+
+            self.slots_mu = nn.Parameter(torch.randn(1, 1, dim))
+
+            self.slots_logsigma = nn.Parameter(torch.zeros(1, 1, dim))
+            init.xavier_uniform_(self.slots_logsigma)
+
+            self.to_q = nn.Linear(dim, dim)
+            self.to_k = nn.Linear(dim, dim)
+            self.to_v = nn.Linear(dim, dim)
+
+            self.gru = nn.GRUCell(dim, dim)
+
+            self.mlp = nn.Sequential(
+                nn.Linear(dim, dim * 2),
+                nn.ReLU(inplace=True),
+                nn.Linear(dim * 2, dim)
+            )
+
+            self.norm_input = nn.LayerNorm(dim)
+            self.norm_slots = nn.LayerNorm(dim)
+            self.norm_pre_ff = nn.LayerNorm(dim)
+
+            self.mlp_classifier = nn.Sequential(
+                nn.Linear(dim, int(dim / 2)),
+                nn.ReLU(inplace=True),
+                nn.Linear(int(dim / 2), 1),
+                nn.Sigmoid()
             ) 
 
     def forward(self, input_ids, max_mentions_len, mask, gold_mentions, gold_clusters, num_mentions):
@@ -178,7 +213,6 @@ class DETR(nn.Module):
                     last_hs = hs[-1] # [1, num_queries, emb]
                     cluster_logits, coref_logits, mention_logits = self.calc_cluster_and_coref_logits(last_hs, memory, gold_mentions is not None, span_mask, max_mentions_len[0])
             mentions = gold_mentions
-
 
         out = {"coref_logits": coref_logits,
                 "cluster_logits": cluster_logits,
@@ -403,7 +437,8 @@ class MatchingLoss(nn.Module):
                 permuted_gold = targets_clusters[i][matched_gold_cluster_id[i].numpy()]
                 if self.args.cluster_block:
                     premuted_cluster_logits = cluster_logits[matched_predicted_cluster_id[i].numpy()]
-                    cost_coref = F.binary_cross_entropy(premuted_cluster_logits.unsqueeze(1)*permuted_coref_logits, permuted_gold, reduction='mean')
+                    cost_coref = F.binary_cross_entropy(premuted_cluster_logits.unsqueeze(1) * permuted_coref_logits,
+                                                        permuted_gold, reduction='mean')
                 else:
                     cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_gold, reduction='mean')
             elif coref_logits.shape[1] > 0:

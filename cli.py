@@ -127,6 +127,7 @@ def parse_args():
     parser.add_argument('--max_num_speakers', default=20, type=int)
     parser.add_argument('--max_segment_len', default=4096, type=int)
     parser.add_argument('--limit_trainset', default=-1, type=int)
+    parser.add_argument('--cluster_block', action='store_true')
     parser.add_argument('--use_gold_mentions', action='store_true')
     parser.add_argument('--is_frozen', action='store_true')
     parser.add_argument('--topk_pre', action='store_true')
@@ -167,7 +168,7 @@ def parse_args():
     parser.add_argument("--backbone_name", type=str, choices=['backbone', 'longformer'], default='backbone')
     parser.add_argument("--sep_long", action='store_true')
     parser.add_argument('--lr', default=1e-4, type=float) #TODO:?
-    parser.add_argument("--max_grad_norm", default=0.1, type=float,
+    parser.add_argument("--max_grad_norm", default=1.0, type=float,
                     help="Max gradient norm.")
     parser.add_argument('--lr_drop_interval', default="step", type=str, choices=['epoch, step'])
 
