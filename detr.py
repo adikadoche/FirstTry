@@ -104,7 +104,7 @@ class DETR(nn.Module):
                 nn.Sigmoid()
             ) 
 
-    def forward(self, input_ids, max_mentions_len, mask, gold_mentions, gold_clusters, num_mentions):
+    def forward(self, input_ids, max_mentions_len, mask, gold_mentions, num_mentions):
         """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
@@ -144,7 +144,7 @@ class DETR(nn.Module):
             span_emb_proj = self.span_proj(span_emb) # [mentions, emb]
             # mentions = [torch.cat([span_starts[i].unsqueeze(-1), span_ends[i].unsqueeze(-1)], -1) for i in range(bs)]
             if self.args.slots:
-                cluster_logits, coref_logits, mention_logits = self.slot_attention(span_emb_proj)
+                cluster_logits, coref_logits, mention_logits = self.slot_attention(span_emb_proj, max_mentions_len)
                 embedding = span_emb_proj
             else:
                 hs, memory = self.transformer(span_emb_proj, span_mask, raw_query_embed)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
@@ -175,7 +175,7 @@ class DETR(nn.Module):
                 span_emb, span_mask = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends, num_mentions)  # [mentions, emb']
                 span_emb = self.span_proj(span_emb) # [mentions, emb]
                 if self.args.slots:
-                    cluster_logits, coref_logits, mention_logits = self.slot_attention(span_emb)
+                    cluster_logits, coref_logits, mention_logits = self.slot_attention(span_emb, max_mentions_len)
                     embedding = span_emb
                 else:
                     hs, memory = self.transformer(span_emb, span_mask, raw_query_embed)  # [dec_layers, bs, num_queries, emb], [bs, mentions, emb]
@@ -195,7 +195,7 @@ class DETR(nn.Module):
             out.update({'cost_is_mention': cost_is_mention})
         return out
 
-    def slot_attention(self, input_emb):
+    def slot_attention(self, input_emb, max_mentions):
         bs, doc_len, emb, device = *input_emb.shape, input_emb.device
 
         if self.args.random_queries:
@@ -236,7 +236,9 @@ class DETR(nn.Module):
         coref_logits = dots.softmax(dim=1) + self.eps
         cluster_logits = self.mlp_classifier(slots)
 
-        return cluster_logits, coref_logits, torch.tensor([])
+        coref_logits = torch.cat([coref_logits, (torch.ones(1, coref_logits.shape[1], max_mentions-coref_logits.shape[2]) * -1).to(coref_logits.device)], dim=2)
+
+        return cluster_logits, coref_logits, torch.tensor([], device=coref_logits.device)
 
     def calc_cluster_and_coref_logits(self, last_hs, memory, is_gold_mention, span_mask, max_num_mentions):
         # last_hs [bs, num_queries, emb]
