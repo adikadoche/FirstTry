@@ -114,8 +114,8 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
             if not args.is_debug:
                 dict_to_log = {}
-                dict_to_log['lr'] = optimizer.param_groups[0]['lr']
-                dict_to_log['lr_bert'] = optimizer.param_groups[1]['lr']
+                dict_to_log['lr'] = optimizer.param_groups[2]['lr']
+                dict_to_log['lr_bert'] = optimizer.param_groups[0]['lr']
                 dict_to_log['loss'] = np.mean(recent_losses)
                 for key in recent_losses_parts.keys():
                     dict_to_log[key] = np.mean(recent_losses_parts[key])
