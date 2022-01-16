@@ -51,7 +51,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
         if args.amp:
             with torch.cuda.amp.autocast():
-                outputs = model(input_ids, max_mentions, input_mask, gold_mentions, gold_clusters, num_mentions)
+                outputs = model(input_ids, max_mentions, input_mask, gold_mentions, num_mentions)
                 cluster_logits, coref_logits = outputs['cluster_logits'], outputs['coref_logits']
 
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(),
@@ -60,7 +60,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                 mention_evaluator.update([list(set([tuple(m) for c in gc for m in c])) for gc in predicted_clusters], gold_mentions_list)
                 loss = criterion(outputs, gold_matrix)
         else:
-            outputs = model(input_ids, max_mentions, input_mask, gold_mentions, gold_clusters, num_mentions)
+            outputs = model(input_ids, max_mentions, input_mask, gold_mentions, num_mentions)
             cluster_logits, coref_logits, mention_logits, mentions_list = \
                 outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits'], outputs['mentions']
             mentions_list = mentions_list.detach().cpu().numpy()
@@ -165,7 +165,7 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
 
     # lr_scheduler = get_constant_schedule_with_warmup(optimizer, num_warmup_steps=int(args.warmup_steps / args.train_batch_size))
     lr_scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=args.warmup_steps // args.train_batch_size,
-                                                t_total=args.t_total)
+                                                num_training_steps=args.t_total)
     # lr_scheduler = WarmupExponentialSchedule(optimizer, warmup_steps=int(args.warmup_steps / args.train_batch_size),
     #                                     gamma=0.99998)  # ConstantLRSchedule(optimizer)
 

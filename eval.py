@@ -148,7 +148,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", c
             # orig_input_dim = input_ids.shape
             # input_ids = torch.reshape(input_ids, (1, -1))
             # input_mask = torch.reshape(input_mask, (1, -1))
-            outputs = model(input_ids, max_mentions, input_mask, gold_mentions, gold_clusters, num_mentions)
+            outputs = model(input_ids, max_mentions, input_mask, gold_mentions, num_mentions)
             cluster_logits, coref_logits, mention_logits, mentions_list = \
                 outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits'], outputs['mentions']
             mentions_list = mentions_list.detach().cpu().numpy()
