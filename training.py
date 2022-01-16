@@ -15,7 +15,7 @@ import itertools
 from metrics import CorefEvaluator
 from utils import load_from_checkpoint, save_checkpoint, create_target_and_predict_matrix
 
-from transformers import AdamW, get_constant_schedule_with_warmup
+from transformers import AdamW, get_linear_schedule_with_warmup
 
 logger = logging.getLogger(__name__)
 
@@ -134,16 +134,28 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
 
     logger.info("Training/evaluation parameters %s", args)
 
-    param_dicts = [
-        {"params": [p for n, p in model.named_parameters() if args.backbone_name not in n and p.requires_grad]},
-        {
-            "params": [p for n, p in model.named_parameters() if args.backbone_name in n and p.requires_grad],
-            "lr": args.lr_backbone, #TODO: learn how to freeze backbone
-        },
-    ]
+    no_decay = ['bias', 'LayerNorm.weight']
+    back_params = [args.backbone_name]
 
-    optimizer = torch.optim.AdamW(param_dicts, lr=args.lr,
-                                  weight_decay=args.weight_decay)
+    model_decay = [p for n, p in model.named_parameters() if
+                   any(hp in n for hp in back_params) and not any(nd in n for nd in no_decay)]
+    model_no_decay = [p for n, p in model.named_parameters() if
+                      any(hp in n for hp in back_params) and any(nd in n for nd in no_decay)]
+    head_decay = [p for n, p in model.named_parameters() if
+                  not any(hp in n for hp in back_params) and not any(nd in n for nd in no_decay)]
+    head_no_decay = [p for n, p in model.named_parameters() if
+                     not any(hp in n for hp in back_params) and any(nd in n for nd in no_decay)]
+
+    optimizer_grouped_parameters = [
+        {'params': model_decay, 'lr': args.lr_backbone, 'weight_decay': args.weight_decay},
+        {'params': model_no_decay, 'lr': args.lr_backbone, 'weight_decay': 0.0},
+        {'params': head_decay, 'lr': args.lr, 'weight_decay': args.weight_decay},
+        {'params': head_no_decay, 'lr': args.lr, 'weight_decay': 0.0}
+    ]
+    optimizer = AdamW(optimizer_grouped_parameters,
+                      lr=args.lr) #TODO check betas and epsilon
+                    #   betas=(args.adam_beta1, args.adam_beta2),
+                    #   eps=args.adam_epsilon)
 
     if args.max_steps > 0:
         args.t_total = args.max_steps
@@ -152,8 +164,8 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
         args.t_total = len(train_loader) // args.gradient_accumulation_steps * args.num_train_epochs
 
     # lr_scheduler = get_constant_schedule_with_warmup(optimizer, num_warmup_steps=int(args.warmup_steps / args.train_batch_size))
-    lr_scheduler = WarmupLinearSchedule(optimizer, warmup_steps=args.warmup_steps // args.train_batch_size,
-                                        t_total=args.t_total)  # ConstantLRSchedule(optimizer)
+    lr_scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=args.warmup_steps // args.train_batch_size,
+                                                t_total=args.t_total)
     # lr_scheduler = WarmupExponentialSchedule(optimizer, warmup_steps=int(args.warmup_steps / args.train_batch_size),
     #                                     gamma=0.99998)  # ConstantLRSchedule(optimizer)
 
