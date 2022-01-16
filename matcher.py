@@ -66,8 +66,8 @@ class HungarianMatcher(nn.Module):
                 matched_gold_cluster_id.append(False)
                 continue
 
-            coref_logits = outputs["coref_logits"][i].squeeze(0) # [num_queries, tokens]
-            cluster_logits = outputs["cluster_logits"][i] # [num_queries, 1]
+            coref_logits = outputs["coref_logits"][i].squeeze(0)[:self.args.num_queries] # [num_queries, tokens]
+            cluster_logits = outputs["cluster_logits"][i][:self.args.num_queries] # [num_queries, 1]
             if self.args.add_junk:
                 mention_logits = outputs["mention_logits"][i].squeeze(-1).unsqueeze(0) # [1, tokens]
 

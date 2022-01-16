@@ -75,6 +75,7 @@
                 "--use_topk_mentions",
                 // "--is_frozen",
                 "--topk_pre",
+                "--slots",
                 // "--no_cuda",
                 // "--normalise_loss",
                 "--max_total_seq_len",
