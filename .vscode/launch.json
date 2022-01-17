@@ -76,6 +76,7 @@
                 // "--is_frozen",
                 "--topk_pre",
                 "--slots",
+                "--cluster_block",
                 // "--no_cuda",
                 // "--normalise_loss",
                 "--max_total_seq_len",

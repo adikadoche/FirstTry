@@ -412,11 +412,11 @@ class MatchingLoss(nn.Module):
                 cost_coref = F.binary_cross_entropy(coref_logits, torch.zeros_like(coref_logits), reduction='mean')
 
             cost_junk = torch.tensor(0)
-            junk_coref = torch.sum(coref_logits[-self.args.num_junk_queries:], 0)
-            target_junk = torch.zeros_like(junk_coref)
-            junk_mention_inds = torch.sum(targets_clusters[i], 0) == 0
-            target_junk[junk_mention_inds] = 1
+            not_matched_predicted_cluster_bool = torch.as_tensor([j not in matched_predicted_cluster_id[i] for j in range(coref_logits.shape[0])])
+            junk_coref = torch.sum(coref_logits[not_matched_predicted_cluster_bool] * cluster_logits[not_matched_predicted_cluster_bool].unsqueeze(-1), 0)
             junk_coref = junk_coref.clamp(max=1.0)
+            junk_coref = junk_coref[torch.sum(targets_clusters[i], 0) == 0]
+            target_junk = torch.zeros_like(junk_coref)
             cost_junk = F.binary_cross_entropy(junk_coref, target_junk, reduction='mean')
 
             # embedding = outputs["embedding"][i].squeeze(0)
