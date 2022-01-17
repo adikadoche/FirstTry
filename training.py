@@ -169,7 +169,7 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
         thresh_delta = loaded_args['numbers']['thresh_delta']   
         if not args.do_train:
             return args.resume_global_step
-        args.num_train_epochs = (args.t_total - args.resume_global_step) * args.gradient_accumulation_steps // len(train_loader)
+        args.num_train_epochs = (args.t_total - args.resume_global_step // args.train_batch_size) * args.gradient_accumulation_steps // len(train_loader)
 
     scaler = None
     if args.amp:
