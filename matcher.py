@@ -57,14 +57,29 @@ class HungarianMatcher(nn.Module):
         """
         targets_clusters = targets['clusters']
         bs = outputs["coref_logits"].shape[0]
-        matched_predicted_cluster_id = []
-        matched_gold_cluster_id = []
+        matched_predicted_cluster_id = [[]] * bs
+        matched_gold_cluster_id = [[]] * bs
+        indices_with_clusters = []
+
+        for i in range(bs):
+            if torch.sum(targets_clusters[i]) == 0:
+                matched_predicted_cluster_id[i] = False
+                matched_gold_cluster_id[i] = False
+            else:
+                indices_with_clusters.append(i)
+        if len(indices_with_clusters) == 0:
+            return matched_predicted_cluster_id, matched_gold_cluster_id
+        indices_with_clusters = torch.tensor(indices_with_clusters, device=targets_clusters.device)
 
         num_gold_clusters = torch.sum(torch.sum(targets_clusters, -1) > 0, -1)
         max_gold_clusters = torch.max(num_gold_clusters)
         real_cluster_target = targets_clusters[:,:max_gold_clusters,:]  #[bs, gold_clusters, num_mentions]
         cluster_logits = outputs["cluster_logits"] # [bs, num_queries, 1]
         coref_logits = outputs["coref_logits"]  # [bs, num_queries, num_mentions]
+        if len(indices_with_clusters) < bs:
+            real_cluster_target = torch.index_select(real_cluster_target, 0, indices_with_clusters)
+            cluster_logits = torch.index_select(cluster_logits, 0, indices_with_clusters)
+            coref_logits = torch.index_select(coref_logits, 0, indices_with_clusters)
 
         if self.args.use_gold_mentions or self.args.use_topk_mentions:
             cost_is_cluster = F.binary_cross_entropy(cluster_logits, torch.ones_like(cluster_logits), reduction='none') # [bs, num_queries, 1]
