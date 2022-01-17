@@ -46,7 +46,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             continue
 
         gold_matrix = create_gold_matrix(args.device, sum_text_len, args.num_queries, gold_clusters, gold_mentions_list, gold_mentions.shape[1])
-        max_mentions = torch.tensor(gold_mentions.shape[1], device=gold_mentions.device) if args.use_gold_mentions else sum_text_len.max()//2
+        max_mentions = torch.tensor(gold_mentions.shape[1], device=gold_mentions.device) if args.use_gold_mentions else sum_text_len.max()//4
         max_mentions = max_mentions.repeat([input_ids.shape[0], 1])
 
         if args.amp:
@@ -68,6 +68,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
             if args.use_topk_mentions:
                 gold_matrix, _ = create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_matrix)
+                outputs['coref_logits'] = outputs['coref_logits'][:, :, :gold_matrix.shape[-1]]
             if args.add_junk:
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), mention_logits.cpu().detach(),
                                                             coref_threshold, cluster_threshold, mentions_list, args.slots)

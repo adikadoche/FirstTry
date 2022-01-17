@@ -60,66 +60,34 @@ class HungarianMatcher(nn.Module):
         matched_predicted_cluster_id = []
         matched_gold_cluster_id = []
 
+        num_gold_clusters = torch.sum(torch.sum(targets_clusters, -1) > 0, -1)
+        max_gold_clusters = torch.max(num_gold_clusters)
+        real_cluster_target = targets_clusters[:,:max_gold_clusters,:]  #[bs, gold_clusters, num_mentions]
+        cluster_logits = outputs["cluster_logits"] # [bs, num_queries, 1]
+        coref_logits = outputs["coref_logits"]  # [bs, num_queries, num_mentions]
 
-        for i in range(bs):
-            if targets_clusters[i].shape[1] == 0 or sum(sum(targets_clusters[i])) == 0:
-                matched_predicted_cluster_id.append(False)
-                matched_gold_cluster_id.append(False)
-                continue
+        if self.args.use_gold_mentions or self.args.use_topk_mentions:
+            cost_is_cluster = F.binary_cross_entropy(cluster_logits, torch.ones_like(cluster_logits), reduction='none') # [bs, num_queries, 1]
+            cost_is_cluster = cost_is_cluster.repeat(1, 1, max_gold_clusters) # [bs, num_queries, gold_clusters]            
 
-            coref_logits = outputs["coref_logits"][i].squeeze(0) # [num_queries, tokens]
-            cluster_logits = outputs["cluster_logits"][i] # [num_queries, 1]
+            cluster_repeated = real_cluster_target.unsqueeze(1).repeat(1, coref_logits.shape[1], 1, 1)
+            coref_logits_repeated = coref_logits.unsqueeze(2).repeat(1, 1, real_cluster_target.shape[1], 1)
+            if self.args.cluster_block:
+                cluster_logits_repeated = cluster_logits.unsqueeze(1).repeat(1, real_cluster_target.shape[0], 1)
+                cost_coref = torch.sum(F.binary_cross_entropy(coref_logits_repeated * cluster_logits_repeated, cluster_repeated, reduction='none'),-1)/torch.sum(outputs['span_mask'], 1)
+            else:
+                cost_coref = torch.sum(F.binary_cross_entropy(coref_logits_repeated, cluster_repeated, reduction='none'),-1)/torch.sum(outputs['span_mask'], 1).unsqueeze(1).unsqueeze(1)  # [bs, num_queries, gold_clusters]
 
-            if self.args.use_gold_mentions or self.args.use_topk_mentions:
-                real_cluster_target_rows = torch.sum(targets_clusters[i], -1) > 0
-                real_cluster_target = targets_clusters[i][real_cluster_target_rows]
-                num_of_gold_clusters = int(real_cluster_target.shape[0])
-                num_queries, doc_len = coref_logits.shape
+            total_cost = self.cost_is_cluster * cost_is_cluster + self.cost_coref * cost_coref
+            total_cost = total_cost.cpu()   # [bs, num_queries, gold_clusters]
 
-                cost_is_cluster = F.binary_cross_entropy(cluster_logits, torch.ones_like(cluster_logits), reduction='none') # [num_queries, 1]
-                cost_is_cluster = cost_is_cluster.repeat(1, num_of_gold_clusters) # [num_queries, gold_clusters]
+            for b in range(bs):
+                cur_total_cost = total_cost[b, :, :num_gold_clusters[b]]
+                indices = linear_sum_assignment(cur_total_cost)
+                ind1, ind2 = indices
 
-                if self.args.add_junk:
-                    mention_logits = mention_logits.repeat(num_queries, 1) # [num_queries, tokens]
-                    coref_logits = coref_logits * mention_logits
-
-                coref_logits = torch.index_select(coref_logits, 1, torch.arange(0, real_cluster_target.shape[1]).to(coref_logits.device))
-
-                cost_coref = []
-                for cluster in real_cluster_target:
-                    gold_per_token_repeated = cluster.repeat(num_queries, 1) # [num_queries, tokens]
-                    if self.args.cluster_block:
-                        losses_for_current_gold_cluster = F.binary_cross_entropy(cluster_logits * coref_logits, gold_per_token_repeated, reduction='none').mean(1)
-                    else:
-                        losses_for_current_gold_cluster = F.binary_cross_entropy(coref_logits, gold_per_token_repeated, reduction='none').mean(1)
-
-                    cost_coref.append(losses_for_current_gold_cluster) # [num_queries]
-                cost_coref = torch.stack(cost_coref, 1) # [num_queries, gold_clusters]
-
-                total_cost = self.cost_is_cluster * cost_is_cluster + self.cost_coref * cost_coref
-                # total_cost = self.cost_coref * cost_coref
-            else:  #TODO: implement
-                # real_cluster_target_rows = torch.sum(targets, -1) > 0
-                # real_cluster_target = targets[real_cluster_target_rows]
-                # num_of_gold_clusters = int(real_cluster_target.shape[0])
-                # num_queries, doc_len = coref_logits.shape
-
-                # cost_coref = []
-                # for cluster in real_cluster_target:
-                #     gold_per_token_repeated = cluster.repeat(num_queries, 1) # [num_queries, tokens]
-                #     losses_for_current_gold_cluster = F.binary_cross_entropy(coref_logits, gold_per_token_repeated, reduction='none').sum(1)
-
-                #     cost_coref.append(losses_for_current_gold_cluster) # [num_queries]
-                # cost_coref = torch.stack(cost_coref, 1) # [num_queries, gold_clusters]
-            
-                # total_cost = self.cost_coref * cost_coref
-                pass
-            total_cost = total_cost.cpu()
-            indices = linear_sum_assignment(total_cost)
-            ind1, ind2 = indices
-
-            matched_predicted_cluster_id.append(torch.as_tensor(ind1, dtype=torch.int64))
-            matched_gold_cluster_id.append(torch.as_tensor(ind2, dtype=torch.int64))
+                matched_predicted_cluster_id.append(torch.as_tensor(ind1, dtype=torch.int64))
+                matched_gold_cluster_id.append(torch.as_tensor(ind2, dtype=torch.int64))
 
         return matched_predicted_cluster_id, matched_gold_cluster_id
 
