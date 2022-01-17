@@ -438,9 +438,9 @@ class MatchingLoss(nn.Module):
             # costs_parts['loss_embedding'].append(5 * embedding_loss.detach().cpu())
 
             costs_parts['loss_is_cluster'].append(self.cost_is_cluster * cost_is_cluster.detach().cpu())
-            costs_parts['loss_is_mention'].append(self.cost_coref * cost_is_mention.detach().cpu())
+            costs_parts['loss_is_mention'].append(self.cost_is_cluster * cost_is_mention.detach().cpu())
             costs_parts['loss_coref'].append(self.cost_coref * cost_coref.detach().cpu())
-            total_cost = self.cost_coref * cost_coref + self.cost_is_cluster * cost_is_cluster + self.cost_coref * cost_is_mention
+            total_cost = self.cost_coref * cost_coref + self.cost_is_cluster * cost_is_cluster + self.cost_is_cluster * cost_is_mention
             costs.append(total_cost)
         return torch.stack(costs), costs_parts
 
@@ -665,7 +665,7 @@ class MenPropose(BertPreTrainedModel):
                                                         gold_start, gold_end] = 0
         junk_probs = torch.masked_select(junk_probs, mention_mask==1).reshape(1,-1)
  
-        cost_is_mention = cost_gold + 0.25 * F.binary_cross_entropy(junk_probs, torch.zeros_like(junk_probs))
+        cost_is_mention = cost_gold + F.binary_cross_entropy(junk_probs, torch.zeros_like(junk_probs))
        
         return (mention_start_ids, mention_end_ids, span_mask, sequence_output, cost_is_mention.unsqueeze(0))
  
