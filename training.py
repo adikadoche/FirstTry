@@ -39,19 +39,19 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         else:
             gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=args.device) for gm in gold_mentions_list]
 
-        input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = tensor_and_remove_empty(batch, gold_mentions_list, args)
+        input_ids, input_mask, sum_text_len, gold_mentions, gold_mentions_mask, num_mentions = tensor_and_remove_empty(batch, gold_mentions_list, args)
         # if len(input_ids) == 0 or input_ids.shape[1] > 1:
         if len(input_ids) == 0:
             print(f"skipped {step}")
             continue
 
-        gold_matrix = create_gold_matrix(args.device, sum_text_len, args.num_queries, gold_clusters, gold_mentions_list)
+        gold_matrix = create_gold_matrix(args.device, sum_text_len, args.num_queries, gold_clusters, gold_mentions_list, gold_mentions.shape[1])
         max_mentions = torch.tensor(gold_mentions.shape[1], device=gold_mentions.device) if args.use_gold_mentions else sum_text_len.max()//2
         max_mentions = max_mentions.repeat([input_ids.shape[0], 1])
 
         if args.amp:
             with torch.cuda.amp.autocast():
-                outputs = model(input_ids, max_mentions, input_mask, gold_mentions, num_mentions)
+                outputs = model(input_ids, max_mentions, input_mask, gold_mentions, gold_mentions_mask, num_mentions)
                 cluster_logits, coref_logits = outputs['cluster_logits'], outputs['coref_logits']
 
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(),
@@ -60,14 +60,14 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                 mention_evaluator.update([list(set([tuple(m) for c in gc for m in c])) for gc in predicted_clusters], gold_mentions_list)
                 loss = criterion(outputs, gold_matrix)
         else:
-            outputs = model(input_ids, max_mentions, input_mask, gold_mentions, num_mentions)
+            outputs = model(input_ids, max_mentions, input_mask, gold_mentions, gold_mentions_mask, num_mentions)
             cluster_logits, coref_logits, mention_logits, mentions_list = \
                 outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits'], outputs['mentions']
             mentions_list = mentions_list.detach().cpu().numpy()
             mentions_list = [[(m[0], m[1]) for m in mentions_list[j] if m[0] != -1 and m[1] != -1] for j in range(mentions_list.shape[0])]
 
             if args.use_topk_mentions:
-                gold_matrix, gold_mentions_vector = create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_matrix)
+                gold_matrix, _ = create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_matrix)
             if args.add_junk:
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), mention_logits.cpu().detach(),
                                                             coref_threshold, cluster_threshold, mentions_list, args.slots)
@@ -78,7 +78,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             gold_mentions_e = [[]] if gold_clusters == [[]] or gold_clusters == [()] else [[[m for c in gold_clusters for d in c for m in d]]]
             predicted_mentions_e = [[]] if predicted_clusters == [[]] or predicted_clusters == [()] else [[[m for c in predicted_clusters for d in c for m in d]]]
             mention_evaluator.update(predicted_mentions_e, gold_mentions_e)
-            loss, loss_parts = criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
+            loss, loss_parts = criterion(outputs, {'clusters':gold_matrix})
 
         if args.n_gpu > 1 or args.train_batch_size > 1:
             loss = loss.mean()  # mean() to average on multi-gpu parallel training

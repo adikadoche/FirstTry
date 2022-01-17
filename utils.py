@@ -177,16 +177,15 @@ def reduce_dict(input_dict, average=True):
         reduced_dict = {k: v for k, v in zip(names, values)}
     return reduced_dict
 
-def create_gold_matrix(device, doc_len, num_queries, gold_clusters, gold_mentions: List):
+def create_gold_matrix(device, doc_len, num_queries, gold_clusters, gold_mentions: List, max_mentions):
     if gold_mentions is None:
         gold_per_token = torch.zeros(num_queries, doc_len, device=device)
         for cluster_id, cluster in enumerate(gold_clusters):
             for start, end in cluster:
                 gold_per_token[cluster_id, start: end + 1] = 1
     else:
-        gold_per_token_batch = []
+        gold_per_token = torch.zeros(len(gold_mentions), num_queries, max_mentions, device=device)
         for i in range(len(gold_clusters)):
-            gold_per_token = torch.zeros(num_queries, len(gold_mentions[i]), device=device)
             if num_queries < len(gold_clusters[i]):
                 logger.info("in utils, exceeds num_queries with length {}".format(len(gold_clusters[i])))
             for cluster_id, cluster in enumerate(gold_clusters[i]):
@@ -195,12 +194,11 @@ def create_gold_matrix(device, doc_len, num_queries, gold_clusters, gold_mention
                 for mention in cluster:
                     mention_index = gold_mentions[i].index(tuple(mention))
                     assert mention_index >= 0
-                    gold_per_token[cluster_id, mention_index] = 1
+                    gold_per_token[i, cluster_id, mention_index] = 1
             # if gold_per_token.shape[1] == 0:
             #     logger.info("size of gold_cluster {}, size of gold matrix {}".format(len(gold_clusters[i]), gold_per_token.shape))
-            gold_per_token_batch.append(gold_per_token)
 
-    return gold_per_token_batch
+    return gold_per_token
 
 def create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_matrix):
     target_matrix_list = []
@@ -453,9 +451,10 @@ def pad_input_ids_and_mask_to_max_tokens(cur_input_ids, cur_mask, input_ids, mas
 
     return input_ids, mask
 
-def pad_mentions(gold_mentions, max_mentions):
-    padded_gold_mentions = torch.tensor(np.asarray(gold_mentions + (max_mentions-len(gold_mentions)) * [(-1, -1)])).unsqueeze(0)
-    return padded_gold_mentions
+def pad_mentions(gold_mentions, max_mentions, device):
+    padded_gold_mentions = torch.tensor(np.asarray(gold_mentions + (max_mentions-len(gold_mentions)) * [(0, 0)])).unsqueeze(0)
+    mask_gold_mentions = torch.cat([torch.ones(1, len(gold_mentions), dtype=torch.long, device=device), torch.zeros(1, max_mentions-len(gold_mentions), dtype=torch.long, device=device)], 1)
+    return padded_gold_mentions, mask_gold_mentions
 
 def tensor_and_remove_empty(batch, gold_mentions, args):
     bs = len(batch['text_len'])
@@ -463,15 +462,18 @@ def tensor_and_remove_empty(batch, gold_mentions, args):
     input_ids = torch.ones(bs, max_len, dtype=torch.int, device=args.device) * TOKENS_PAD
     input_mask = torch.ones(bs, max_len, dtype=torch.int, device=args.device) * MASK_PAD
 
-    sum_text_len, num_mentions, new_gold_mentions = [], [], []
+    sum_text_len, num_mentions, new_gold_mentions, new_gold_mentions_mask = [], [], [], []
     max_mentions = max([len(gm) for gm in gold_mentions])
     for i in range(bs):
         input_ids, input_mask = pad_input_ids_and_mask_to_max_tokens(\
             torch.tensor(batch['input_ids'][i], device=args.device), torch.tensor(batch['input_mask'][i], device=args.device), input_ids, input_mask, i)
         sum_text_len.append(torch.tensor([sum(batch['text_len'][i])]).to(args.device))
-        new_gold_mentions.append(pad_mentions(gold_mentions[i], max_mentions))
+        g_mention, g_mention_mask = pad_mentions(gold_mentions[i], max_mentions, args.device)
+        new_gold_mentions.append(g_mention)
+        new_gold_mentions_mask.append(g_mention_mask)
         num_mentions.append(torch.tensor([len(gold_mentions[i])]).to(args.device))
     return input_ids, input_mask, \
             torch.cat(sum_text_len).reshape(bs), \
                 torch.cat(new_gold_mentions).reshape(bs, max_mentions, 2),\
+                torch.cat(new_gold_mentions_mask).reshape(bs, max_mentions),\
                     torch.cat(num_mentions).reshape(bs)
