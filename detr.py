@@ -410,8 +410,8 @@ class MatchingLoss(nn.Module):
                     
                     not_matched_predicted_cluster_bool = torch.as_tensor([j not in matched_predicted_cluster_id[i] for j in range(coref_logits.shape[0])])
                     junk_coref = torch.sum(coref_logits[not_matched_predicted_cluster_bool] * cluster_logits[not_matched_predicted_cluster_bool].unsqueeze(-1), 0)
-                    junk_coref = junk_coref.clamp(max=1.0)
                     junk_coref = junk_coref[torch.sum(targets_clusters[i], 0) == 0]
+                    junk_coref = (junk_coref + 1e-8).clamp(max=1.0)
                     target_junk = torch.zeros_like(junk_coref)
                     cost_junk = F.binary_cross_entropy(junk_coref, target_junk, reduction='mean')
                 else:
