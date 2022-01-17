@@ -416,6 +416,7 @@ class MatchingLoss(nn.Module):
             target_junk = torch.zeros_like(junk_coref)
             junk_mention_inds = torch.sum(targets_clusters[i], 0) == 0
             target_junk[junk_mention_inds] = 1
+            junk_coref = junk_coref.clamp(max=1.0)
             cost_junk = F.binary_cross_entropy(junk_coref, target_junk, reduction='mean')
 
             # embedding = outputs["embedding"][i].squeeze(0)
