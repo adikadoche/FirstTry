@@ -101,8 +101,8 @@ class HungarianMatcher(nn.Module):
                 indices = linear_sum_assignment(cur_total_cost)
                 ind1, ind2 = indices
 
-                matched_predicted_cluster_id.append(torch.as_tensor(ind1, dtype=torch.int64))
-                matched_gold_cluster_id.append(torch.as_tensor(ind2, dtype=torch.int64))
+                matched_predicted_cluster_id[b] = torch.as_tensor(ind1, dtype=torch.int64)
+                matched_gold_cluster_id[b] = torch.as_tensor(ind2, dtype=torch.int64)
 
         return matched_predicted_cluster_id, matched_gold_cluster_id
 
