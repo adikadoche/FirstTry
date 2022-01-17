@@ -399,6 +399,7 @@ class MatchingLoss(nn.Module):
             coref_logits = torch.index_select(coref_logits, 1, torch.arange(0, targets_clusters[i].shape[1]).to(coref_logits.device))
 
             cost_coref = torch.tensor(0)
+            cost_junk = torch.tensor(0)
             if matched_predicted_cluster_id[i] is not False:
                 permuted_coref_logits = coref_logits[matched_predicted_cluster_id[i].numpy()]
                 permuted_gold = targets_clusters[i][matched_gold_cluster_id[i].numpy()]
@@ -406,18 +407,18 @@ class MatchingLoss(nn.Module):
                     premuted_cluster_logits = cluster_logits[matched_predicted_cluster_id[i].numpy()]
                     cost_coref = F.binary_cross_entropy(premuted_cluster_logits.unsqueeze(1) * permuted_coref_logits,
                                                         permuted_gold, reduction='mean')
+                    
+                    not_matched_predicted_cluster_bool = torch.as_tensor([j not in matched_predicted_cluster_id[i] for j in range(coref_logits.shape[0])])
+                    junk_coref = torch.sum(coref_logits[not_matched_predicted_cluster_bool] * cluster_logits[not_matched_predicted_cluster_bool].unsqueeze(-1), 0)
+                    junk_coref = junk_coref.clamp(max=1.0)
+                    junk_coref = junk_coref[torch.sum(targets_clusters[i], 0) == 0]
+                    target_junk = torch.zeros_like(junk_coref)
+                    cost_junk = F.binary_cross_entropy(junk_coref, target_junk, reduction='mean')
                 else:
                     cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_gold, reduction='mean')
             elif coref_logits.shape[1] > 0:
                 cost_coref = F.binary_cross_entropy(coref_logits, torch.zeros_like(coref_logits), reduction='mean')
 
-            cost_junk = torch.tensor(0)
-            not_matched_predicted_cluster_bool = torch.as_tensor([j not in matched_predicted_cluster_id[i] for j in range(coref_logits.shape[0])])
-            junk_coref = torch.sum(coref_logits[not_matched_predicted_cluster_bool] * cluster_logits[not_matched_predicted_cluster_bool].unsqueeze(-1), 0)
-            junk_coref = junk_coref.clamp(max=1.0)
-            junk_coref = junk_coref[torch.sum(targets_clusters[i], 0) == 0]
-            target_junk = torch.zeros_like(junk_coref)
-            cost_junk = F.binary_cross_entropy(junk_coref, target_junk, reduction='mean')
 
             # embedding = outputs["embedding"][i].squeeze(0)
             # embedding_loss = torch.tensor(0)
