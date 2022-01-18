@@ -290,12 +290,17 @@ class MatchingLoss(nn.Module):
                       The expected keys in each dict depends on the losses applied, see each loss' doc
         """
         # Retrieve the matching between the outputs of the last layer and the targets
-        matched_predicted_cluster_id, matched_gold_cluster_id = self.matcher(outputs, targets)
+        permuted_coref_logits, permuted_cluster_logits, permuted_targets_clusters = self.matcher(outputs, targets)
 
         targets_clusters = targets['clusters']
-        bs = outputs["coref_logits"].shape[0]
+        bs = permuted_coref_logits.shape[0]
         costs = []
         costs_parts = {'loss_is_cluster':[], 'loss_is_mention':[], 'loss_coref':[], 'loss_embedding_num':[], 'loss_embedding_denom':[], 'loss_embedding':[]}
+
+        gold_is_cluster_bool = torch.sum(permuted_targets_clusters, -1) > 0
+        gold_is_cluster = torch.zeros_like(permuted_cluster_logits)
+        weight_cluster = self.eos_coef * torch.ones_like(permuted_cluster_logits)
+
         for i in range(bs):
             # Compute the average number of target boxes accross all nodes, for normalization purposes
             coref_logits = outputs["coref_logits"][i].squeeze(0)  # [num_queries, tokens]

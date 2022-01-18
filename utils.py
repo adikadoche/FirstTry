@@ -184,7 +184,7 @@ def create_gold_matrix(device, doc_len, num_queries, gold_clusters, gold_mention
             for start, end in cluster:
                 gold_per_token[cluster_id, start: end + 1] = 1
     else:
-        gold_per_token = torch.zeros(len(gold_mentions), num_queries, max_mentions, device=device)
+        gold_per_token = torch.zeros(len(gold_mentions), max([len(c) for c in gold_clusters]), max_mentions, device=device)
         for i in range(len(gold_clusters)):
             if num_queries < len(gold_clusters[i]):
                 logger.info("in utils, exceeds num_queries with length {}".format(len(gold_clusters[i])))
@@ -361,9 +361,9 @@ def evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_mention_logi
         # metrics[4] += prec_correct_predict_clusters / len(all_cluster_logits)
         cluster_evaluator.update(predicted_clusters, [gold_clusters])
         gold_mentions_e = [[]] if [gold_clusters] == [[]] or [gold_clusters] == [()] else \
-            [[[m for c in [gold_clusters] for d in c for m in d]]]
+            [[[m for d in c for m in d]] for c in [gold_clusters]]
         predicted_mentions_e = [[]] if predicted_clusters == [[]] or predicted_clusters == [()] else [
-            [[m for c in predicted_clusters for d in c for m in d]]]
+            [[m for d in c for m in d]] for c in predicted_clusters]
         mention_evaluator.update(predicted_mentions_e, gold_mentions_e)
     p, r, f1 = cluster_evaluator.get_prf()
     pm, rm, f1m = mention_evaluator.get_prf()
