@@ -24,6 +24,6 @@ PYTHONUNBUFFERED=1 nohup /home/gamir/adiz/miniconda3/envs/torchGPU/bin/python -u
   --train_file /home/gamir/datasets/e2e-coref/train.english.jsonlines --predict_file /home/gamir/datasets/e2e-coref/dev.english.jsonlines --do_train --eval all \
   --num_train_epochs 80 --logging_steps 50 --save_steps -1 --eval_steps -1 --eval_epochs 1 --max_seq_length 4096 --gradient_accumulation_steps 1 \
   --max_total_seq_len 5000 --warmup_steps 5000 --weight_decay 0.01 --per_gpu_eval_batch_size 1 --per_gpu_train_batch_size 1 --save_epochs 1 --num_queries 100 \
-  --slots --use_gold_mentions --max_grad_norm 1.0 --lr 0.00008 --lr_backbone 0.000008 --resume_from /home/gamir/adiz/Code/runs/firsttry/output_dir/01_17_2022_10_47_18_goldslots_overfit/checkpoint-24984 \
+  --slots --use_gold_mentions --max_grad_norm 1.0 --lr 0.00013 --lr_backbone 0.000013 \
   |  tee ${LOG_PATH}  &
 

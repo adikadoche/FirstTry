@@ -153,8 +153,10 @@ def collate_fn(batch):
 def get_data_objects(args, data_file_path, is_training):
     if is_training:
         per_gpu_batch_size = args.per_gpu_train_batch_size
+        # batch_size = per_gpu_batch_size * max(1, args.n_gpu)
     else:
         per_gpu_batch_size = args.per_gpu_eval_batch_size
+        # batch_size = per_gpu_batch_size
 
     batch_size = per_gpu_batch_size * max(1, args.n_gpu)
     dataset = OntonotesDataset(data_file_path, is_training, batch_size, args)

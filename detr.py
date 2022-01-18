@@ -337,6 +337,7 @@ class MatchingLoss(nn.Module):
         for i in range(bs):
             # Compute the average number of target boxes accross all nodes, for normalization purposes
             coref_logits = outputs["coref_logits"][i].squeeze(0)  # [num_queries, tokens]
+            coref_logits = coref_logits[:, :targets_clusters[i].shape[1]]
             cluster_logits = outputs["cluster_logits"][i].squeeze() # [num_queries]
             if self.args.add_junk:
                 mention_logits = outputs["mention_logits"][i].squeeze() # [tokens]
@@ -359,8 +360,6 @@ class MatchingLoss(nn.Module):
                     mention_logits = mention_logits[:targets_mentions[i].shape[0]]
                 weight_mention = targets_mentions[i] + self.eos_coef * (1 - targets_mentions[i])
                 cost_is_mention = F.binary_cross_entropy(mention_logits, targets_mentions[i], weight=weight_mention)
-
-            coref_logits = torch.index_select(coref_logits, 1, torch.arange(0, targets_clusters[i].shape[1]).to(coref_logits.device))
 
             cost_coref = torch.tensor(0)
             if matched_predicted_cluster_id[i] is not False:
