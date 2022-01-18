@@ -46,7 +46,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             continue
 
         gold_matrix = create_gold_matrix(args.device, sum_text_len, args.num_queries, gold_clusters, gold_mentions_list)
-        max_mentions = torch.tensor(gold_mentions.shape[1], device=gold_mentions.device) if args.use_gold_mentions else sum_text_len.max()//2
+        max_mentions = torch.tensor(gold_mentions.shape[1], device=gold_mentions.device) if args.use_gold_mentions else sum_text_len.max()//4
         max_mentions = max_mentions.repeat([input_ids.shape[0], 1])
 
         if args.amp:
@@ -75,8 +75,8 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                 predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
                                                             coref_threshold, cluster_threshold, mentions_list, args.slots)
             cluster_evaluator.update(predicted_clusters, gold_clusters)
-            gold_mentions_e = [[]] if gold_clusters == [[]] or gold_clusters == [()] else [[[m for c in gold_clusters for d in c for m in d]]]
-            predicted_mentions_e = [[]] if predicted_clusters == [[]] or predicted_clusters == [()] else [[[m for c in predicted_clusters for d in c for m in d]]]
+            gold_mentions_e = [[]] if gold_clusters == [[]] or gold_clusters == [()] else [[[m for d in c for m in d]] for c in gold_clusters]
+            predicted_mentions_e = [[]] if predicted_clusters == [[]] or predicted_clusters == [()] else [[[m for d in c for m in d]] for c in predicted_clusters]
             mention_evaluator.update(predicted_mentions_e, gold_mentions_e)
             loss, loss_parts = criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
 
@@ -186,7 +186,7 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
         thresh_delta = loaded_args['numbers']['thresh_delta']   
         if not args.do_train:
             return args.resume_global_step
-        args.num_train_epochs = (args.t_total - args.resume_global_step) * args.gradient_accumulation_steps // len(train_loader)
+        args.num_train_epochs = (args.t_total - args.resume_global_step // args.train_batch_size) * args.gradient_accumulation_steps // len(train_loader)
 
     scaler = None
     if args.amp:
@@ -203,10 +203,8 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
                                                           find_unused_parameters=True)
     
     
-    if args.train_batch_size > 1:
-        args.eval_steps = -1 if args.eval_steps == -1 else max(1, int(round(args.eval_steps / args.train_batch_size)))
-        args.save_steps = -1 if args.save_steps == -1 else max(1, int(round(args.save_steps / args.train_batch_size)))
-        args.logging_steps = -1 if args.logging_steps == -1 else max(1, int(round(args.logging_steps / args.train_batch_size)))
+    if args.train_batch_size > 1 and args.logging_steps > 0 and args.logging_steps % args.train_batch_size != 0:
+        args.logging_steps -= args.logging_steps % args.train_batch_size
 
 
     global_step = 0 if not args.resume_from else args.resume_global_step
