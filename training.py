@@ -106,12 +106,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     return global_step
 
 
-def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
-    """ Train the model """
-    # output_dir = Path(args.output_dir)
-
-    logger.info("Training/evaluation parameters %s", args)
-
+def create_optimization(model, args, train_loader):
     param_dicts = [
         {"params": [p for n, p in model.named_parameters() if "backbone" not in n and p.requires_grad]},
         {
@@ -135,6 +130,16 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
     # lr_scheduler = WarmupExponentialSchedule(optimizer, warmup_steps=int(args.warmup_steps / args.train_batch_size),
     #                                     gamma=0.99998)  # ConstantLRSchedule(optimizer)
 
+    return optimizer, lr_scheduler
+
+
+def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
+    """ Train the model """
+    # output_dir = Path(args.output_dir)
+
+    logger.info("Training/evaluation parameters %s", args)
+    optimizer, lr_scheduler = create_optimization(model, args, train_loader)
+
     thresh_delta = 0.2    
     coref_threshold, cluster_threshold = 0.5, 0.5 # starting threshold, later fixed by eval
     best_f1 = -1
@@ -143,16 +148,21 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
     if args.resume_from:
         logger.info("Loading from checkpoint {}".format(args.resume_from))
         loaded_args = load_from_checkpoint(model, args.resume_from, args.device, optimizer, lr_scheduler)
-        args.resume_global_step = int(loaded_args['global_step'])
         coref_threshold = loaded_args['numbers']['coref_threshold']
         cluster_threshold = loaded_args['numbers']['cluster_threshold']
         best_f1_global_step = loaded_args['numbers']['best_f1_global_step']
         last_saved_global_step = loaded_args['numbers']['last_saved_global_step']
         best_f1 = loaded_args['numbers']['best_f1']
         thresh_delta = loaded_args['numbers']['thresh_delta']   
+
+        if args.reset_optim:
+            optimizer, lr_scheduler = create_optimization(model, args, train_loader)
+            args.resume_global_step = 0
+        else:
+            args.resume_global_step = int(loaded_args['global_step'])
+            args.num_train_epochs = (args.t_total - args.resume_global_step // args.train_batch_size) * args.gradient_accumulation_steps // len(train_loader)
         if not args.do_train:
             return args.resume_global_step
-        args.num_train_epochs = (args.t_total - args.resume_global_step // args.train_batch_size) * args.gradient_accumulation_steps // len(train_loader)
 
     scaler = None
     if args.amp:

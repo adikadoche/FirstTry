@@ -41,6 +41,7 @@ def parse_args():
         help="The output directory where the model checkpoints and predictions will be written.",
     )
     parser.add_argument("--resume_from", default='', type=str)
+    parser.add_argument("--reset_optim", action="store_true", help="Whether to reset optimizers.")
 
     # Other parameters
     parser.add_argument(
