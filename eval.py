@@ -33,6 +33,8 @@ def report_eval(args, eval_dataloader, eval_dataset, global_step, model, criteri
 
 def make_evaluation(model, criterion, eval_loader, eval_dataset, args):  
     # Evaluation 'no', 'specific', 'all', 'vanilla'
+    if args.n_gpu > 1:
+        model = torch.nn.DataParallel(model)
     if args.eval == 'specific':
         checkpoint = args.output_dir
         loaded_args = load_from_checkpoint(model, checkpoint, args.device)
@@ -178,6 +180,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", c
 
     pm, rm, f1m, p,r,f1, best_coref_threshold, best_cluster_threshold, metrics = calc_best_avg_f1(all_cluster_logits_cpu, all_coref_logits_cpu, all_mention_logits_cpu, all_gold_clusters, all_gold_mentions, coref_threshold, cluster_threshold, thresh_delta, args.slots)
 
+    print("============ EVAL EXAMPLES ============")
     print_predictions(all_cluster_logits_cuda, all_coref_logits_cuda, all_mention_logits_cuda, all_gold_clusters, all_gold_mentions, all_input_ids, coref_threshold, cluster_threshold, args, eval_dataset.tokenizer)
     prec_gold_to_one_pred, prec_pred_to_one_gold, avg_gold_split_without_perfect, avg_gold_split_with_perfect, \
         avg_pred_split_without_perfect, avg_pred_split_with_perfect, prec_biggest_gold_in_pred_without_perfect, \
