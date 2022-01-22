@@ -206,8 +206,8 @@ def create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_mat
     target_matrix_list = []
     new_coref_logits = []
     for b in range(len(gold_matrix)):
-        junk_mentions_indices = torch.tensor([i for i, m in enumerate(mentions_list[b]) if m not in gold_mentions_list[b]], dtype=torch.long, device=gold_matrix[0].device)
-        common_mentions = [m for m in mentions_list[b] if m in gold_mentions_list[b]]
+        junk_mentions_indices = torch.tensor([i for i, m in enumerate(mentions_list[b]) if m not in gold_mentions_list[b] and m != (0,0)], dtype=torch.long, device=gold_matrix[0].device)
+        common_mentions = [m for m in mentions_list[b] if m in gold_mentions_list[b] and m != (0,0)]
 
         common_predict_ind = torch.zeros(len(common_mentions), dtype=torch.long, device=gold_matrix[0].device)
         common_gold_ind = torch.zeros(len(gold_mentions_list[b])+1, device=gold_matrix[0].device)

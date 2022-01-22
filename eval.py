@@ -123,7 +123,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", c
     all_gold_clusters = []
     all_gold_mentions = []
 
-    for batch in tqdm(eval_dataloader, desc="Evaluating Eval"):
+    for batch in tqdm(eval_dataloader, desc="Evaluating Validation"):
         model.eval()
 
         sum_text_len = [sum(tl) for tl in batch['text_len']]
@@ -152,7 +152,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", c
             # input_mask = torch.reshape(input_mask, (1, -1))
             outputs = model(input_ids, max_mentions, input_mask, gold_mentions, num_mentions)
             cluster_logits, coref_logits, mention_logits, mentions_list = \
-                outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits'], outputs['mentions']
+                outputs['cluster_logits'], outputs['coref_logits'].clone(), outputs['mention_logits'], outputs['mentions']
             mentions_list = mentions_list.detach().cpu().numpy()
             mentions_list = [[(m[0], m[1]) for m in mentions_list[j] if m[0] != -1 and m[1] != -1] for j in range(mentions_list.shape[0])]
 

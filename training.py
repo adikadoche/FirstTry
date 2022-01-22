@@ -352,20 +352,23 @@ def eval_train(train_dataloader, eval_dataset, args, model, cluster_threshold, c
             continue
         max_mentions = torch.tensor(gold_mentions.shape[1], device=gold_mentions.device) if args.use_gold_mentions else sum_text_len.max()//4
         max_mentions = max_mentions.repeat([input_ids.shape[0], 1])
-            
-        all_gold_mentions += gold_mentions_list
-        all_input_ids += input_ids    
-        all_gold_clusters += gold_clusters
 
         with torch.no_grad():
             outputs = model(input_ids, max_mentions, input_mask, gold_mentions, num_mentions)
-            cluster_logits, coref_logits, mention_logits = outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits']
+            cluster_logits, coref_logits, mention_logits, mentions_list = \
+                outputs['cluster_logits'], outputs['coref_logits'].clone(), outputs['mention_logits'], outputs['mentions']
+            mentions_list = mentions_list.detach().cpu().numpy()
+            mentions_list = [[(m[0], m[1]) for m in mentions_list[j] if m[0] != -1 and m[1] != -1] for j in range(mentions_list.shape[0])]
 
-            predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [], coref_threshold, cluster_threshold, gold_mentions_list, args.slots)
+            predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [], coref_threshold, cluster_threshold, mentions_list, args.slots)
             cluster_train_evaluator.update(predicted_clusters, gold_clusters)
             gold_mentions_e = [[]] if gold_clusters == [[]] or gold_clusters == [()] else [[[m for d in c for m in d]] for c in gold_clusters]
             predicted_mentions_e = [[]] if predicted_clusters == [[]] or predicted_clusters == [()] else [[[m for d in c for m in d]] for c in predicted_clusters]
             mention_train_evaluator.update(predicted_mentions_e, gold_mentions_e)
+
+        all_gold_mentions += mentions_list
+        all_input_ids += input_ids    
+        all_gold_clusters += gold_clusters
             
         if args.add_junk:
             all_mention_logits_cuda += [ml.detach().clone() for ml in mention_logits]
