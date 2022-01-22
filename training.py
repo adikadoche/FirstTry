@@ -13,7 +13,8 @@ from utils import tensor_and_remove_empty, create_gold_matrix, calc_predicted_cl
 from optimization import WarmupLinearSchedule, WarmupExponentialSchedule
 import itertools
 from metrics import CorefEvaluator
-from utils import load_from_checkpoint, save_checkpoint, create_target_and_predict_matrix
+from utils import create_target_and_predict_matrix, load_from_checkpoint, save_checkpoint
+from coref_analysis import print_predictions
 
 from transformers import AdamW, get_linear_schedule_with_warmup
 
@@ -21,8 +22,7 @@ logger = logging.getLogger(__name__)
 
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     epoch_iterator, optimizer: torch.optim.Optimizer, scaler: torch.cuda.amp.GradScaler,
-                    args, cluster_evaluator, mention_evaluator, skip_steps, recent_losses, recent_losses_parts, global_step, lr_scheduler,
-        coref_threshold, cluster_threshold):
+                    args, skip_steps, recent_losses, recent_losses_parts, global_step, lr_scheduler):
     for step, batch in enumerate(epoch_iterator):
         if skip_steps > 0:
             skip_steps -= 1
@@ -52,32 +52,16 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         if args.amp:
             with torch.cuda.amp.autocast():
                 outputs = model(input_ids, max_mentions, input_mask, gold_mentions, num_mentions)
-                cluster_logits, coref_logits = outputs['cluster_logits'], outputs['coref_logits']
 
-                predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(),
-                                                            coref_threshold, cluster_threshold, gold_mentions_list, args.slots)
-                cluster_evaluator.update(predicted_clusters, gold_clusters)
-                mention_evaluator.update([list(set([tuple(m) for c in gc for m in c])) for gc in predicted_clusters], gold_mentions_list)
                 loss = criterion(outputs, gold_matrix)
         else:
             outputs = model(input_ids, max_mentions, input_mask, gold_mentions, num_mentions)
-            cluster_logits, coref_logits, mention_logits, mentions_list = \
-                outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits'], outputs['mentions']
+            mentions_list = outputs['mentions']
             mentions_list = mentions_list.detach().cpu().numpy()
             mentions_list = [[(m[0], m[1]) for m in mentions_list[j] if m[0] != -1 and m[1] != -1] for j in range(mentions_list.shape[0])]
 
             if args.use_topk_mentions:
                 gold_matrix, gold_mentions_vector = create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_matrix)
-            if args.add_junk:
-                predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), mention_logits.cpu().detach(),
-                                                            coref_threshold, cluster_threshold, mentions_list, args.slots)
-            else:
-                predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [],
-                                                            coref_threshold, cluster_threshold, mentions_list, args.slots)
-            cluster_evaluator.update(predicted_clusters, gold_clusters)
-            gold_mentions_e = [[]] if gold_clusters == [[]] or gold_clusters == [()] else [[[m for d in c for m in d]] for c in gold_clusters]
-            predicted_mentions_e = [[]] if predicted_clusters == [[]] or predicted_clusters == [()] else [[[m for d in c for m in d]] for c in predicted_clusters]
-            mention_evaluator.update(predicted_mentions_e, gold_mentions_e)
             loss, loss_parts = criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
 
         if args.n_gpu > 1 or args.train_batch_size > 1:
@@ -125,15 +109,9 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         if args.max_steps > 0 and global_step > args.max_steps:
             epoch_iterator.close()
             break
-    return global_step, coref_threshold, cluster_threshold
+    return global_step
 
-
-def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
-    """ Train the model """
-    # output_dir = Path(args.output_dir)
-
-    logger.info("Training/evaluation parameters %s", args)
-
+def create_optimization(model, args, train_loader):
     no_decay = ['bias', 'LayerNorm.weight']
     back_params = [args.backbone_name]
 
@@ -169,6 +147,15 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
     # lr_scheduler = WarmupExponentialSchedule(optimizer, warmup_steps=int(args.warmup_steps / args.train_batch_size),
     #                                     gamma=0.99998)  # ConstantLRSchedule(optimizer)
 
+    return optimizer, lr_scheduler
+
+def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
+    """ Train the model """
+    # output_dir = Path(args.output_dir)
+
+    logger.info("Training/evaluation parameters %s", args)
+    optimizer, lr_scheduler = create_optimization(model, args, train_loader)
+
     thresh_delta = 0.2    
     coref_threshold, cluster_threshold = 0.5, 0.5 # starting threshold, later fixed by eval
     best_f1 = -1
@@ -177,16 +164,21 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
     if args.resume_from:
         logger.info("Loading from checkpoint {}".format(args.resume_from))
         loaded_args = load_from_checkpoint(model, args.resume_from, args.device, optimizer, lr_scheduler)
-        args.resume_global_step = int(loaded_args['global_step'])
         coref_threshold = loaded_args['numbers']['coref_threshold']
         cluster_threshold = loaded_args['numbers']['cluster_threshold']
         best_f1_global_step = loaded_args['numbers']['best_f1_global_step']
         last_saved_global_step = loaded_args['numbers']['last_saved_global_step']
         best_f1 = loaded_args['numbers']['best_f1']
         thresh_delta = loaded_args['numbers']['thresh_delta']   
+
+        if args.reset_optim:
+            optimizer, lr_scheduler = create_optimization(model, args, train_loader)
+            args.resume_global_step = 0
+        else:
+            args.resume_global_step = int(loaded_args['global_step'])
+            args.num_train_epochs = (args.t_total - args.resume_global_step // args.train_batch_size) * args.gradient_accumulation_steps // len(train_loader)
         if not args.do_train:
             return args.resume_global_step
-        args.num_train_epochs = (args.t_total - args.resume_global_step // args.train_batch_size) * args.gradient_accumulation_steps // len(train_loader)
 
     scaler = None
     if args.amp:
@@ -234,28 +226,10 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
 
     start_time = time.time()
     for epoch in train_iterator:
-        # if epoch > len(train_iterator) / 2:
-        #     args.add_junk = True
-        cluster_evaluator = CorefEvaluator()
-        mention_evaluator = CorefEvaluator()
         epoch_iterator = tqdm(train_loader, desc="Iteration in Epoch {}".format(epoch), disable=args.local_rank not in [-1, 0], leave=False)
-        global_step, coref_threshold, cluster_threshold = train_one_epoch(   
-            model, criterion, epoch_iterator, optimizer, scaler, args, cluster_evaluator, mention_evaluator, skip_steps, recent_losses, recent_losses_parts, global_step,
-            lr_scheduler, coref_threshold, cluster_threshold)
-
-        p_train, r_train, f1_train = cluster_evaluator.get_prf()
-        pm_train, rm_train, f1m_train = mention_evaluator.get_prf()
-        if args.local_rank in [-1, 0]:
-            if not args.is_debug:
-                dict_to_log = {}
-                dict_to_log['Train Precision'] = p_train
-                dict_to_log['Train Recall'] = r_train
-                dict_to_log['Train F1'] = f1_train
-                dict_to_log['Train Mention Precision'] = pm_train
-                dict_to_log['Train Mention Recall'] = rm_train
-                dict_to_log['Train Mention F1'] = f1m_train
-                wandb.log(dict_to_log, step=global_step)
-            logger.info('Train f1, precision, recall: {}, Mentions f1, precision, recall: {}'.format((f1_train, p_train, r_train), (f1m_train, pm_train, rm_train)))
+        global_step = train_one_epoch(   
+            model, criterion, epoch_iterator, optimizer, scaler, args, skip_steps, recent_losses, recent_losses_parts, global_step,
+            lr_scheduler)
 
         if args.lr_drop_interval == 'epoch':
             lr_scheduler.step()  # Update learning rate schedule
@@ -275,6 +249,22 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
                     same_thresh_count = 0
                 cluster_threshold = new_cluster_threshold
                 coref_threshold = new_coref_threshold
+
+            cluster_evaluator, mention_evaluator = eval_train(train_loader, eval_dataset, args, model, cluster_threshold, coref_threshold)
+
+            p_train, r_train, f1_train = cluster_evaluator.get_prf()
+            pm_train, rm_train, f1m_train = mention_evaluator.get_prf()
+            if args.local_rank in [-1, 0]:
+                if not args.is_debug:
+                    dict_to_log = {}
+                    dict_to_log['Train Precision'] = p_train
+                    dict_to_log['Train Recall'] = r_train
+                    dict_to_log['Train F1'] = f1_train
+                    dict_to_log['Train Mention Precision'] = pm_train
+                    dict_to_log['Train Mention Recall'] = rm_train
+                    dict_to_log['Train Mention F1'] = f1m_train
+                    wandb.log(dict_to_log, step=global_step)
+                logger.info('Train f1, precision, recall: {}, Mentions f1, precision, recall: {}'.format((f1_train, p_train, r_train), (f1m_train, pm_train, rm_train)))
 
             if args.save_epochs > 0 and (epoch + 1) % args.save_epochs == 0 or epoch + 1 == args.num_train_epochs:
                 if eval_f1 > best_f1:
@@ -335,3 +325,54 @@ def set_seed(args):
     torch.manual_seed(args.seed)
     if args.n_gpu > 0:
         torch.cuda.manual_seed_all(args.seed)
+
+
+def eval_train(train_dataloader, eval_dataset, args, model, cluster_threshold, coref_threshold):
+    model.eval()
+    
+    all_cluster_logits_cuda = []
+    all_coref_logits_cuda = []
+    all_mention_logits_cuda = []
+    all_gold_clusters = []
+    all_input_ids = []
+    all_gold_mentions = []
+
+    cluster_train_evaluator = CorefEvaluator()
+    mention_train_evaluator = CorefEvaluator()
+    for batch in tqdm(train_dataloader, desc="Evaluating Train"):
+        sum_text_len = [sum(tl) for tl in batch['text_len']]
+        gold_clusters = batch['clusters']
+
+        gold_mentions_list = []
+        # if len(gold_clusters) > 0: #TODO:
+        gold_mentions_list = [list(set([tuple(m) for c in gc for m in c])) for gc in gold_clusters]
+
+        input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = tensor_and_remove_empty(batch, gold_mentions_list, args)
+        if len(input_ids) == 0:
+            continue
+        max_mentions = torch.tensor(gold_mentions.shape[1], device=gold_mentions.device) if args.use_gold_mentions else sum_text_len.max()//4
+        max_mentions = max_mentions.repeat([input_ids.shape[0], 1])
+            
+        all_gold_mentions += gold_mentions_list
+        all_input_ids += input_ids    
+        all_gold_clusters += gold_clusters
+
+        with torch.no_grad():
+            outputs = model(input_ids, max_mentions, input_mask, gold_mentions, num_mentions)
+            cluster_logits, coref_logits, mention_logits = outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits']
+
+            predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [], coref_threshold, cluster_threshold, gold_mentions_list, args.slots)
+            cluster_train_evaluator.update(predicted_clusters, gold_clusters)
+            gold_mentions_e = [[]] if gold_clusters == [[]] or gold_clusters == [()] else [[[m for d in c for m in d]] for c in gold_clusters]
+            predicted_mentions_e = [[]] if predicted_clusters == [[]] or predicted_clusters == [()] else [[[m for d in c for m in d]] for c in predicted_clusters]
+            mention_train_evaluator.update(predicted_mentions_e, gold_mentions_e)
+            
+        if args.add_junk:
+            all_mention_logits_cuda += [ml.detach().clone() for ml in mention_logits]
+        all_cluster_logits_cuda += [cl.detach().clone() for cl in cluster_logits]
+        all_coref_logits_cuda += [cl.detach().clone() for cl in coref_logits]
+
+    print("============ TRAIN EXAMPLES ============")
+    print_predictions(all_cluster_logits_cuda, all_coref_logits_cuda, all_mention_logits_cuda, all_gold_clusters, all_gold_mentions, all_input_ids, coref_threshold, cluster_threshold, args, eval_dataset.tokenizer)
+
+    return cluster_train_evaluator, mention_train_evaluator
