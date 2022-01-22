@@ -121,7 +121,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", c
     all_coref_logits_cuda = []
     all_mention_logits_cuda = []
     all_gold_clusters = []
-    all_gold_mentions = []
+    all_mentions = []
 
     for batch in tqdm(eval_dataloader, desc="Evaluating Validation"):
         model.eval()
@@ -168,7 +168,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", c
                     losses_parts[key] = loss_parts[key]
             batch_sizes.append(loss.shape[0]) 
 
-        all_gold_mentions += mentions_list
+        all_mentions += mentions_list
         all_input_ids += input_ids    
         all_gold_clusters += gold_clusters
 
@@ -183,14 +183,17 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", c
     eval_loss = np.average(losses, weights=batch_sizes)
     losses_parts = {key:np.average(losses_parts[key]) for key in losses_parts.keys()}
 
-    pm, rm, f1m, p,r,f1, best_coref_threshold, best_cluster_threshold, metrics = calc_best_avg_f1(all_cluster_logits_cpu, all_coref_logits_cpu, all_mention_logits_cpu, all_gold_clusters, all_gold_mentions, coref_threshold, cluster_threshold, thresh_delta, args.slots)
+    pmp, rmp, f1mp, pm, rm, f1m, p,r,f1, best_coref_threshold, best_cluster_threshold, metrics = \
+        calc_best_avg_f1(all_cluster_logits_cpu, all_coref_logits_cpu, all_mention_logits_cpu, \
+            all_gold_clusters, all_mentions, coref_threshold, cluster_threshold, \
+                thresh_delta, args.slots)
 
     print("============ EVAL EXAMPLES ============")
-    print_predictions(all_cluster_logits_cuda, all_coref_logits_cuda, all_mention_logits_cuda, all_gold_clusters, all_gold_mentions, all_input_ids, coref_threshold, cluster_threshold, args, eval_dataset.tokenizer)
+    print_predictions(all_cluster_logits_cuda, all_coref_logits_cuda, all_mention_logits_cuda, all_gold_clusters, all_mentions, all_input_ids, coref_threshold, cluster_threshold, args, eval_dataset.tokenizer)
     prec_gold_to_one_pred, prec_pred_to_one_gold, avg_gold_split_without_perfect, avg_gold_split_with_perfect, \
         avg_pred_split_without_perfect, avg_pred_split_with_perfect, prec_biggest_gold_in_pred_without_perfect, \
             prec_biggest_gold_in_pred_with_perfect, prec_biggest_pred_in_gold_without_perfect, prec_biggest_pred_in_gold_with_perfect = \
-                error_analysis(all_cluster_logits_cuda, all_coref_logits_cuda, all_mention_logits_cuda, all_gold_clusters, all_gold_mentions, all_input_ids, coref_threshold, cluster_threshold, args.slots)
+                error_analysis(all_cluster_logits_cuda, all_coref_logits_cuda, all_mention_logits_cuda, all_gold_clusters, all_mentions, all_input_ids, coref_threshold, cluster_threshold, args.slots)
 
     results = {'loss': eval_loss,
                'avg_f1': f1,
@@ -201,6 +204,9 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", c
                'mentions_avg_f1': f1m,
                'mentions_precision': pm,
                'mentions_recall': rm,  
+               'mention_proposals_avg_f1': f1mp,
+               'mention_proposals_precision': pmp,
+               'mention_proposals_recall': rmp,  
                'prec_gold_to_one_pred': prec_gold_to_one_pred,  
                'prec_pred_to_one_gold': prec_pred_to_one_gold,  
                'avg_gold_split_without_perfect': avg_gold_split_without_perfect,  

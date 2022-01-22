@@ -315,7 +315,8 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, coref_
         return [[]]
     return clusters
 
-def calc_best_avg_f1(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, all_gold_mentions, coref_threshold, cluster_threshold, thresh_delta, slots):
+def calc_best_avg_f1(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, \
+    all_mentions, coref_threshold, cluster_threshold, thresh_delta, slots):
     best = [-1, -1, -1, -1, -1, -1]
     best_metrics = []
     best_coref_threshold = None
@@ -332,26 +333,29 @@ def calc_best_avg_f1(all_cluster_logits, all_coref_logits, all_mention_logits, a
         thresh_cluster_end = min(1, cluster_threshold + 2.5*thresh_delta)
     for coref_threshold in tqdm(np.arange(thresh_coref_start, thresh_coref_end, thresh_delta), desc='Searching for best threshold'):
         for cluster_threshold in np.arange(thresh_cluster_start, thresh_cluster_end, thresh_delta):
-            p, r, f1, pm, rm, f1m, metrics = evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, coref_threshold, cluster_threshold, all_gold_mentions, slots)
+            p, r, f1, pm, rm, f1m, pmp, rmp, f1mp, metrics = evaluate_by_threshold(\
+                all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, \
+                    coref_threshold, cluster_threshold, all_mentions, slots)
             if f1 > best[-1]:
-                best = pm, rm, f1m, p,r,f1
+                best = pmp, rmp, f1mp, pm, rm, f1m, p,r,f1
                 best_metrics = metrics
                 best_coref_threshold = coref_threshold
                 best_cluster_threshold = cluster_threshold
 
     return best + (best_coref_threshold, best_cluster_threshold,) + (best_metrics,)
 
-def evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, coref_threshold, cluster_threshold, all_gold_mentions, slots):
+def evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, coref_threshold, cluster_threshold, all_mentions, slots):
     cluster_evaluator = CorefEvaluator()
     mention_evaluator = CorefEvaluator()
+    men_propos_evaluator = CorefEvaluator()
     metrics = [0] * 5
-    for i, (cluster_logits, coref_logits, gold_clusters, gold_mentions) in enumerate(
-            zip(all_cluster_logits, all_coref_logits, all_gold_clusters, all_gold_mentions)):
+    for i, (cluster_logits, coref_logits, gold_clusters, mentions) in enumerate(
+            zip(all_cluster_logits, all_coref_logits, all_gold_clusters, all_mentions)):
         if len(all_mention_logits) > 0:
             mention_logits = all_mention_logits[i]
-            predicted_clusters = calc_predicted_clusters(cluster_logits.unsqueeze(0), coref_logits.unsqueeze(0), mention_logits.unsqueeze(0), coref_threshold, cluster_threshold, [gold_mentions], slots)
+            predicted_clusters = calc_predicted_clusters(cluster_logits.unsqueeze(0), coref_logits.unsqueeze(0), mention_logits.unsqueeze(0), coref_threshold, cluster_threshold, [mentions], slots)
         else:
-            predicted_clusters = calc_predicted_clusters(cluster_logits.unsqueeze(0), coref_logits.unsqueeze(0), [], coref_threshold, cluster_threshold, [gold_mentions], slots)
+            predicted_clusters = calc_predicted_clusters(cluster_logits.unsqueeze(0), coref_logits.unsqueeze(0), [], coref_threshold, cluster_threshold, [mentions], slots)
         # prec_correct_mentions, prec_gold, prec_junk, prec_correct_gold_clusters, prec_correct_predict_clusters = \
         #     get_more_metrics(predicted_clusters, gold_clusters, gold_mentions)  #TODO: predicted_clusters[0]?
         # metrics[0] += prec_correct_mentions / len(all_cluster_logits)
@@ -365,9 +369,11 @@ def evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_mention_logi
         predicted_mentions_e = [[]] if predicted_clusters == [[]] or predicted_clusters == [()] else [
             [[m for d in c for m in d]] for c in predicted_clusters]
         mention_evaluator.update(predicted_mentions_e, gold_mentions_e)
+        men_propos_evaluator.update([[mentions]], gold_mentions_e)
     p, r, f1 = cluster_evaluator.get_prf()
     pm, rm, f1m = mention_evaluator.get_prf()
-    return p, r, f1, pm, rm, f1m, metrics
+    pmp, rmp, f1mp = men_propos_evaluator.get_prf()
+    return p, r, f1, pm, rm, f1m, pmp, rmp, f1mp, metrics
 
 def get_more_metrics(predicted_clusters, gold_clusters, gold_mentions):
     prec_correct_mentions, prec_gold, prec_junk, prec_correct_gold_clusters, prec_correct_predict_clusters = 0,0,0,0,0

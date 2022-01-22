@@ -250,10 +250,11 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
                 cluster_threshold = new_cluster_threshold
                 coref_threshold = new_coref_threshold
 
-            cluster_evaluator, mention_evaluator = eval_train(train_loader, eval_dataset, args, model, cluster_threshold, coref_threshold)
+            cluster_evaluator, mention_evaluator, men_propos_evaluator = eval_train(train_loader, eval_dataset, args, model, cluster_threshold, coref_threshold)
 
             p_train, r_train, f1_train = cluster_evaluator.get_prf()
             pm_train, rm_train, f1m_train = mention_evaluator.get_prf()
+            pmp_train, rmp_train, f1mp_train = men_propos_evaluator.get_prf()
             if args.local_rank in [-1, 0]:
                 if not args.is_debug:
                     dict_to_log = {}
@@ -263,8 +264,12 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
                     dict_to_log['Train Mention Precision'] = pm_train
                     dict_to_log['Train Mention Recall'] = rm_train
                     dict_to_log['Train Mention F1'] = f1m_train
+                    dict_to_log['Train MentionProposal Precision'] = pmp_train
+                    dict_to_log['Train MentionProposal Recall'] = rmp_train
+                    dict_to_log['Train MentionProposal F1'] = f1mp_train
                     wandb.log(dict_to_log, step=global_step)
-                logger.info('Train f1, precision, recall: {}, Mentions f1, precision, recall: {}'.format((f1_train, p_train, r_train), (f1m_train, pm_train, rm_train)))
+                logger.info('Train f1, precision, recall: {}, Mentions f1, precision, recall: {}, Mention Proposals f1, precision, recall: {}'.format(\
+                    (f1_train, p_train, r_train), (f1m_train, pm_train, rm_train), (f1mp_train, pmp_train, rmp_train)))
 
             if args.save_epochs > 0 and (epoch + 1) % args.save_epochs == 0 or epoch + 1 == args.num_train_epochs:
                 if eval_f1 > best_f1:
@@ -339,6 +344,7 @@ def eval_train(train_dataloader, eval_dataset, args, model, cluster_threshold, c
 
     cluster_train_evaluator = CorefEvaluator()
     mention_train_evaluator = CorefEvaluator()
+    men_propos_train_evaluator = CorefEvaluator()
     for batch in tqdm(train_dataloader, desc="Evaluating Train"):
         sum_text_len = [sum(tl) for tl in batch['text_len']]
         gold_clusters = batch['clusters']
@@ -365,6 +371,7 @@ def eval_train(train_dataloader, eval_dataset, args, model, cluster_threshold, c
             gold_mentions_e = [[]] if gold_clusters == [[]] or gold_clusters == [()] else [[[m for d in c for m in d]] for c in gold_clusters]
             predicted_mentions_e = [[]] if predicted_clusters == [[]] or predicted_clusters == [()] else [[[m for d in c for m in d]] for c in predicted_clusters]
             mention_train_evaluator.update(predicted_mentions_e, gold_mentions_e)
+            men_propos_train_evaluator.update(gold_mentions_e, [mentions_list])
 
         all_gold_mentions += mentions_list
         all_input_ids += input_ids    
@@ -378,4 +385,4 @@ def eval_train(train_dataloader, eval_dataset, args, model, cluster_threshold, c
     print("============ TRAIN EXAMPLES ============")
     print_predictions(all_cluster_logits_cuda, all_coref_logits_cuda, all_mention_logits_cuda, all_gold_clusters, all_gold_mentions, all_input_ids, coref_threshold, cluster_threshold, args, eval_dataset.tokenizer)
 
-    return cluster_train_evaluator, mention_train_evaluator
+    return cluster_train_evaluator, mention_train_evaluator, men_propos_train_evaluator
