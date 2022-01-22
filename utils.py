@@ -202,30 +202,33 @@ def create_gold_matrix(device, doc_len, num_queries, gold_clusters, gold_mention
 
     return gold_per_token_batch
 
-def create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_matrix):
+def create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_matrix, coref_logits):
     target_matrix_list = []
-    is_gold_mention = []
+    new_coref_logits = []
     for b in range(len(gold_matrix)):
         junk_mentions_indices = torch.tensor([i for i, m in enumerate(mentions_list[b]) if m not in gold_mentions_list[b]], dtype=torch.long, device=gold_matrix[0].device)
         common_mentions = [m for m in mentions_list[b] if m in gold_mentions_list[b]]
 
-        common_gold_ind = torch.zeros(len(common_mentions), dtype=torch.long, device=gold_matrix[0].device)
-        common_predict_ind = torch.zeros(len(common_mentions)+len(junk_mentions_indices), device=gold_matrix[0].device)
+        common_predict_ind = torch.zeros(len(common_mentions), dtype=torch.long, device=gold_matrix[0].device)
+        common_gold_ind = torch.zeros(len(gold_mentions_list[b])+1, device=gold_matrix[0].device)
 
         ind = 0
-        for i in range(len(mentions_list[b])):
-            if mentions_list[b][i] in common_mentions:
-                for j in range(len(gold_mentions_list[b])):
-                    if gold_mentions_list[b][j] == mentions_list[b][i]:
-                        common_gold_ind[ind] = j
-                        common_predict_ind[i] = 1
+        for i in range(len(gold_mentions_list[b])):
+            if gold_mentions_list[b][i] in common_mentions:
+                for j in range(len(mentions_list[b])):
+                    if mentions_list[b][j] == gold_mentions_list[b][i]:
+                        common_predict_ind[ind] = j
+                        common_gold_ind[i] = 1
                         ind += 1
 
-        target_matrix = torch.zeros(len(common_mentions)+len(junk_mentions_indices), gold_matrix[b].shape[0], device=gold_matrix[b].device)
-        target_matrix[common_predict_ind == 1] = torch.index_select(gold_matrix[b].transpose(0,1), 0, common_gold_ind)         
-        target_matrix_list.append(target_matrix.transpose(0,1))
-        is_gold_mention.append(common_predict_ind)
-    return target_matrix_list, is_gold_mention
+        target_matrix = torch.cat([gold_matrix[b], torch.zeros(gold_matrix[b].shape[0], 1, device=gold_matrix[b].device)], 1)
+        target_matrix_list.append(target_matrix)
+
+        cur_coref_logits = torch.zeros(gold_matrix[b].shape[1]+1, coref_logits[b].shape[0], device=gold_matrix[b].device)
+        cur_coref_logits[common_gold_ind == 1] = torch.index_select(coref_logits[b].transpose(0,1), 0, common_predict_ind)         
+        cur_coref_logits[-1] = torch.sum(coref_logits[b][:, junk_mentions_indices], 1)
+        new_coref_logits.append(cur_coref_logits.transpose(0,1).unsqueeze(0))
+    return target_matrix_list, torch.cat(new_coref_logits, 0)
 
 def make_mentions_from_clustered_tokens(self, coref_logits):
     pass
@@ -415,8 +418,6 @@ def try_measure_len(iter):
         return len(iter)
     except:
         return -1
-
-
 
 def create_junk_gold_mentions(gold_mentions, text_len, device):
     all_mentions = []
