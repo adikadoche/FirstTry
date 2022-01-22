@@ -157,7 +157,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", c
             mentions_list = [[(m[0], m[1]) for m in mentions_list[j] if m[0] != -1 and m[1] != -1] for j in range(mentions_list.shape[0])]
 
             if args.use_topk_mentions:
-                gold_matrix, gold_mentions_vector = create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_matrix)
+                gold_matrix, outputs['coref_logits'] = create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_matrix, outputs['coref_logits'])
 
             loss, loss_parts = criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
             losses.append(loss.mean().detach().cpu())
