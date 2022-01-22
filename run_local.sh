@@ -19,11 +19,11 @@ echo $LOG_PATH
 
 PYTHONUNBUFFERED=1 /home/gamir/adiz/miniconda3/envs/torchGPU/bin/python -u \
   main.py \
-  --output_dir /home/gamir/adiz/Code/runs/firsttry/output_dir/ --cache_dir /home/gamir/adiz/Code/runs/firsttry/cache_dir/ --max_eval_print 25 \
+  --output_dir /home/gamir/adiz/Code/runs/firsttry/output_dir/ --cache_dir /home/gamir/adiz/Code/runs/firsttry/cache_dir/ --max_eval_print 10 \
   --model_type longformer --model_name_or_path allenai/longformer-large-4096 --tokenizer_name allenai/longformer-large-4096 --config_name allenai/longformer-large-4096 \
   --train_file /home/gamir/datasets/e2e-coref/train.english.jsonlines --predict_file /home/gamir/datasets/e2e-coref/dev.english.jsonlines --do_train --eval all \
-  --num_train_epochs 80 --logging_steps 50 --save_steps -1 --eval_steps -1 --eval_epochs 1 --max_seq_length 4096 --gradient_accumulation_steps 1 \
+  --num_train_epochs 40 --logging_steps 50 --save_steps -1 --eval_steps -1 --eval_epochs 1 --max_seq_length 4096 --gradient_accumulation_steps 1 \
   --max_total_seq_len 5000 --warmup_steps 5000 --weight_decay 0.01 --per_gpu_eval_batch_size 1 --per_gpu_train_batch_size 1 --save_epochs 1 --num_queries 100 \
-  --slots --use_topk_mentions --topk_pre --max_grad_norm 1.0 --lr 0.00008 --lr_backbone 0.000008 \
+  --num_junk_queries 150 --slots --use_topk_mentions --topk_pre --max_grad_norm 1.0 --cluster_block \
+  --resume_from /home/gamir/adiz/Code/runs/firsttry/output_dir/01_22_2022_15_21_05_1cluster_topjunkkslots_blockoneloss/checkpoint-2801 \
   |  tee ${LOG_PATH}  &
-

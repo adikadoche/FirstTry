@@ -377,7 +377,7 @@ class MatchingLoss(nn.Module):
                     cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_gold, reduction='mean')
             elif coref_logits.shape[1] > 0:
                 clamped_logits = coref_logits.clamp(max=1.0)
-                cost_coref = F.binary_cross_entropy(coref_logits, torch.zeros_like(coref_logits), reduction='mean')
+                cost_coref = F.binary_cross_entropy(clamped_logits, torch.zeros_like(coref_logits), reduction='mean')
 
             costs_parts['loss_is_cluster'].append(self.cost_is_cluster * cost_is_cluster.detach().cpu())
             costs_parts['loss_is_mention'].append(self.cost_is_cluster * cost_is_mention.detach().cpu())

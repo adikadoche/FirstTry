@@ -46,7 +46,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             continue
 
         gold_matrix = create_gold_matrix(args.device, sum_text_len, args.num_queries, gold_clusters, gold_mentions_list)
-        max_mentions = torch.tensor(gold_mentions.shape[1], device=gold_mentions.device) if args.use_gold_mentions else sum_text_len.max()//4
+        max_mentions = torch.tensor(gold_mentions.shape[1], device=gold_mentions.device) if args.use_gold_mentions else sum_text_len.max()// int(-10*args.topk_lambda +6)
         max_mentions = max_mentions.repeat([input_ids.shape[0], 1])
 
         if args.amp:
@@ -371,7 +371,7 @@ def eval_train(train_dataloader, eval_dataset, args, model, cluster_threshold, c
             gold_mentions_e = [[]] if gold_clusters == [[]] or gold_clusters == [()] else [[[m for d in c for m in d]] for c in gold_clusters]
             predicted_mentions_e = [[]] if predicted_clusters == [[]] or predicted_clusters == [()] else [[[m for d in c for m in d]] for c in predicted_clusters]
             mention_train_evaluator.update(predicted_mentions_e, gold_mentions_e)
-            men_propos_train_evaluator.update(gold_mentions_e, [mentions_list])
+            men_propos_train_evaluator.update([mentions_list], gold_mentions_e)
 
         all_gold_mentions += mentions_list
         all_input_ids += input_ids    
