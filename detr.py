@@ -367,11 +367,11 @@ class MatchingLoss(nn.Module):
                 if self.args.cluster_block:
                     premuted_cluster_logits = cluster_logits[matched_predicted_cluster_id[i].numpy()]
                     junk_cluster_logits = cluster_logits[[x for x in range(coref_logits.shape[0]) if x not in matched_predicted_cluster_id[i].numpy()]]
-                    cost_coref = F.binary_cross_entropy(premuted_cluster_logits.unsqueeze(1) * permuted_coref_logits[:, :-1],
-                                                        permuted_gold, reduction='mean') + \
+                    clamped_logits = (premuted_cluster_logits.unsqueeze(1) * permuted_coref_logits[:, :-1]).clamp(max=1.0)
+                    cost_coref = F.binary_cross_entropy(clamped_logits, permuted_gold, reduction='mean') + \
                                                             torch.sum(permuted_coref_logits[:, -1] * premuted_cluster_logits) / premuted_cluster_logits.shape[0]
-                    cost_is_mention = F.binary_cross_entropy(junk_cluster_logits.unsqueeze(1) * junk_coref_logits[:, :-1],
-                                                        junk_gold, reduction='mean') + \
+                    clamped_junk_logits = (junk_cluster_logits.unsqueeze(1) * junk_coref_logits[:, :-1]).clamp(max=1.0)
+                    cost_is_mention = F.binary_cross_entropy(clamped_junk_logits, junk_gold, reduction='mean') + \
                                                             torch.sum(junk_coref_logits[:, -1] * junk_cluster_logits) / junk_cluster_logits.shape[0]
                 else:
                     cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_gold, reduction='mean')
