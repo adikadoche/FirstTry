@@ -305,7 +305,7 @@ def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, coref_
                         print('here')
                 if len(current_cluster) > 1:
                     b_clusters.append(current_cluster)
-            if len(b_clusters) > 1:
+            if len(b_clusters) > 0:
                 clusters.append(b_clusters)
 
     if clusters == []:
@@ -358,9 +358,9 @@ def evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_mention_logi
         # metrics[4] += prec_correct_predict_clusters / len(all_cluster_logits)
         cluster_evaluator.update(predicted_clusters, [gold_clusters])
         gold_mentions_e = [[]] if [gold_clusters] == [[]] or [gold_clusters] == [()] else \
-            [[[m for c in [gold_clusters] for d in c for m in d]]]
+            [[[m for d in c for m in d]] for c in [gold_clusters]]
         predicted_mentions_e = [[]] if predicted_clusters == [[]] or predicted_clusters == [()] else [
-            [[m for c in predicted_clusters for d in c for m in d]]]
+            [[m for d in c for m in d]] for c in predicted_clusters]
         mention_evaluator.update(predicted_mentions_e, gold_mentions_e)
     p, r, f1 = cluster_evaluator.get_prf()
     pm, rm, f1m = mention_evaluator.get_prf()
@@ -469,7 +469,7 @@ def tensor_and_remove_empty(batch, gold_mentions, args):
         input_ids, input_mask = pad_input_ids_and_mask_to_max_tokens(\
             torch.tensor(batch['input_ids'][i], device=args.device), torch.tensor(batch['input_mask'][i], device=args.device), input_ids, input_mask, i)
         sum_text_len.append(torch.tensor([sum(batch['text_len'][i])]).to(args.device))
-        new_gold_mentions.append(pad_mentions(gold_mentions[i], max_mentions))
+        new_gold_mentions.append(pad_mentions(gold_mentions[i], max_mentions).to(args.device))
         num_mentions.append(torch.tensor([len(gold_mentions[i])]).to(args.device))
     return input_ids, input_mask, \
             torch.cat(sum_text_len).reshape(bs), \
