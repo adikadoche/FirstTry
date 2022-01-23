@@ -121,11 +121,6 @@ class DETR(nn.Module):
         """
         # input_ids_cat = torch.cat(input_ids, dim=1).squeeze(0)
         # mask_cat = torch.cat(mask, dim=1).squeeze(0)
-        if self.args.random_queries:
-            raw_query_embed = torch.normal(torch.zeros_like(self.query_embed.weight), 1) * self.query_sigma + self.query_mu #raw_query_embed = torch.normal(torch.zeros_like(self.query_embed.weight), 0.5)
-        else:
-            raw_query_embed = self.query_embed.weight
-
         bs = input_ids.shape[0]
         longfomer_no_pad_list, span_starts, span_ends, mentions = [[]]*bs, [[]]*bs, [[]]*bs, [[]]*bs
         new_num_mentions = torch.zeros(bs, dtype=torch.long)
@@ -368,11 +363,11 @@ class MatchingLoss(nn.Module):
                     premuted_cluster_logits = cluster_logits[matched_predicted_cluster_id[i].numpy()]
                     junk_cluster_logits = cluster_logits[[x for x in range(coref_logits.shape[0]) if x not in matched_predicted_cluster_id[i].numpy()]]
                     clamped_logits = (premuted_cluster_logits.unsqueeze(1) * permuted_coref_logits[:, :-1]).clamp(max=1.0)
-                    cost_coref = F.binary_cross_entropy(clamped_logits, permuted_gold, reduction='mean') + \
-                                                            torch.sum(permuted_coref_logits[:, -1] * premuted_cluster_logits) / premuted_cluster_logits.shape[0]
+                    cost_coref = F.binary_cross_entropy(clamped_logits, permuted_gold, reduction='mean') - \
+                                                            torch.sum(torch.log(1 - permuted_coref_logits[:, -1] * premuted_cluster_logits)) / premuted_cluster_logits.shape[0]
                     clamped_junk_logits = (junk_cluster_logits.unsqueeze(1) * junk_coref_logits[:, :-1]).clamp(max=1.0)
-                    cost_is_mention = F.binary_cross_entropy(clamped_junk_logits, junk_gold, reduction='mean') + \
-                                                            torch.sum(junk_coref_logits[:, -1] * junk_cluster_logits) / junk_cluster_logits.shape[0]
+                    cost_is_mention = F.binary_cross_entropy(clamped_junk_logits, junk_gold, reduction='mean') - \
+                                                            torch.sum(torch.log(1 - junk_coref_logits[:, -1] * junk_cluster_logits)) / junk_cluster_logits.shape[0]
                 else:
                     cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_gold, reduction='mean')
             elif coref_logits.shape[1] > 0:

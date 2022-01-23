@@ -91,7 +91,7 @@ class HungarianMatcher(nn.Module):
                     gold_per_token_repeated = cluster[:-1].repeat(num_queries, 1) # [num_queries, tokens]
                     if self.args.cluster_block:
                         losses_for_current_gold_cluster = F.binary_cross_entropy(cluster_logits * coref_logits[:,:-1], gold_per_token_repeated, reduction='none').mean(1) \
-                            + cluster_logits.squeeze(-1) * coref_logits[:, -1]
+                            - torch.log(1 - cluster_logits.squeeze(-1) * coref_logits[:, -1])
                     else:
                         losses_for_current_gold_cluster = F.binary_cross_entropy(coref_logits, gold_per_token_repeated, reduction='none').mean(1)
 
