@@ -9,7 +9,7 @@ import torch
 import numpy as np
 import torch.distributed as dist
 from tqdm import tqdm
-from metrics import CorefEvaluator
+from metrics import CorefEvaluator, MentionEvaluator
 
 from consts import NULL_ID_FOR_COREF, TOKENS_PAD, MASK_PAD
 
@@ -346,8 +346,8 @@ def calc_best_avg_f1(all_cluster_logits, all_coref_logits, all_mention_logits, a
 
 def evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, coref_threshold, cluster_threshold, all_mentions, slots):
     cluster_evaluator = CorefEvaluator()
-    mention_evaluator = CorefEvaluator()
-    men_propos_evaluator = CorefEvaluator()
+    mention_evaluator = MentionEvaluator()
+    men_propos_evaluator = MentionEvaluator()
     metrics = [0] * 5
     for i, (cluster_logits, coref_logits, gold_clusters, mentions) in enumerate(
             zip(all_cluster_logits, all_coref_logits, all_gold_clusters, all_mentions)):

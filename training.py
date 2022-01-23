@@ -12,7 +12,7 @@ from misc import save_on_master, is_main_process
 from utils import tensor_and_remove_empty, create_gold_matrix, calc_predicted_clusters, create_junk_gold_mentions, try_measure_len
 from optimization import WarmupLinearSchedule, WarmupExponentialSchedule
 import itertools
-from metrics import CorefEvaluator
+from metrics import CorefEvaluator, MentionEvaluator
 from utils import create_target_and_predict_matrix, load_from_checkpoint, save_checkpoint
 from coref_analysis import print_predictions
 
@@ -343,8 +343,8 @@ def eval_train(train_dataloader, eval_dataset, args, model, cluster_threshold, c
     all_gold_mentions = []
 
     cluster_train_evaluator = CorefEvaluator()
-    mention_train_evaluator = CorefEvaluator()
-    men_propos_train_evaluator = CorefEvaluator()
+    mention_train_evaluator = MentionEvaluator()
+    men_propos_train_evaluator = MentionEvaluator()
     for batch in tqdm(train_dataloader, desc="Evaluating Train"):
         sum_text_len = [sum(tl) for tl in batch['text_len']]
         gold_clusters = batch['clusters']
