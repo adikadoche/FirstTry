@@ -403,7 +403,7 @@ class Backbone(nn.Module):
             else:
                 self.men_proposal = MenPropose(self.config, args)
             self.men_proposal.top_lambda = args.topk_lambda
-            if args.sep_long:   #TODO: change to loading only longformer pretrained from menprop
+            if args.sep_long:   #TODO: change to loading only longformer pretrained from menprop   #TODO insert to if topkpre?
                 tmpMenProp = MenPropose(AutoConfig.from_pretrained('allenai/longformer-large-4096', cache_dir=args.cache_dir), args) 
                 tmpMenProp.load_state_dict(torch.load('/home/gamir/adiz/tmpCode/s2e-coref/s2e_mention_proposal.pt'))
                 self.longformer = tmpMenProp.longformer
