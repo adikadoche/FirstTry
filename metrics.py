@@ -17,8 +17,11 @@ class MentionEvaluator:
         self.tp, self.fp, self.fn = 0, 0, 0
 
     def update(self, predicted_mentions, gold_mentions):
-        predicted_mentions = set(predicted_mentions)
-        gold_mentions = set(gold_mentions)
+        predicted_mentions = set(predicted_mentions[0][0])
+        if gold_mentions != [[[]]] and type(gold_mentions[0][0][0])==list:
+            gold_mentions = set([(m[0], m[1]) for m in gold_mentions[0][0]])
+        else:
+            gold_mentions = set(gold_mentions[0][0])
 
         self.tp += len(predicted_mentions & gold_mentions)
         self.fp += len(predicted_mentions - gold_mentions)

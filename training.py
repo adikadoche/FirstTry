@@ -12,7 +12,7 @@ from misc import save_on_master, is_main_process
 from utils import tensor_and_remove_empty, create_gold_matrix, calc_predicted_clusters, create_junk_gold_mentions, try_measure_len
 from optimization import WarmupLinearSchedule, WarmupExponentialSchedule
 import itertools
-from metrics import CorefEvaluator
+from metrics import CorefEvaluator, MentionEvaluator
 from utils import create_target_and_predict_matrix, load_from_checkpoint, save_checkpoint
 from coref_analysis import print_predictions
 
@@ -46,7 +46,8 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             continue
 
         gold_matrix = create_gold_matrix(args.device, sum_text_len, args.num_queries, gold_clusters, gold_mentions_list)
-        max_mentions = torch.tensor(gold_mentions.shape[1], device=gold_mentions.device) if args.use_gold_mentions else sum_text_len.max()//4
+        max_mentions = torch.tensor(gold_mentions.shape[1], device=gold_mentions.device) if args.use_gold_mentions \
+            else sum_text_len.max() // int(-10*args.topk_lambda +6)
         max_mentions = max_mentions.repeat([input_ids.shape[0], 1])
 
         if args.amp:
@@ -343,8 +344,8 @@ def eval_train(train_dataloader, eval_dataset, args, model, cluster_threshold, c
     all_gold_mentions = []
 
     cluster_train_evaluator = CorefEvaluator()
-    mention_train_evaluator = CorefEvaluator()
-    men_propos_train_evaluator = CorefEvaluator()
+    mention_train_evaluator = MentionEvaluator()
+    men_propos_train_evaluator = MentionEvaluator()
     for batch in tqdm(train_dataloader, desc="Evaluating Train"):
         sum_text_len = [sum(tl) for tl in batch['text_len']]
         gold_clusters = batch['clusters']
@@ -356,7 +357,8 @@ def eval_train(train_dataloader, eval_dataset, args, model, cluster_threshold, c
         input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = tensor_and_remove_empty(batch, gold_mentions_list, args)
         if len(input_ids) == 0:
             continue
-        max_mentions = torch.tensor(gold_mentions.shape[1], device=gold_mentions.device) if args.use_gold_mentions else sum_text_len.max()//4
+        max_mentions = torch.tensor(gold_mentions.shape[1], device=gold_mentions.device) if args.use_gold_mentions \
+            else sum_text_len.max() // int(-10*args.topk_lambda +6)
         max_mentions = max_mentions.repeat([input_ids.shape[0], 1])
 
         with torch.no_grad():
@@ -368,10 +370,10 @@ def eval_train(train_dataloader, eval_dataset, args, model, cluster_threshold, c
 
             predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [], coref_threshold, cluster_threshold, mentions_list, args.slots)
             cluster_train_evaluator.update(predicted_clusters, gold_clusters)
-            gold_mentions_e = [[]] if gold_clusters == [[]] or gold_clusters == [()] else [[[m for d in c for m in d]] for c in gold_clusters]
-            predicted_mentions_e = [[]] if predicted_clusters == [[]] or predicted_clusters == [()] else [[[m for d in c for m in d]] for c in predicted_clusters]
+            gold_mentions_e = [[[]]] if gold_clusters == [[]] or gold_clusters == [()] else [[[m for d in c for m in d]] for c in gold_clusters]
+            predicted_mentions_e = [[[]]] if predicted_clusters == [[]] or predicted_clusters == [()] else [[[m for d in c for m in d]] for c in predicted_clusters]
             mention_train_evaluator.update(predicted_mentions_e, gold_mentions_e)
-            men_propos_train_evaluator.update(gold_mentions_e, [mentions_list])
+            men_propos_train_evaluator.update([mentions_list], gold_mentions_e)
 
         all_gold_mentions += mentions_list
         all_input_ids += input_ids    
