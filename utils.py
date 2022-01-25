@@ -226,8 +226,8 @@ def create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_mat
 
         cur_coref_logits = torch.zeros(gold_matrix[b].shape[1]+1, coref_logits[b].shape[0], device=gold_matrix[b].device)
         cur_coref_logits[common_gold_ind == 1] = torch.index_select(coref_logits[b].transpose(0,1), 0, common_predict_ind)         
-        if len(junk_mentions_indices) > 0:
-            cur_coref_logits[-1] = torch.mean(coref_logits[b][:, junk_mentions_indices], 1)
+        # if len(junk_mentions_indices) > 0:
+        cur_coref_logits[-1] = torch.sum(coref_logits[b][:, junk_mentions_indices], 1)
         new_coref_logits.append(cur_coref_logits.transpose(0,1).unsqueeze(0))
     return target_matrix_list, torch.cat(new_coref_logits, 0)
 
