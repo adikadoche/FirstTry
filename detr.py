@@ -36,28 +36,28 @@ class DETR(nn.Module):
         """
         super().__init__()
         self.num_queries = num_queries
-        self.transformer = transformer
+        # self.transformer = transformer
         hidden_dim = transformer.d_model
-        self.input_proj = nn.Linear(hidden_size, hidden_dim)
-        self.query_embed = nn.Embedding(num_queries, hidden_dim)
-        self.is_cluster = nn.Linear(hidden_dim, 1)
+        # self.input_proj = nn.Linear(hidden_size, hidden_dim)
+        self.slots_query_embed = nn.Embedding(num_queries, hidden_dim)
+        self.is_cluster_score = nn.Linear(hidden_dim, 1) 
         self.backbone = backbone
         self.aux_loss = aux_loss
         self.args = args
-        if args.single_distribution_queries:
-            self.query_mu = nn.Parameter(torch.randn(1, hidden_dim))
-            self.query_sigma = nn.Parameter(torch.randn(1, hidden_dim))
-        else:
-            self.query_mu = nn.Parameter(torch.randn(num_queries, hidden_dim))
-            self.query_sigma = nn.Parameter(torch.randn(num_queries, hidden_dim))
+        # if args.single_distribution_queries:
+        #     self.query_mu = nn.Parameter(torch.randn(1, hidden_dim))
+        #     self.query_sigma = nn.Parameter(torch.randn(1, hidden_dim))
+        # else:
+        #     self.query_mu = nn.Parameter(torch.randn(num_queries, hidden_dim))
+        #     self.query_sigma = nn.Parameter(torch.randn(num_queries, hidden_dim))
 
-        self.word_attn_projection = nn.Linear(hidden_size, 1)
-        self.span_width_embed = nn.Embedding(30, 20)
-        self.span_proj = nn.Linear(3*hidden_size+20, hidden_dim) # TODO config
+        self.span_word_attn_projection = nn.Linear(hidden_size, 1) #
+        self.span_width_embed = nn.Embedding(30, 20) #
+        self.span_proj = nn.Linear(3*hidden_size+20, hidden_dim) # TODO config #
              
-        self.mention_classifier = nn.Linear(hidden_dim, 1)
+        # self.mention_classifier = nn.Linear(hidden_dim, 1)
 
-        self.IO_score = nn.Sequential(
+        self.IO_score = nn.Sequential(   
             nn.Linear(2*hidden_dim, 300),
             nn.ReLU(),
             nn.Linear(300, 100),
@@ -65,39 +65,39 @@ class DETR(nn.Module):
             nn.Linear(100, 1),   #TODO: change to 3 so it would be BIO instead of IO
         ) #query and token concatenated, resulting in IO score
 
-        self.query_head = nn.Linear(hidden_dim, 75)
-        self.token_head = nn.Linear(hidden_dim, 75)
-        self.query_token_IO_score = nn.Linear(150, 1)  #TODO: change to 3 so it would be BIO instead of IO
+        # self.query_head = nn.Linear(hidden_dim, 75)
+        # self.token_head = nn.Linear(hidden_dim, 75)
+        # self.query_token_IO_score = nn.Linear(150, 1)  #TODO: change to 3 so it would be BIO instead of IO
 
         if self.args.slots:
             dim = args.hidden_dim
             self.num_slots = self.num_queries
-            self.iters = 3
-            self.eps = 1e-8
-            self.scale = dim ** -0.5
+            self.slots_iters = 3
+            self.slots_eps = 1e-8
+            self.slots_scale = dim ** -0.5
 
             self.slots_mu = nn.Parameter(torch.randn(1, 1, dim))
 
             self.slots_logsigma = nn.Parameter(torch.zeros(1, 1, dim))
             init.xavier_uniform_(self.slots_logsigma)
 
-            self.to_q = nn.Linear(dim, dim)
-            self.to_k = nn.Linear(dim, dim)
-            self.to_v = nn.Linear(dim, dim)
+            self.slots_to_q = nn.Linear(dim, dim)
+            self.slots_to_k = nn.Linear(dim, dim)
+            self.slots_to_v = nn.Linear(dim, dim)
 
-            self.gru = nn.GRUCell(dim, dim)
+            self.slots_gru = nn.GRUCell(dim, dim)
 
-            self.mlp = nn.Sequential(
+            self.slots_mlp = nn.Sequential(
                 nn.Linear(dim, dim * 2),
                 nn.ReLU(inplace=True),
                 nn.Linear(dim * 2, dim)
             )
 
-            self.norm_input = nn.LayerNorm(dim)
+            self.slots_norm_input = nn.LayerNorm(dim)
             self.norm_slots = nn.LayerNorm(dim)
-            self.norm_pre_ff = nn.LayerNorm(dim)
+            self.slots_norm_pre_ff = nn.LayerNorm(dim)
 
-            self.mlp_classifier = nn.Sequential(
+            self.slots_mlp_classifier = nn.Sequential(
                 nn.Linear(dim, int(dim / 2)),
                 nn.ReLU(inplace=True),
                 nn.Linear(int(dim / 2), 1),
@@ -160,37 +160,37 @@ class DETR(nn.Module):
 
             slots = mu + sigma * torch.randn(mu.shape, device=device)
         else:
-            slots = self.query_embed.weight.unsqueeze(0)
+            slots = self.slots_query_embed.weight.unsqueeze(0)
 
-        inputs = self.norm_input(input_emb)
-        k, v = self.to_k(inputs), self.to_v(inputs)
+        inputs = self.slots_norm_input(input_emb)
+        k, v = self.slots_to_k(inputs), self.slots_to_v(inputs)
 
-        for _ in range(self.iters):
+        for _ in range(self.slots_iters):
             slots_prev = slots
 
             slots = self.norm_slots(slots)
-            q = self.to_q(slots)
+            q = self.slots_to_q(slots)
 
-            dots = torch.einsum('bid,bjd->bij', q, k) * self.scale
-            attn = dots.softmax(dim=1) + self.eps
+            dots = torch.einsum('bid,bjd->bij', q, k) * self.slots_scale
+            attn = dots.softmax(dim=1) + self.slots_eps
             attn = attn / attn.sum(dim=-1, keepdim=True)
 
             updates = torch.einsum('bjd,bij->bid', v, attn)
 
-            slots = self.gru(
+            slots = self.slots_gru(
                 updates.reshape(-1, emb),
                 slots_prev.reshape(-1, emb)
             )
 
             slots = slots.reshape(bs, -1, emb)
-            slots = slots + self.mlp(self.norm_pre_ff(slots))
+            slots = slots + self.slots_mlp(self.slots_norm_pre_ff(slots))
 
         slots = self.norm_slots(slots)
-        q = self.to_q(slots)
+        q = self.slots_to_q(slots)
 
-        dots = torch.einsum('bid,bjd->bij', q, k) * self.scale
-        coref_logits = (dots.softmax(dim=1) + self.eps).clamp(max=1.0)
-        cluster_logits = self.mlp_classifier(slots)
+        dots = torch.einsum('bid,bjd->bij', q, k) * self.slots_scale
+        coref_logits = (dots.softmax(dim=1) + self.slots_eps).clamp(max=1.0)
+        cluster_logits = self.slots_mlp_classifier(slots)
 
         coref_logits = torch.cat([coref_logits, (torch.ones(1, coref_logits.shape[1], max_mentions-coref_logits.shape[2]) * -1).to(coref_logits.device)], dim=2)
 
@@ -200,7 +200,7 @@ class DETR(nn.Module):
         # last_hs [bs, num_queries, emb]
         # memory [bs, tokens, emb]
 
-        cluster_logits = self.is_cluster(last_hs).sigmoid()  # [bs, num_queries, 1]
+        cluster_logits = self.is_cluster_score(last_hs).sigmoid()  # [bs, num_queries, 1]
         if self.args.add_junk:
             mention_logits = self.mention_classifier(memory).sigmoid()  # [bs, tokens, 1]
 
@@ -283,7 +283,7 @@ class DETR(nn.Module):
         mention_mask = torch.logical_and(doc_range >= span_starts.unsqueeze(1),
                                       doc_range <= span_ends.unsqueeze(1))  # [K, T]
 
-        word_attn = self.word_attn_projection(encoded_doc).squeeze(1)
+        word_attn = self.span_word_attn_projection(encoded_doc).squeeze(1)
         mention_word_attn = F.softmax(mention_mask.to(dtype=torch.float32, device=encoded_doc.device).log() + word_attn.unsqueeze(0), -1)
         return mention_word_attn  # [K, T]
 

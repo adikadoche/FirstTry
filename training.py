@@ -206,6 +206,15 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
 
     # Train!
     logger.info("***** Running training *****")
+    logger.info(f"  Number of trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}")
+    logger.info(f"  Number of non-trainable parameters: {sum(p.numel() for p in model.parameters() if not p.requires_grad):,}")
+    for key in ['span', 'score', 'backbone', 'slot']:
+        n_train = sum(p.numel() for n, p in model.named_parameters() if p.requires_grad and key in n)
+        if n_train > 0:
+            logger.info(f"    {key} trainable parameters: {n_train:,}")
+        n_notrain = sum(p.numel() for n, p in model.named_parameters() if not p.requires_grad and key in n)
+        if n_notrain > 0:
+            logger.info(f"    {key} non-trainable parameters: {n_notrain:,}")
     logger.info("  Num steps per epoch = %d", try_measure_len(train_loader))
     logger.info("  Num Epochs = %d", args.num_train_epochs if args.num_train_epochs is not None else -1)
     logger.info("  Instantaneous batch size per GPU = %d", args.per_gpu_train_batch_size)
