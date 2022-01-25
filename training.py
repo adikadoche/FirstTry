@@ -208,7 +208,7 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
     logger.info("***** Running training *****")
     logger.info(f"  Number of trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}")
     logger.info(f"  Number of non-trainable parameters: {sum(p.numel() for p in model.parameters() if not p.requires_grad):,}")
-    for key in ['span', 'score', 'backbone', 'slot']:
+    for key in ['span', 'score', 'backbone', 'slot', 'longformer']:
         n_train = sum(p.numel() for n, p in model.named_parameters() if p.requires_grad and key in n)
         if n_train > 0:
             logger.info(f"    {key} trainable parameters: {n_train:,}")
