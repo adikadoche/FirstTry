@@ -123,7 +123,7 @@ class DETR(nn.Module):
         # mask_cat = torch.cat(mask, dim=1).squeeze(0)
         bs = input_ids.shape[0]
         longfomer_no_pad_list, span_starts, span_ends, mentions = [[]]*bs, [[]]*bs, [[]]*bs, [[]]*bs
-        new_num_mentions = torch.zeros(num_mentions.shape, dtype=torch.long)
+        new_num_mentions = torch.zeros(bs, dtype=torch.long)
         for i in range(bs):
             masked_ids = input_ids[i][mask[i]==1].unsqueeze(0)
             masked_mask = torch.ones_like(masked_ids).unsqueeze(0)
