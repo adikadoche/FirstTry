@@ -35,35 +35,34 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
         gold_mentions_list = [list(set([tuple(m) for c in gc for m in c])) for gc in gold_clusters]
         if args.add_junk:
-            gold_mentions_list, gold_mentions_vector = create_junk_gold_mentions(gold_mentions_list, sum_text_len, args.device)
-        else:
-            gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=args.device) for gm in gold_mentions_list]
+            gold_mentions_list, _ = create_junk_gold_mentions(gold_mentions_list, sum_text_len, args.device)
 
-        input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = tensor_and_remove_empty(batch, gold_mentions_list, args)
+        input_ids, input_mask, sum_text_len, gold_mentions, gold_mentions_mask, num_mentions = \
+            tensor_and_remove_empty(batch, gold_mentions_list, args)
         # if len(input_ids) == 0 or input_ids.shape[1] > 1:
         if len(input_ids) == 0:
             print(f"skipped {step}")
             continue
 
-        gold_matrix = create_gold_matrix(args.device, sum_text_len, args.num_queries, gold_clusters, gold_mentions_list)
+        gold_matrix = create_gold_matrix(args.device, sum_text_len, args.num_queries, gold_clusters, gold_mentions_list, gold_mentions.shape[1])
         max_mentions = torch.tensor(gold_mentions.shape[1], device=gold_mentions.device) if args.use_gold_mentions \
             else sum_text_len.max() // int(-10*args.topk_lambda +6)
         max_mentions = max_mentions.repeat([input_ids.shape[0], 1])
 
         if args.amp:
             with torch.cuda.amp.autocast():
-                outputs = model(input_ids, max_mentions, input_mask, gold_mentions, num_mentions)
+                outputs = model(input_ids, max_mentions, input_mask, gold_mentions)
 
                 loss = criterion(outputs, gold_matrix)
         else:
-            outputs = model(input_ids, max_mentions, input_mask, gold_mentions, num_mentions)
+            outputs = model(input_ids, max_mentions, input_mask, gold_mentions, gold_mentions_mask)
             mentions_list = outputs['mentions']
             mentions_list = mentions_list.detach().cpu().numpy()
-            mentions_list = [[(m[0], m[1]) for m in mentions_list[j] if m[0] != -1 and m[1] != -1] for j in range(mentions_list.shape[0])]
+            mentions_list = [[(m[0], m[1]) for m in mentions_list[j] if m[0] != 0 or m[1] != 0] for j in range(mentions_list.shape[0])]
 
             if args.use_topk_mentions:
                 gold_matrix, outputs['coref_logits'] = create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_matrix, outputs['coref_logits'])
-            loss, loss_parts = criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
+            loss, loss_parts = criterion(outputs, {'clusters':gold_matrix})
 
         if args.n_gpu > 1 or args.train_batch_size > 1:
             loss = loss.mean()  # mean() to average on multi-gpu parallel training
@@ -363,7 +362,8 @@ def eval_train(train_dataloader, eval_dataset, args, model, cluster_threshold, c
         # if len(gold_clusters) > 0: #TODO:
         gold_mentions_list = [list(set([tuple(m) for c in gc for m in c])) for gc in gold_clusters]
 
-        input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = tensor_and_remove_empty(batch, gold_mentions_list, args)
+        input_ids, input_mask, sum_text_len, gold_mentions, gold_mentions_mask, num_mentions = \
+            tensor_and_remove_empty(batch, gold_mentions_list, args)
         if len(input_ids) == 0:
             continue
         max_mentions = torch.tensor(gold_mentions.shape[1], device=gold_mentions.device) if args.use_gold_mentions \
@@ -371,22 +371,25 @@ def eval_train(train_dataloader, eval_dataset, args, model, cluster_threshold, c
         max_mentions = max_mentions.repeat([input_ids.shape[0], 1])
 
         with torch.no_grad():
-            outputs = model(input_ids, max_mentions, input_mask, gold_mentions, num_mentions)
+            outputs = model(input_ids, max_mentions, input_mask, gold_mentions, gold_mentions_mask)
             cluster_logits, coref_logits, mention_logits, mentions_list = \
                 outputs['cluster_logits'], outputs['coref_logits'].clone(), outputs['mention_logits'], outputs['mentions']
             mentions_list = mentions_list.detach().cpu().numpy()
-            mentions_list = [[(m[0], m[1]) for m in mentions_list[j] if m[0] != -1 and m[1] != -1] for j in range(mentions_list.shape[0])]
+            mentions_list = [[(m[0], m[1]) for m in mentions_list[j] if m[0] != 0 or m[1] != 0] for j in range(mentions_list.shape[0])]
 
-            predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), [], coref_threshold, cluster_threshold, mentions_list, args.slots)
-            cluster_train_evaluator.update(predicted_clusters, gold_clusters)
-            gold_mentions_e = [[[]]] if gold_clusters == [[]] or gold_clusters == [()] else [[[m for d in c for m in d]] for c in gold_clusters]
-            predicted_mentions_e = [[[]]] if predicted_clusters == [[]] or predicted_clusters == [()] else [[[m for d in c for m in d]] for c in predicted_clusters]
-            mention_train_evaluator.update(predicted_mentions_e, gold_mentions_e)
-            men_propos_train_evaluator.update([mentions_list], gold_mentions_e)
+            for i in range(cluster_logits.shape[0]):
+                predicted_clusters = calc_predicted_clusters(cluster_logits[i].unsqueeze(0).cpu().detach(), \
+                    coref_logits[i].unsqueeze(0).cpu().detach(), [], coref_threshold, cluster_threshold, \
+                        [mentions_list[i]], args.slots)
+                cluster_train_evaluator.update(predicted_clusters, [gold_clusters[i]])
+                gold_mentions_e = [[[]]] if [gold_clusters[i]] == [[]] or [gold_clusters[i]] == [()] else [[[m for d in c for m in d]] for c in [gold_clusters[i]]]
+                predicted_mentions_e = [[[]]] if predicted_clusters == [[]] or predicted_clusters == [()] else [[[m for d in c for m in d]] for c in predicted_clusters]
+                mention_train_evaluator.update(predicted_mentions_e, gold_mentions_e)
+                men_propos_train_evaluator.update([mentions_list[i]], gold_mentions_e)
 
-        all_gold_mentions += mentions_list
-        all_input_ids += input_ids    
-        all_gold_clusters += gold_clusters
+                all_gold_mentions += [mentions_list[i]]
+                all_input_ids += input_ids[i].unsqueeze(0)   
+                all_gold_clusters += [gold_clusters[i]]
             
         if args.add_junk:
             all_mention_logits_cuda += [ml.detach().clone() for ml in mention_logits]
