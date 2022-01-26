@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     epoch_iterator, optimizer: torch.optim.Optimizer, scaler: torch.cuda.amp.GradScaler,
-                    args, skip_steps, recent_losses, recent_losses_parts, global_step, lr_scheduler):
+                    args, skip_steps, recent_losses, recent_losses_parts, global_step):#, lr_scheduler):
     for step, batch in enumerate(epoch_iterator):
         if skip_steps > 0:
             skip_steps -= 1
@@ -92,8 +92,8 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                 scaler.update()
             else:
                 optimizer.step()
-            if args.lr_drop_interval == 'step':
-                lr_scheduler.step()  # Update learning rate schedule
+            # if args.lr_drop_interval == 'step':
+            #     lr_scheduler.step()  # Update learning rate schedule
             model.zero_grad()
 
         if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
@@ -143,19 +143,19 @@ def create_optimization(model, args, train_loader):
         args.t_total = len(train_loader) // args.gradient_accumulation_steps * args.num_train_epochs
 
     # lr_scheduler = get_constant_schedule_with_warmup(optimizer, num_warmup_steps=int(args.warmup_steps / args.train_batch_size))
-    lr_scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=args.warmup_steps // args.train_batch_size,
-                                                num_training_steps=args.t_total)
+    # lr_scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=args.warmup_steps // args.train_batch_size,
+    #                                             num_training_steps=args.t_total)
     # lr_scheduler = WarmupExponentialSchedule(optimizer, warmup_steps=int(args.warmup_steps / args.train_batch_size),
     #                                     gamma=0.99998)  # ConstantLRSchedule(optimizer)
 
-    return optimizer, lr_scheduler
+    return optimizer#, lr_scheduler
 
 def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
     """ Train the model """
     # output_dir = Path(args.output_dir)
 
     logger.info("Training/evaluation parameters %s", args)
-    optimizer, lr_scheduler = create_optimization(model, args, train_loader)
+    optimizer = create_optimization(model, args, train_loader)
 
     thresh_delta = 0.2    
     coref_threshold, cluster_threshold = 0.5, 0.5 # starting threshold, later fixed by eval
@@ -164,7 +164,7 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
     last_saved_global_step = -1
     if args.resume_from:
         logger.info("Loading from checkpoint {}".format(args.resume_from))
-        loaded_args = load_from_checkpoint(model, args.resume_from, args.device, optimizer, lr_scheduler)
+        loaded_args = load_from_checkpoint(model, args.resume_from, args.device, optimizer)
         coref_threshold = loaded_args['numbers']['coref_threshold']
         cluster_threshold = loaded_args['numbers']['cluster_threshold']
         best_f1_global_step = loaded_args['numbers']['best_f1_global_step']
@@ -173,7 +173,7 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
         thresh_delta = loaded_args['numbers']['thresh_delta']   
 
         if args.reset_optim:
-            optimizer, lr_scheduler = create_optimization(model, args, train_loader)
+            optimizer = create_optimization(model, args, train_loader)
             args.resume_global_step = 0
         else:
             args.resume_global_step = int(loaded_args['global_step'])
@@ -238,11 +238,10 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
     for epoch in train_iterator:
         epoch_iterator = tqdm(train_loader, desc="Iteration in Epoch {}".format(epoch), disable=args.local_rank not in [-1, 0], leave=False)
         global_step = train_one_epoch(   
-            model, criterion, epoch_iterator, optimizer, scaler, args, skip_steps, recent_losses, recent_losses_parts, global_step,
-            lr_scheduler)
+            model, criterion, epoch_iterator, optimizer, scaler, args, skip_steps, recent_losses, recent_losses_parts, global_step)
 
-        if args.lr_drop_interval == 'epoch':
-            lr_scheduler.step()  # Update learning rate schedule
+        # if args.lr_drop_interval == 'epoch':
+        #     lr_scheduler.step()  # Update learning rate schedule
 
         if args.local_rank in [-1, 0]:
             if args.eval_epochs > 0 and (epoch + 1) % args.eval_epochs == 0 or \
@@ -292,7 +291,7 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
                     prev_best_f1 = best_f1
                     prev_best_f1_global_step = best_f1_global_step
                     output_dir = os.path.join(args.output_dir, 'checkpoint-{}'.format(global_step))
-                    save_checkpoint(args, global_step, numbers, model, optimizer, lr_scheduler, output_dir)
+                    save_checkpoint(args, global_step, numbers, model, optimizer, output_dir=output_dir)
                     print(f'previous checkpoint with f1 {prev_best_f1} was {prev_best_f1_global_step}')
                     best_f1 = eval_f1
                     best_f1_global_step = global_step
@@ -309,7 +308,7 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
                         'last_saved_global_step': global_step,
                         'best_f1': best_f1}
                     output_dir = os.path.join(args.output_dir, 'checkpoint-{}'.format(global_step))
-                    save_checkpoint(args, global_step, numbers, model, optimizer, lr_scheduler, output_dir)
+                    save_checkpoint(args, global_step, numbers, model, optimizer, output_dir=output_dir)
                     print(f'saved checkpoint in global_step {global_step}')
                     path_to_remove = os.path.join(args.output_dir, 'checkpoint-{}'.format(last_saved_global_step))
                     if last_saved_global_step > -1 and last_saved_global_step != best_f1_global_step and os.path.exists(path_to_remove):

@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 #         }, os.path.join(output_dir, 'model.step-{}.pt'.format(global_step)))
 #     logger.info("Saved model checkpoint to %s", output_dir)
 
-def save_checkpoint(args, global_step, numbers, model, optimizer, lr_scheduler, output_dir, amp=None):
+def save_checkpoint(args, global_step, numbers, model, optimizer, lr_scheduler=None, output_dir=None, amp=None):
     # Save model checkpoint
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -45,7 +45,7 @@ def save_checkpoint(args, global_step, numbers, model, optimizer, lr_scheduler, 
         'model': model_to_save.state_dict(),
         'numbers': numbers,
         'optimizer': optimizer.state_dict(),
-        'lr_scheduler': lr_scheduler.state_dict(),
+        # 'lr_scheduler': lr_scheduler.state_dict(),
         'args': args
         }, os.path.join(output_dir, 'model.step-{}.pt'.format(global_step)))
     logger.info("Saved model checkpoint to %s", output_dir)
