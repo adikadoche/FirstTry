@@ -52,7 +52,6 @@ class BucketBatchSampler(DataLoader):
                 # TODO change to config.attention_window
                 per_example_batch_len = self.calc_effective_per_example_batch_len(len(elem.token_ids))
             elif (len(batch) + 1) * per_example_batch_len > self.max_total_seq_len:
-                # batch = self.data_source.pad_batch(batch, len(batch[0].token_ids))
                 if len(gpu_batch) == 0 or (len(gpu_batch) < self.n_gpu and len(batch) == len(gpu_batch[-1])):
                     gpu_batch.append(batch)
                 else:
@@ -84,6 +83,5 @@ class BucketBatchSampler(DataLoader):
     def prepare_eval_batches(self):   #do I need to unsqueeze like one gpu?
         batches = []
         for doc_key, elem in self.data_source:
-            batch = self.data_source.pad_batch([elem], len(elem.token_ids))
-            batches.append((doc_key, batch))
+            batches.append((doc_key, self.prepare_gpu_batch([[elem]])))
         return batches

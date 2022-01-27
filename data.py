@@ -134,23 +134,26 @@ class CorefDataset(Dataset):
 
 def get_dataset(args, tokenizer, evaluate=False):
     read_from_cache, file_path = False, ''
-    # if evaluate and os.path.exists(args.predict_file_cache):
-    #     file_path = args.predict_file_cache
-    #     read_from_cache = True
-    # elif (not evaluate) and os.path.exists(args.train_file_cache):
-    #     file_path = args.train_file_cache
-    #     read_from_cache = True
+    predict_file_cache = f"{args.predict_file_cache}_{str(args.n_gpu)}.pkl"
+    train_file_cache = f"{args.train_file_cache}_{str(args.n_gpu)}.pkl"
+    if evaluate and os.path.exists(predict_file_cache):
+        file_path = predict_file_cache
+        read_from_cache = True
+    elif (not evaluate) and os.path.exists(train_file_cache):
+        file_path = train_file_cache
+        read_from_cache = True
 
-    # if read_from_cache:
-    #     logger.info(f"Reading dataset from {file_path}")
-    #     with open(file_path, 'rb') as f:
-    #         return pickle.load(f)
+    if read_from_cache:
+        logger.info(f"Reading dataset from {file_path}")
+        with open(file_path, 'rb') as f:
+            return pickle.load(f)
 
-    file_path, cache_path = (args.predict_file, args.predict_file_cache) if evaluate else (args.train_file, args.train_file_cache)
+    file_path, cache_path = (args.predict_file, predict_file_cache) if evaluate else \
+        (args.train_file, train_file_cache)
 
     coref_dataset = CorefDataset(file_path, tokenizer, max_seq_length=args.max_seq_length)
-    # with open(cache_path, 'wb') as f:
-    #     pickle.dump(coref_dataset, f)
+    with open(cache_path, 'wb') as f:
+        pickle.dump(coref_dataset, f)
 
     return coref_dataset
 

@@ -121,11 +121,15 @@ class DETR(nn.Module):
                                 dictionnaries containing the two above keys for each decoder layer.
         """
         #narrow to only gpu max len?
+        max_input = torch.max(torch.sum(mask, -1, dtype=torch.long)[0])
+        max_mentions = torch.max(torch.sum(gold_mentions_mask, -1, dtype=torch.long)[0])
         input_ids, max_mentions_len, mask, gold_mentions, gold_mentions_mask, gold_matrix = \
-            input_ids.squeeze(0), max_mentions_len.squeeze(0), mask.squeeze(0), \
-                gold_mentions.squeeze(0), gold_mentions_mask.squeeze(0), gold_matrix.squeeze(0)
+            input_ids.squeeze(0)[:,:max_input], max_mentions_len.squeeze(0), mask.squeeze(0)[:,:max_input], \
+                gold_mentions.squeeze(0)[:,:max_mentions,:], gold_mentions_mask.squeeze(0)[:,:max_mentions], \
+                    gold_matrix.squeeze(0)[:,:,:max_mentions]
         bs = input_ids.shape[0]
-        span_starts, span_ends, span_mask, longfomer_output, cost_is_mention = self.backbone(input_ids, mask, gold_mentions, gold_mentions_mask)
+        span_starts, span_ends, span_mask, longfomer_output, cost_is_mention = \
+            self.backbone(input_ids, mask, gold_mentions, gold_mentions_mask)
         span_emb = self.get_span_emb(longfomer_output, span_starts, span_ends, span_mask)  # [mentions, emb']
         span_emb_proj = self.span_proj(span_emb) # [bs, mentions, emb]
         # mentions = [torch.cat([span_starts[i].unsqueeze(-1), span_ends[i].unsqueeze(-1)], -1) for i in range(bs)]
@@ -143,10 +147,10 @@ class DETR(nn.Module):
                 "predict_matrix": predict_matrix,
                 "mention_logits": mention_logits, 
                 'mentions': mentions,
-                "span_mask": span_mask,
                 'cost_is_mention': cost_is_mention}        
         loss, loss_parts = self.criterion(out, {'clusters':gold_matrix})
 
+        out.pop('predict_matrix')
         if is_eval:
             out.update({"loss": loss})
         else:

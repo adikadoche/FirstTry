@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 def train_one_epoch(model: torch.nn.Module, 
                     epoch_iterator, optimizer: torch.optim.Optimizer, scaler: torch.cuda.amp.GradScaler,
-                    args, skip_steps, recent_losses, recent_losses_parts, global_step, lr_scheduler):
+                    args, skip_steps, recent_losses, recent_losses_parts, global_step, lr_scheduler, steps_from_last_log):
     for step, batch in enumerate(epoch_iterator):
         if skip_steps > 0:
             skip_steps -= 1
@@ -67,18 +67,21 @@ def train_one_epoch(model: torch.nn.Module,
                 recent_losses_parts[key] = list(outputs[key].cpu().numpy())
         epoch_iterator.set_postfix({'loss': loss.item()})
         global_step += input_ids.shape[0] * input_ids.shape[1]
+        steps_from_last_log += input_ids.shape[0] * input_ids.shape[1]
 
         if (step + 1) % args.gradient_accumulation_steps == 0:
             if args.amp:
                 scaler.step(optimizer)
                 scaler.update()
             else:
-                optimizer.step()
+                for _ in range(input_ids.shape[0] * input_ids.shape[1]):
+                    optimizer.step()
             if args.lr_drop_interval == 'step':
-                lr_scheduler.step()  # Update learning rate schedule
+                for _ in range(input_ids.shape[0] * input_ids.shape[1]):
+                    lr_scheduler.step()  # Update learning rate schedule
             model.zero_grad()
 
-        if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:   ##
+        if args.local_rank in [-1, 0] and args.logging_steps > 0 and steps_from_last_log > args.logging_steps:   ##
             if not args.is_debug:
                 dict_to_log = {}
                 dict_to_log['lr'] = optimizer.param_groups[2]['lr']
@@ -89,10 +92,11 @@ def train_one_epoch(model: torch.nn.Module,
                 wandb.log(dict_to_log, step=global_step)
             recent_losses.clear()
             recent_losses_parts.clear()
+            steps_from_last_log = 0
         if args.max_steps > 0 and global_step > args.max_steps:
             epoch_iterator.close()
             break
-    return global_step
+    return global_step, steps_from_last_log
 
 def create_optimization(model, args, train_loader):
     no_decay = ['bias', 'LayerNorm.weight']
@@ -208,13 +212,14 @@ def train(args, model, train_loader, eval_loader, eval_dataset):
     set_seed(args)  # Added here for reproducibility (even between python 2 and 3)
     skip_steps = args.skip_steps
     same_thresh_count = 0
+    steps_from_last_log = 0
 
     start_time = time.time()
     for epoch in train_iterator:
         epoch_iterator = tqdm(train_loader, desc="Iteration in Epoch {}".format(epoch), disable=args.local_rank not in [-1, 0], leave=False)
-        global_step = train_one_epoch(   
+        global_step, steps_from_last_log = train_one_epoch(   
             model, epoch_iterator, optimizer, scaler, args, skip_steps, recent_losses, recent_losses_parts, global_step,
-            lr_scheduler)
+            lr_scheduler, steps_from_last_log)
 
         if args.lr_drop_interval == 'epoch':
             lr_scheduler.step()  # Update learning rate schedule
@@ -347,7 +352,10 @@ def eval_train(train_dataloader, eval_dataset, args, model, cluster_threshold, c
         with torch.no_grad():
             outputs = model(input_ids, max_mentions, input_mask, gold_mentions, gold_mentions_mask, gold_matrix, True)
             cluster_logits, coref_logits, mention_logits, mentions_list = \
-                outputs['cluster_logits'], outputs['coref_logits'].clone(), outputs['mention_logits'], outputs['mentions']
+                outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits'], \
+                    outputs['mentions'].detach().cpu().numpy()
+            mentions_list = [[(m[0], m[1]) for m in mentions_list[j] if m[0] != 0 or m[1] != 0] for j in range(mentions_list.shape[0])]
+            gold_clusters_list = [gc for g in gold_clusters_list for gc in g]
 
             for i in range(cluster_logits.shape[0]):
                 predicted_clusters = calc_predicted_clusters(cluster_logits[i].unsqueeze(0).cpu().detach(), \

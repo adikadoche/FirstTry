@@ -142,7 +142,10 @@ def evaluate(args, eval_dataloader, eval_dataset, model, prefix="", coref_thresh
         with torch.no_grad():
             outputs = model(input_ids, max_mentions, input_mask, gold_mentions, gold_mentions_mask, gold_matrix, True)
             cluster_logits, coref_logits, mention_logits, mentions_list = \
-                outputs['cluster_logits'], outputs['coref_logits'].clone(), outputs['mention_logits'], outputs['mentions']
+                outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits'], \
+                    outputs['mentions'].detach().cpu().numpy()
+            mentions_list = [[(m[0], m[1]) for m in mentions_list[j] if m[0] != 0 or m[1] != 0] for j in range(mentions_list.shape[0])]
+            gold_clusters_list = [gc for g in gold_clusters_list for gc in g]
 
             loss = outputs['loss']
             losses.append(loss.mean().detach().cpu())
