@@ -133,7 +133,7 @@ class DETR(nn.Module):
         span_emb = self.get_span_emb(longfomer_output, span_starts, span_ends, span_mask)  # [mentions, emb']
         span_emb_proj = self.span_proj(span_emb) # [bs, mentions, emb]
         # mentions = [torch.cat([span_starts[i].unsqueeze(-1), span_ends[i].unsqueeze(-1)], -1) for i in range(bs)]
-        cluster_logits, coref_logits, mention_logits = self.slot_attention(span_emb_proj, max_mentions_len[0])
+        cluster_logits, coref_logits, mention_logits = self.slot_attention(span_emb_proj, max_mentions_len[0], span_mask.unsqueeze(1))
         mentions = torch.cat([torch.cat([span_starts.unsqueeze(-1), span_ends.unsqueeze(-1)], -1), \
             torch.zeros(bs, max_mentions_len[0] - span_starts.shape[-1], 2, device=span_starts.device, dtype=torch.long)], 1)
         span_mask = torch.cat([span_mask, torch.zeros(bs, max_mentions_len[0] - span_mask.shape[-1], device=span_mask.device, dtype=torch.long)], -1)
@@ -141,7 +141,7 @@ class DETR(nn.Module):
         if self.args.use_topk_mentions:
             gold_matrix, predict_matrix = \
                 self.create_target_and_predict_matrix(gold_mentions, \
-                    mentions, gold_matrix, coref_logits)
+                    mentions, gold_matrix, coref_logits, span_mask)
         out = {"coref_logits": coref_logits,
                 "cluster_logits": cluster_logits,
                 "predict_matrix": predict_matrix,
@@ -159,28 +159,24 @@ class DETR(nn.Module):
             
         return out
 
-    def create_target_and_predict_matrix(self, gold_mentions_list, mentions_list, gold_matrix, coref_logits):
+    def create_target_and_predict_matrix(self, gold_mentions_list, mentions_list, gold_matrix, coref_logits, span_mask):
         new_coref_logits = torch.zeros(gold_matrix.shape[0], coref_logits.shape[1], gold_matrix.shape[-1]+1, \
             device=gold_matrix.device)
+        junk_mentions_mask = (~torch.any(torch.all(mentions_list.unsqueeze(2).repeat(1,1,gold_mentions_list.shape[1],1) == \
+            gold_mentions_list.unsqueeze(1).repeat(1,mentions_list.shape[1],1,1), -1), -1)).type(torch.long)
+        junk_mentions_mask = junk_mentions_mask * span_mask
+        common_ind = torch.logical_and(torch.all(mentions_list.unsqueeze(1).repeat(1,gold_mentions_list.shape[1],1,1) == \
+            gold_mentions_list.unsqueeze(2).repeat(1,1,mentions_list.shape[1],1), -1), \
+                (span_mask==1).unsqueeze(1).repeat(1,gold_mentions_list.shape[1],1)).nonzero()
+
         for b in range(gold_matrix.shape[0]):
-            junk_mentions_indices = torch.tensor([i for i, m in enumerate(mentions_list[b]) if (m[0] != 0 or m[1] != 0) and not torch.any(torch.all(m == gold_mentions_list[b], -1))], dtype=torch.long, device=gold_matrix[0].device)
-            common_gold_ind = torch.tensor([i for i, m in enumerate(gold_mentions_list[b]) if (m[0] != 0 or m[1] != 0) and torch.any(torch.all(m == mentions_list[b], -1))], dtype=torch.long, device=gold_matrix[0].device)
-            common_predict_ind = torch.zeros_like(common_gold_ind)
-
-            ind = 0
-            for i in common_gold_ind:
-                for j in range(len(mentions_list[b])):
-                    if torch.all(mentions_list[b][j] == gold_mentions_list[b][i]):
-                        common_predict_ind[ind] = j
-                        ind += 1
-
-            new_coref_logits[b, :, common_gold_ind] = coref_logits[b, :, common_predict_ind]        
-            # if len(junk_mentions_indices) > 0:
-            new_coref_logits[b, :, -1] = torch.sum(coref_logits[b, :, junk_mentions_indices], 1)
+            cur_common_ind = common_ind[common_ind[:,0]==b]
+            new_coref_logits[b, :, cur_common_ind[:,1]] = coref_logits[b, :, cur_common_ind[:,2]]        
+        new_coref_logits[:, :, -1] = torch.sum(coref_logits * junk_mentions_mask.unsqueeze(1), -1)
         return torch.cat([gold_matrix, torch.zeros(gold_matrix.shape[0], gold_matrix.shape[1], 1, device=gold_matrix[b].device)], -1), \
             new_coref_logits
 
-    def slot_attention(self, input_emb, max_mentions):
+    def slot_attention(self, input_emb, max_mentions, span_mask):
         bs, doc_len, emb, device = *input_emb.shape, input_emb.device
 
         if self.args.random_queries:
@@ -221,6 +217,7 @@ class DETR(nn.Module):
         coref_logits = (dots.softmax(dim=1) + self.slots_eps).clamp(max=1.0)
         cluster_logits = self.slots_mlp_classifier(slots)
 
+        coref_logits = span_mask * coref_logits + (-1) * (1-span_mask)
         coref_logits = torch.cat([coref_logits, (torch.ones(bs, coref_logits.shape[1], max_mentions-coref_logits.shape[2]) * -1).to(coref_logits.device)], dim=2)
 
         return cluster_logits, coref_logits, torch.tensor([], device=coref_logits.device)

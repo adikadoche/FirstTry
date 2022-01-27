@@ -108,8 +108,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, prefix="", coref_thresh
 
     # Eval!
     logger.info("***** Running evaluation {} *****".format(prefix))
-    logger.info("  Num steps = %d", try_measure_len(eval_dataloader))
-    logger.info("  Batch size = %d", args.eval_batch_size)
+    logger.info("  Num steps = %d", len(eval_dataloader))
     losses = []
     losses_parts = {}
     batch_sizes = []
@@ -123,7 +122,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, prefix="", coref_thresh
     all_gold_clusters = []
     all_mentions = []
 
-    for batch in tqdm(eval_dataloader, desc="Evaluating Validation"):
+    for doc_key, batch in tqdm(eval_dataloader, desc="Evaluating Validation"):
         model.eval()
 
         gold_clusters_list = batch[-1]
@@ -155,7 +154,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, prefix="", coref_thresh
                 losses_parts[key] += list(outputs[key].cpu().numpy())
             else:
                 losses_parts[key] = list(outputs[key].cpu().numpy())
-            batch_sizes.append(loss.shape[0]) 
+        batch_sizes.append(loss.shape[0]) 
 
         all_mentions += mentions_list
         all_input_ids += input_ids    

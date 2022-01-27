@@ -356,6 +356,7 @@ def eval_train(train_dataloader, eval_dataset, args, model, cluster_threshold, c
                     outputs['mentions'].detach().cpu().numpy()
             mentions_list = [[(m[0], m[1]) for m in mentions_list[j] if m[0] != 0 or m[1] != 0] for j in range(mentions_list.shape[0])]
             gold_clusters_list = [gc for g in gold_clusters_list for gc in g]
+            input_ids = input_ids.reshape(input_ids.shape[0]*input_ids.shape[1], -1)
 
             for i in range(cluster_logits.shape[0]):
                 predicted_clusters = calc_predicted_clusters(cluster_logits[i].unsqueeze(0).cpu().detach(), \
