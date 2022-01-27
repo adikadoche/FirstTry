@@ -58,6 +58,20 @@ def parse_args():
         help="The input evaluation file. If a data dir is specified, will look for the file there"
              + "If no data dir or train/predict files are specified, will run with tensorflow_datasets.",
     )
+    parser.add_argument(
+        "--train_file_cache",
+        default=None,
+        type=str,
+        required=True,
+        help="The output directory where the datasets will be written and read from.",
+    )
+    parser.add_argument(
+        "--predict_file_cache",
+        default=None,
+        type=str,
+        required=True,
+        help="The output directory where the datasets will be written and read from.",
+    )
     parser.add_argument("--cache_dir",
                         default=None,
                         type=str,
@@ -90,8 +104,8 @@ def parse_args():
         help="Whether to use automatic mixed precision instead of 32-bit",
     )
 
-    parser.add_argument("--max_total_seq_len", type=int, default=3500)
-
+    parser.add_argument("--max_total_seq_len", type=int, default=5000)
+    parser.add_argument("--batch_size_1", action="store_true")
 
     # * Transformer
     parser.add_argument('--enc_layers', default=6, type=int,
@@ -126,9 +140,7 @@ def parse_args():
     parser.add_argument('--eos_coef', default=0.1, type=float,
                         help="Relative classification weight of the no-object class")
 
-    parser.add_argument('--max_training_sentences', default=3, type=int)
     parser.add_argument('--max_num_speakers', default=20, type=int)
-    parser.add_argument('--max_segment_len', default=4096, type=int)
     parser.add_argument('--limit_trainset', default=-1, type=int)
     parser.add_argument('--use_gold_mentions', action='store_true')
     parser.add_argument('--is_frozen', action='store_true')
@@ -148,10 +160,6 @@ def parse_args():
     parser.add_argument('--attn_softmax_clusters', action='store_true')
 
     # Batch
-    parser.add_argument("--per_gpu_train_batch_size", default=1, type=int,
-                        help="Batch size per GPU/CPU for training.")
-    parser.add_argument("--per_gpu_eval_batch_size", default=1, type=int,
-                        help="Batch size per GPU/CPU for evaluation.")
     parser.add_argument('--gradient_accumulation_steps', type=int, default=1,
                         help="Number of updates steps to accumulate before performing a backward/update pass.")
     parser.add_argument('--num_workers', type=int, default=0)

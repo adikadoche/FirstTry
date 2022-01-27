@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 class DETR(nn.Module):
     """ This is the DETR module that performs object detection """
-    def __init__(self, backbone, transformer, num_queries, hidden_size, args, aux_loss=False):
+    def __init__(self, backbone, transformer, criterion, num_queries, hidden_size, args, aux_loss=False):
         """ Initializes the model.
         Parameters:
             backbone: torch module of the backbone to be used. See backbone.py
@@ -36,6 +36,7 @@ class DETR(nn.Module):
         """
         super().__init__()
         self.num_queries = num_queries
+        self.criterion = criterion
         # self.transformer = transformer
         hidden_dim = transformer.d_model
         # self.input_proj = nn.Linear(hidden_size, hidden_dim)
@@ -104,7 +105,7 @@ class DETR(nn.Module):
                 nn.Sigmoid()
             ) 
 
-    def forward(self, input_ids, max_mentions_len, mask, gold_mentions, gold_mentions_mask):
+    def forward(self, input_ids, max_mentions_len, mask, gold_mentions, gold_mentions_mask, gold_matrix, is_eval):
         """ The forward expects a NestedTensor, which consists of:
                - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
                - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
@@ -119,8 +120,10 @@ class DETR(nn.Module):
                - "aux_outputs": Optional, only returned when auxilary losses are activated. It is a list of
                                 dictionnaries containing the two above keys for each decoder layer.
         """
-        # input_ids_cat = torch.cat(input_ids, dim=1).squeeze(0)
-        # mask_cat = torch.cat(mask, dim=1).squeeze(0)
+        #narrow to only gpu max len?
+        input_ids, max_mentions_len, mask, gold_mentions, gold_mentions_mask, gold_matrix = \
+            input_ids.squeeze(0), max_mentions_len.squeeze(0), mask.squeeze(0), \
+                gold_mentions.squeeze(0), gold_mentions_mask.squeeze(0), gold_matrix.squeeze(0)
         bs = input_ids.shape[0]
         span_starts, span_ends, span_mask, longfomer_output, cost_is_mention = self.backbone(input_ids, mask, gold_mentions, gold_mentions_mask)
         span_emb = self.get_span_emb(longfomer_output, span_starts, span_ends, span_mask)  # [mentions, emb']
@@ -131,13 +134,47 @@ class DETR(nn.Module):
             torch.zeros(bs, max_mentions_len[0] - span_starts.shape[-1], 2, device=span_starts.device, dtype=torch.long)], 1)
         span_mask = torch.cat([span_mask, torch.zeros(bs, max_mentions_len[0] - span_mask.shape[-1], device=span_mask.device, dtype=torch.long)], -1)
 
+        if self.args.use_topk_mentions:
+            gold_matrix, predict_matrix = \
+                self.create_target_and_predict_matrix(gold_mentions, \
+                    mentions, gold_matrix, coref_logits)
         out = {"coref_logits": coref_logits,
                 "cluster_logits": cluster_logits,
+                "predict_matrix": predict_matrix,
                 "mention_logits": mention_logits, 
                 'mentions': mentions,
                 "span_mask": span_mask,
-                'cost_is_mention': cost_is_mention}
+                'cost_is_mention': cost_is_mention}        
+        loss, loss_parts = self.criterion(out, {'clusters':gold_matrix})
+
+        if is_eval:
+            out.update({"loss": loss})
+        else:
+            out = {"loss": loss}
+        out.update(loss_parts)
+            
         return out
+
+    def create_target_and_predict_matrix(self, gold_mentions_list, mentions_list, gold_matrix, coref_logits):
+        new_coref_logits = torch.zeros(gold_matrix.shape[0], coref_logits.shape[1], gold_matrix.shape[-1]+1, \
+            device=gold_matrix.device)
+        for b in range(gold_matrix.shape[0]):
+            junk_mentions_indices = torch.tensor([i for i, m in enumerate(mentions_list[b]) if (m[0] != 0 or m[1] != 0) and not torch.any(torch.all(m == gold_mentions_list[b], -1))], dtype=torch.long, device=gold_matrix[0].device)
+            common_gold_ind = torch.tensor([i for i, m in enumerate(gold_mentions_list[b]) if (m[0] != 0 or m[1] != 0) and torch.any(torch.all(m == mentions_list[b], -1))], dtype=torch.long, device=gold_matrix[0].device)
+            common_predict_ind = torch.zeros_like(common_gold_ind)
+
+            ind = 0
+            for i in common_gold_ind:
+                for j in range(len(mentions_list[b])):
+                    if torch.all(mentions_list[b][j] == gold_mentions_list[b][i]):
+                        common_predict_ind[ind] = j
+                        ind += 1
+
+            new_coref_logits[b, :, common_gold_ind] = coref_logits[b, :, common_predict_ind]        
+            # if len(junk_mentions_indices) > 0:
+            new_coref_logits[b, :, -1] = torch.sum(coref_logits[b, :, junk_mentions_indices], 1)
+        return torch.cat([gold_matrix, torch.zeros(gold_matrix.shape[0], gold_matrix.shape[1], 1, device=gold_matrix[b].device)], -1), \
+            new_coref_logits
 
     def slot_attention(self, input_emb, max_mentions):
         bs, doc_len, emb, device = *input_emb.shape, input_emb.device
@@ -321,9 +358,9 @@ class MatchingLoss(nn.Module):
         else:
             cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_targets_clusters, reduction='mean')
 
-        costs_parts['loss_is_cluster'] = list(self.cost_is_cluster * cost_is_cluster.detach().cpu().numpy())
-        costs_parts['loss_is_mention'] = list(self.cost_is_mention * cost_is_mention.detach().cpu().numpy())
-        costs_parts['loss_coref'] = list(self.cost_coref * cost_coref.detach().cpu().numpy())
+        costs_parts['loss_is_cluster'] = self.cost_is_cluster * cost_is_cluster.detach()
+        costs_parts['loss_is_mention'] = self.cost_is_mention * cost_is_mention.detach()
+        costs_parts['loss_coref'] = self.cost_coref * cost_coref.detach()
         total_cost = self.cost_coref * cost_coref + self.cost_is_cluster * cost_is_cluster + self.cost_is_mention * cost_is_mention
         return total_cost, costs_parts
 
@@ -386,16 +423,6 @@ def build_DETR(args):
     transformer = build_transformer(args)
 
     backbone = Backbone(args)
-
-    model = DETR(
-        backbone,
-        transformer,
-        num_queries=args.num_queries + args.num_junk_queries,
-        hidden_size=backbone.hidden_size,
-        args=args,
-        aux_loss=args.aux_loss
-    )
-
     matcher = build_matcher(args)
     # TODO maybe return consideration of aux loss
 
@@ -410,7 +437,18 @@ def build_DETR(args):
     criterion.to(device)
     # postprocessors = {'bbox': PostProcess()}
 
-    return model, criterion
+    model = DETR(
+        backbone,
+        transformer,
+        criterion,
+        num_queries=args.num_queries + args.num_junk_queries,
+        hidden_size=backbone.hidden_size,
+        args=args,
+        aux_loss=args.aux_loss
+    )
+
+
+    return model
 
 class FullyConnectedLayer(Module):
     def __init__(self, config, input_dim, output_dim, dropout_prob):

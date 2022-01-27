@@ -12,16 +12,16 @@ from tqdm import tqdm
 from coref_bucket_batch_sampler import BucketBatchSampler
 from coref_analysis import print_predictions, error_analysis
 from data import get_dataset
-from utils import tensor_and_remove_empty, create_target_and_predict_matrix, calc_best_avg_f1, create_gold_matrix, try_measure_len, load_from_checkpoint, create_junk_gold_mentions
+from utils import tensor_and_remove_empty, calc_best_avg_f1, create_gold_matrix, try_measure_len, load_from_checkpoint, create_junk_gold_mentions
 from conll import evaluate_conll
 import wandb
 logger = logging.getLogger(__name__)
 
 
 
-def report_eval(args, eval_dataloader, eval_dataset, global_step, model, criterion, coref_threshold, cluster_threshold, thresh_delta=0.02):
+def report_eval(args, eval_dataloader, eval_dataset, global_step, model, coref_threshold, cluster_threshold, thresh_delta=0.02):
     if args.local_rank == -1:  # Only evaluate when single GPU otherwise metrics may not average well
-        results = evaluate(args, eval_dataloader, eval_dataset, model, criterion, str(global_step), coref_threshold, cluster_threshold, thresh_delta)
+        results = evaluate(args, eval_dataloader, eval_dataset, model, str(global_step), coref_threshold, cluster_threshold, thresh_delta)
         if not args.is_debug:
             dict_to_log = {}
             for key, value in results.items():
@@ -30,7 +30,7 @@ def report_eval(args, eval_dataloader, eval_dataset, global_step, model, criteri
         return results
     return None
 
-def make_evaluation(model, criterion, eval_loader, eval_dataset, args):  
+def make_evaluation(model, eval_loader, eval_dataset, args):  
     # Evaluation 'no', 'specific', 'all', 'vanilla'
     if args.n_gpu > 1:
         model = torch.nn.DataParallel(model)
@@ -38,9 +38,9 @@ def make_evaluation(model, criterion, eval_loader, eval_dataset, args):
         checkpoint = args.output_dir
         loaded_args = load_from_checkpoint(model, checkpoint, args.device)
         global_step = loaded_args['global_step']
-        evaluate(args, eval_loader, model, criterion, global_step)
+        evaluate(args, eval_loader, model, global_step)
     elif args.eval == 'vanilla':
-        evaluate(args, eval_loader, model, criterion, '0')
+        evaluate(args, eval_loader, model, '0')
     elif args.eval == 'all':
         import time
 
@@ -77,7 +77,7 @@ def make_evaluation(model, criterion, eval_loader, eval_dataset, args):
                         coref_threshold = loaded_args['numbers']['coref_threshold']
                         cluster_threshold = loaded_args['numbers']['cluster_threshold']
                         thresh_delta = loaded_args['numbers']['thresh_delta']
-                        results = report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, coref_threshold, cluster_threshold, thresh_delta)
+                        results = report_eval(args, eval_loader, eval_dataset, global_step, model, coref_threshold, cluster_threshold, thresh_delta)
                         if results['avg_f1'] > best_f1:
                             best_checkpoint = checkpoint
                             best_f1 = results['avg_f1']
@@ -102,7 +102,7 @@ def make_evaluation(model, criterion, eval_loader, eval_dataset, args):
                     wandb.log(dict_to_log, step=global_step)
                 return True
 
-def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", coref_threshold=0.5, cluster_threshold=0.5, thresh_delta=0.02):  #TODO: use threshold when resuming from checkpoint rather than searching it
+def evaluate(args, eval_dataloader, eval_dataset, model, prefix="", coref_threshold=0.5, cluster_threshold=0.5, thresh_delta=0.02):  #TODO: use threshold when resuming from checkpoint rather than searching it
     if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]:
         os.makedirs(args.output_dir)
 
@@ -126,51 +126,37 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", c
     for batch in tqdm(eval_dataloader, desc="Evaluating Validation"):
         model.eval()
 
-        sum_text_len = [sum(tl) for tl in batch['text_len']]
-        gold_clusters = batch['clusters']
+        gold_clusters_list = batch[-1]
+        batch = tuple(tensor.to(args.device) for tensor in batch[:-1])
+        input_ids, input_mask, gold_mentions, gold_mentions_mask = batch
 
-        gold_mentions_list = []
-        # if len(gold_clusters) > 0: #TODO:
-        gold_mentions_list = [list(set([tuple(m) for c in gc for m in c])) for gc in gold_clusters]
-        if args.add_junk:
-            gold_mentions_list, _ = create_junk_gold_mentions(gold_mentions_list, sum_text_len, args.device)
+        sum_text_len = torch.sum(input_mask, -1)
 
-        input_ids, input_mask, sum_text_len, gold_mentions, gold_mentions_mask, num_mentions = \
-            tensor_and_remove_empty(batch, gold_mentions_list, args)
-        
-        gold_matrix = create_gold_matrix(args.device, sum_text_len, args.num_queries, gold_clusters, gold_mentions_list, gold_mentions.shape[1])
+        gold_mentions_list = [[list(set([tuple(m) for c in gc for m in c])) for gc in x] for x in gold_clusters_list]
 
-        if len(input_ids) == 0:
-            continue
+        gold_matrix = create_gold_matrix(args.device, sum_text_len, args.num_queries, gold_clusters_list, gold_mentions_list, gold_mentions.shape[2])
         max_mentions = torch.tensor(gold_mentions.shape[1], device=gold_mentions.device) if args.use_gold_mentions \
-            else sum_text_len.max() // int(-10*args.topk_lambda +6)
+            else torch.max(sum_text_len) // int(-10*args.topk_lambda +6)
         max_mentions = max_mentions.repeat([input_ids.shape[0], 1])
             
         with torch.no_grad():
-            # orig_input_dim = input_ids.shape
-            # input_ids = torch.reshape(input_ids, (1, -1))
-            # input_mask = torch.reshape(input_mask, (1, -1))
-            outputs = model(input_ids, max_mentions, input_mask, gold_mentions, gold_mentions_mask)
+            outputs = model(input_ids, max_mentions, input_mask, gold_mentions, gold_mentions_mask, gold_matrix, True)
             cluster_logits, coref_logits, mention_logits, mentions_list = \
                 outputs['cluster_logits'], outputs['coref_logits'].clone(), outputs['mention_logits'], outputs['mentions']
-            mentions_list = mentions_list.detach().cpu().numpy()
-            mentions_list = [[(m[0], m[1]) for m in mentions_list[j] if m[0] != 0 or m[1] != 0] for j in range(mentions_list.shape[0])]
 
-            if args.use_topk_mentions:
-                gold_matrix, outputs['coref_logits'] = create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_matrix, outputs['coref_logits'])
-
-            loss, loss_parts = criterion(outputs, {'clusters':gold_matrix})
+            loss = outputs['loss']
             losses.append(loss.mean().detach().cpu())
-            for key in loss_parts.keys():
-                if key in losses_parts.keys() and len(losses_parts[key]) > 0:
-                    losses_parts[key] += loss_parts[key]
-                else:
-                    losses_parts[key] = loss_parts[key]
+        loss_parts = [k for k in outputs.keys() if 'loss_' in k]
+        for key in loss_parts:
+            if key in losses_parts.keys() and len(losses_parts[key]) > 0:
+                losses_parts[key] += list(outputs[key].cpu().numpy())
+            else:
+                losses_parts[key] = list(outputs[key].cpu().numpy())
             batch_sizes.append(loss.shape[0]) 
 
         all_mentions += mentions_list
         all_input_ids += input_ids    
-        all_gold_clusters += gold_clusters
+        all_gold_clusters += gold_clusters_list
 
         if args.add_junk:
             all_mention_logits_cuda += [ml.detach().clone() for ml in mention_logits]

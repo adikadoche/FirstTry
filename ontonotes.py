@@ -4,12 +4,12 @@ import random
 import numpy as np
 from torch.utils.data import Dataset
 from transformers import AutoTokenizer
-from consts import TOKENS_PAD, SPEAKER_PAD, GENRES, SPEAKER_END_TOKEN, SPEAKER_START_TOKEN
+# from consts import TOKENS_PAD, SPEAKER_PAD, GENRES, SPEAKER_END_TOKEN, SPEAKER_START_TOKEN
 
 
 class OntonotesDataset(Dataset):
 
-    def __init__(self, filepath, is_training, batch_size, args) -> None:
+    def __init__(self, filepath, is_training, batch_size, args) -> None:  #todo: sort like ori
         super().__init__()
         with open(filepath) as f:
             lines = f.readlines()

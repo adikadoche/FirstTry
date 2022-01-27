@@ -57,8 +57,8 @@ class HungarianMatcher(nn.Module):
         """
         targets_clusters = targets['clusters']
         cluster_logits = outputs["cluster_logits"] # [bs, num_queries, 1]
-        coref_logits = outputs["coref_logits"]  # [bs, num_queries, num_mentions]
-        bs = outputs["coref_logits"].shape[0]
+        coref_logits = outputs["predict_matrix"]  # [bs, num_queries, num_mentions]
+        bs = outputs["predict_matrix"].shape[0]
 
         permuted_coref_logits = coref_logits.clone()
         permuted_targets_clusters = targets_clusters.clone()

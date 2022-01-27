@@ -12,7 +12,7 @@ from torch.utils.data import Dataset, RandomSampler, DistributedSampler, Sequent
 from ontonotes import OntonotesDataset
 
 
-CorefExample = namedtuple("CorefExample", ["token_ids", "clusters"])
+CorefExample = namedtuple("CorefExample", ["words", "token_ids", "clusters"])
 
 logger = logging.getLogger(__name__)
 
@@ -55,11 +55,13 @@ class CorefDataset(Dataset):
             end_token_idx_to_word_idx = [0]  # for <s>
 
             token_ids = []
+            words_with_speaker = []
             last_speaker = None
             for idx, (word, speaker) in enumerate(zip(words, speakers)):
                 if last_speaker != speaker:
-                    speaker_prefix = [SPEAKER_START_ID] + self.tokenizer.encode(" " + speaker,
+                    speaker_prefix = [SPEAKER_START_ID] + self.tokenizer.tokenize(" " + speaker,
                                                                              add_special_tokens=False) + [SPEAKER_END_ID]
+                    words_with_speaker += [SPEAKER_START_ID, speaker, SPEAKER_END_ID]
                     last_speaker = speaker
                 else:
                     speaker_prefix = []
@@ -67,7 +69,8 @@ class CorefDataset(Dataset):
                     end_token_idx_to_word_idx.append(idx)
                 token_ids.extend(speaker_prefix)
                 word_idx_to_start_token_idx[idx] = len(token_ids) + 1  # +1 for <s>
-                tokenized = self.tokenizer.encode(" " + word, add_special_tokens=False)
+                tokenized = self.tokenizer.tokenize(word, add_special_tokens=False)
+                words_with_speaker.append(word)
                 for _ in range(len(tokenized)):
                     end_token_idx_to_word_idx.append(idx)
                 token_ids.extend(tokenized)
@@ -82,7 +85,7 @@ class CorefDataset(Dataset):
                 cluster in clusters]
             lengths.append(len(token_ids))
 
-            coref_examples.append(((doc_key, end_token_idx_to_word_idx), CorefExample(token_ids=token_ids, clusters=new_clusters)))
+            coref_examples.append(((doc_key, end_token_idx_to_word_idx), CorefExample(words=words_with_speaker, token_ids=token_ids, clusters=new_clusters)))
         return coref_examples, lengths, num_examples_filtered
 
     def __len__(self):
@@ -91,54 +94,63 @@ class CorefDataset(Dataset):
     def __getitem__(self, item):
         return self.examples[item]
 
-    def pad_clusters_inside(self, clusters):
-        return [cluster + [(NULL_ID_FOR_COREF, NULL_ID_FOR_COREF)] * (self.max_cluster_size - len(cluster)) for cluster
-                in clusters]
+    # def pad_clusters_inside(self, clusters):
+    #     return [cluster + [(NULL_ID_FOR_COREF, NULL_ID_FOR_COREF)] * (self.max_cluster_size - len(cluster)) for cluster
+    #             in clusters]
 
-    def pad_clusters_outside(self, clusters):
-        return clusters + [[]] * (self.max_num_clusters - len(clusters))
+    # def pad_clusters_outside(self, clusters):
+    #     return clusters + [[]] * (self.max_num_clusters - len(clusters))  #wasety?
 
-    def pad_clusters(self, clusters):
-        clusters = self.pad_clusters_outside(clusters)
-        clusters = self.pad_clusters_inside(clusters)
-        return clusters
+    # def pad_clusters(self, clusters):
+    #     clusters = self.pad_clusters_outside(clusters)
+    #     clusters = self.pad_clusters_inside(clusters)
+    #     return clusters
 
-    def pad_batch(self, batch, max_length):
+    def pad_mentions(self, mentions):
+        return mentions + [(NULL_ID_FOR_COREF, NULL_ID_FOR_COREF)] * (self.max_mention_num - len(mentions)), \
+            torch.cat([torch.ones(len(mentions)), torch.zeros(self.max_mention_num - len(mentions))], 0)  #wasety?
+
+    def pad_batch(self, batch, max_length):     #wasety?
         max_length += 2  # we have additional two special tokens <s>, </s>
         padded_batch = []
+        clusters_list = []
         for example in batch:
-            encoded_dict = self.tokenizer.encode_plus(example[0],
+            encoded_dict = self.tokenizer(text=example.words,
                                                       add_special_tokens=True,
-                                                      pad_to_max_length=True,
+                                                      is_split_into_words=True,
+                                                      padding='max_length',
                                                       max_length=max_length,
                                                       return_attention_mask=True,
                                                       return_tensors='pt')
-            clusters = self.pad_clusters(example.clusters)
-            example = (encoded_dict["input_ids"], encoded_dict["attention_mask"]) + (torch.tensor(clusters),)
+            clusters_list.append(example.clusters)
+            mentions, mentions_mask = self.pad_mentions(list(set(tuple(m) for gc in example.clusters for m in gc)))
+            #         input_ids, input_mask, gold_clusters, gold_mentions, gold_mentions_mask = batch
+            example = (encoded_dict["input_ids"], encoded_dict["attention_mask"]) + \
+                (torch.tensor(mentions), mentions_mask,)
             padded_batch.append(example)
         tensored_batch = tuple(torch.stack([example[i].squeeze() for example in padded_batch], dim=0) for i in range(len(example)))
-        return tensored_batch
+        return tensored_batch + (clusters_list,)
 
 
 def get_dataset(args, tokenizer, evaluate=False):
     read_from_cache, file_path = False, ''
-    if evaluate and os.path.exists(args.predict_file_cache):
-        file_path = args.predict_file_cache
-        read_from_cache = True
-    elif (not evaluate) and os.path.exists(args.train_file_cache):
-        file_path = args.train_file_cache
-        read_from_cache = True
+    # if evaluate and os.path.exists(args.predict_file_cache):
+    #     file_path = args.predict_file_cache
+    #     read_from_cache = True
+    # elif (not evaluate) and os.path.exists(args.train_file_cache):
+    #     file_path = args.train_file_cache
+    #     read_from_cache = True
 
-    if read_from_cache:
-        logger.info(f"Reading dataset from {file_path}")
-        with open(file_path, 'rb') as f:
-            return pickle.load(f)
+    # if read_from_cache:
+    #     logger.info(f"Reading dataset from {file_path}")
+    #     with open(file_path, 'rb') as f:
+    #         return pickle.load(f)
 
     file_path, cache_path = (args.predict_file, args.predict_file_cache) if evaluate else (args.train_file, args.train_file_cache)
 
     coref_dataset = CorefDataset(file_path, tokenizer, max_seq_length=args.max_seq_length)
-    with open(cache_path, 'wb') as f:
-        pickle.dump(coref_dataset, f)
+    # with open(cache_path, 'wb') as f:
+    #     pickle.dump(coref_dataset, f)
 
     return coref_dataset
 
