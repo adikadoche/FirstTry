@@ -354,8 +354,9 @@ class MatchingLoss(nn.Module):
         if self.args.cluster_block:
             clamped_logits = (permuted_cluster_logits * permuted_coref_logits[:, :, :-1]).clamp(max=1.0)
             cost_coref = torch.mean(torch.sum(F.binary_cross_entropy(clamped_logits, padded_target_clusters[:,:,:-1], \
-                weight=weight_cluster, reduction='none'), -1) / num_gold_mentions.unsqueeze(-1), -1) + \
-                    torch.mean(permuted_coref_logits[:, :, -1] * permuted_cluster_logits.squeeze(-1), -1)
+                weight=weight_cluster, reduction='none'), -1) / num_gold_mentions.unsqueeze(-1), -1)
+            cost_coref[num_gold_mentions == 0] = 0
+            cost_coref += torch.mean(permuted_coref_logits[:, :, -1] * permuted_cluster_logits.squeeze(-1), -1)
         else:
             cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_targets_clusters, reduction='mean')
 

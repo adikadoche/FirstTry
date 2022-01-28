@@ -90,7 +90,8 @@ class HungarianMatcher(nn.Module):
                     num_gold_mentions.unsqueeze(-1).repeat(1,clamped_logits.shape[1]).unsqueeze(-1)) \
                     + cluster_logits_repeated.squeeze(-1) * coref_logits_repeated[:, :, :, -1]
             else:
-                cost_coref = torch.sum(F.binary_cross_entropy(coref_logits_repeated, cluster_repeated, reduction='none'),-1)/num_gold_mentions.unsqueeze(1).unsqueeze(1)  # [bs, num_queries, gold_clusters]
+                cost_coref = torch.sum(F.binary_cross_entropy(coref_logits_repeated, cluster_repeated, reduction='none'),-1)\
+                    / num_gold_mentions.unsqueeze(1).unsqueeze(1)  # [bs, num_queries, gold_clusters]
 
             total_cost = self.cost_is_cluster * cost_is_cluster + self.cost_coref * cost_coref
             total_cost = total_cost.cpu()
