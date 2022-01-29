@@ -34,8 +34,7 @@ def main():
         args.run_name = 'vscode'
     if args.resume_from:
         args.output_dir = args.resume_from
-    else:
-        args.output_dir = os.path.join(args.output_dir, datetime.now().strftime(f"%m_%d_%Y_%H_%M_%S")+'_'+args.run_name)
+    args.output_dir = os.path.join(args.output_dir, datetime.now().strftime(f"%m_%d_%Y_%H_%M_%S")+'_'+args.run_name)
     transformers_logger = logging.getLogger("transformers")
     transformers_logger.setLevel(logging.ERROR)
     if not args.is_debug:
@@ -46,9 +45,9 @@ def main():
         if args.no_cuda:
             args.n_gpu = 0
         else:
-            args.n_gpu = 2
-            os.environ["CUDA_VISIBLE_DEVICES"] = "2,3"
-            os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+            args.n_gpu = 1
+            os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+            # os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
     if args.local_rank == -1 or args.no_cuda:
         device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
         args.n_gpu = torch.cuda.device_count() if not args.no_cuda else 0
@@ -62,9 +61,9 @@ def main():
         if args.no_cuda:
             args.n_gpu = 0
         else:
-            args.n_gpu = 2
-            os.environ["CUDA_VISIBLE_DEVICES"] = "2,3"
-            os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+            args.n_gpu = 1
+            os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+            # os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
     # Setup logging
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',

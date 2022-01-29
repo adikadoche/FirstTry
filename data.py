@@ -85,7 +85,7 @@ class CorefDataset(Dataset):
                 cluster in clusters]
             lengths.append(len(token_ids))
 
-            coref_examples.append(((doc_key, end_token_idx_to_word_idx), CorefExample(words=words_with_speaker, token_ids=token_ids, clusters=new_clusters)))
+            coref_examples.append((doc_key, CorefExample(words=words_with_speaker, token_ids=token_ids, clusters=new_clusters)))
         return coref_examples, lengths, num_examples_filtered
 
     def __len__(self):

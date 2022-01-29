@@ -69,10 +69,12 @@ class HungarianMatcher(nn.Module):
         if len(indices_with_clusters) == 0:
             return permuted_coref_logits, permuted_cluster_logits, permuted_targets_clusters
 
+        cluster_logits = cluster_logits[:, :self.args.num_queries, :]
+        coref_logits = coref_logits[:, :self.args.num_queries, :]
         if len(indices_with_clusters) < bs:
-            targets_clusters = torch.index_select(targets_clusters, 0, indices_with_clusters)
-            cluster_logits = torch.index_select(cluster_logits, 0, indices_with_clusters)
-            coref_logits = torch.index_select(coref_logits, 0, indices_with_clusters)
+            targets_clusters = targets_clusters[indices_with_clusters]
+            cluster_logits = cluster_logits[indices_with_clusters, :self.args.num_queries, :]
+            coref_logits = coref_logits[indices_with_clusters, :self.args.num_queries, :]
         num_gold_mentions = torch.sum(targets_clusters,[-1,-2])
         num_gold_clusters = torch.sum(torch.sum(targets_clusters, -1) > 0, -1)
 
@@ -83,15 +85,16 @@ class HungarianMatcher(nn.Module):
             cluster_repeated = targets_clusters.unsqueeze(1).repeat(1, coref_logits.shape[1], 1, 1)[:, :, :, :-1]
             coref_logits_repeated = coref_logits.unsqueeze(2).repeat(1, 1, targets_clusters.shape[1], 1)
 
-            if self.args.cluster_block:
-                cluster_logits_repeated = cluster_logits.repeat(1, 1, coref_logits_repeated.shape[2]).unsqueeze(-1)
-                clamped_logits = (cluster_logits_repeated * coref_logits_repeated[:, :, :, :-1]).clamp(max=1.0)
-                cost_coref = torch.div(torch.sum(F.binary_cross_entropy(clamped_logits, cluster_repeated, reduction='none'),-1), \
-                    num_gold_mentions.unsqueeze(-1).repeat(1,clamped_logits.shape[1]).unsqueeze(-1)) \
-                    + cluster_logits_repeated.squeeze(-1) * coref_logits_repeated[:, :, :, -1]
-            else:
-                cost_coref = torch.sum(F.binary_cross_entropy(coref_logits_repeated, cluster_repeated, reduction='none'),-1)\
-                    / num_gold_mentions.unsqueeze(1).unsqueeze(1)  # [bs, num_queries, gold_clusters]
+            mask_bce_target = torch.logical_and((torch.sum(targets_clusters, -1) > 0).unsqueeze(-1), \
+                (torch.sum(targets_clusters, 1) > 0).unsqueeze(1)).type(torch.long)[:,:,:-1].unsqueeze(1)
+            coref_bce_denom = torch.maximum(num_gold_mentions, torch.ones_like(num_gold_mentions))
+            coref_bce_denom = coref_bce_denom.unsqueeze(-1).repeat(1,coref_logits_repeated.shape[1]).unsqueeze(-1)
+
+            cluster_logits_repeated = cluster_logits.repeat(1, 1, coref_logits_repeated.shape[2]).unsqueeze(-1)
+            clamped_logits = (cluster_logits_repeated * coref_logits_repeated[:, :, :, :-1]).clamp(max=1.0)
+            cost_coref = torch.sum(mask_bce_target * F.binary_cross_entropy(clamped_logits, cluster_repeated, reduction='none'),-1) / \
+                coref_bce_denom
+            cost_coref += cluster_logits_repeated.squeeze(-1) * coref_logits_repeated[:, :, :, -1]
 
             total_cost = self.cost_is_cluster * cost_is_cluster + self.cost_coref * cost_coref
             total_cost = total_cost.cpu()
@@ -103,9 +106,9 @@ class HungarianMatcher(nn.Module):
                 full_ind1 = [*ind1,*[i for i in range(coref_logits.shape[1]) if i not in ind1]]
                 full_ind2 = [*ind2,*[i for i in range(targets_clusters.shape[1]) if i not in ind2]]
 
-                permuted_coref_logits[b] = coref_logits[j, full_ind1,:]
-                permuted_cluster_logits[b] = cluster_logits[j, full_ind1,:]
-                permuted_targets_clusters[b] = targets_clusters[j, full_ind2,:]
+                permuted_coref_logits[b, :coref_logits.shape[1]] = coref_logits[j, full_ind1, :]
+                permuted_cluster_logits[b, :cluster_logits.shape[1]] = cluster_logits[j, full_ind1, :]
+                permuted_targets_clusters[b] = targets_clusters[j, full_ind2, :]
 
         return permuted_coref_logits, permuted_cluster_logits, permuted_targets_clusters
 

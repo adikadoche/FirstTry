@@ -80,7 +80,7 @@ class BucketBatchSampler(DataLoader):
     def calc_effective_per_example_batch_len(self, example_len):
         return math.ceil((example_len + 2) / 512) * 512
 
-    def prepare_eval_batches(self):   #do I need to unsqueeze like one gpu?
+    def prepare_eval_batches(self):  
         batches = []
         for doc_key, elem in self.data_source:
             batches.append((doc_key, self.prepare_gpu_batch([[elem]])))

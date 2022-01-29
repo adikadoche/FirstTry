@@ -197,7 +197,7 @@ class DETR(nn.Module):
             q = self.slots_to_q(slots)
 
             dots = torch.einsum('bid,bjd->bij', q, k) * self.slots_scale
-            attn = dots.softmax(dim=1) + self.slots_eps
+            attn = dots.softmax(dim=1) * span_mask + self.slots_eps
             attn = attn / attn.sum(dim=-1, keepdim=True)
 
             updates = torch.einsum('bjd,bij->bid', v, attn)
@@ -271,7 +271,7 @@ class DETR(nn.Module):
 
         span_width = (1 + span_ends - span_starts).clamp(max=30)  # [bs, k]
         span_width_index = span_width - 1  # [bs, k]
-        span_width_emb = self.span_width_embed.weight[span_width_index]
+        span_width_emb = span_mask.unsqueeze(-1) * self.span_width_embed.weight[span_width_index]
         span_emb_construct.append(span_width_emb)
 
         mention_word_score = self.get_masked_mention_word_scores(context_outputs_list, span_starts, span_ends, span_mask)  # [K, T]
@@ -347,23 +347,37 @@ class MatchingLoss(nn.Module):
             cost_is_mention = torch.zeros_like(cost_is_cluster)
 
         cost_coref = torch.tensor(0)
+        cost_junk = torch.tensor(0)
         padded_target_clusters = torch.cat([permuted_targets_clusters, \
             torch.zeros(permuted_targets_clusters.shape[0], \
                 permuted_coref_logits.shape[1]-permuted_targets_clusters.shape[1], \
                     permuted_targets_clusters.shape[2], device=permuted_targets_clusters.device)], 1)
-        if self.args.cluster_block:
-            clamped_logits = (permuted_cluster_logits * permuted_coref_logits[:, :, :-1]).clamp(max=1.0)
-            cost_coref = torch.mean(torch.sum(F.binary_cross_entropy(clamped_logits, padded_target_clusters[:,:,:-1], \
-                weight=weight_cluster, reduction='none'), -1) / num_gold_mentions.unsqueeze(-1), -1)
-            cost_coref[num_gold_mentions == 0] = 0
-            cost_coref += torch.mean(permuted_coref_logits[:, :, -1] * permuted_cluster_logits.squeeze(-1), -1)
-        else:
-            cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_targets_clusters, reduction='mean')
+        mask_bce_target = torch.logical_and((torch.sum(padded_target_clusters, -1) > 0).unsqueeze(-1), \
+            (torch.sum(padded_target_clusters, 1) > 0).unsqueeze(1)).type(torch.long)[:,:,:-1]
+        coref_bce_denom = torch.sum(mask_bce_target, [-1,-2])
+        coref_bce_denom = torch.maximum(coref_bce_denom, torch.ones_like(coref_bce_denom))
+        junk_bce_denom = torch.sum(1-mask_bce_target, [-1,-2])
+        junk_bce_denom = torch.maximum(junk_bce_denom, torch.ones_like(junk_bce_denom))
+        coref_lastcol_denom = torch.sum(gold_is_cluster.squeeze(-1), -1)
+        coref_lastcol_denom = torch.maximum(coref_lastcol_denom, torch.ones_like(coref_lastcol_denom))
+        junk_last_denom = torch.sum(1-gold_is_cluster.squeeze(-1), -1)
+        junk_last_denom = torch.maximum(junk_last_denom, torch.ones_like(junk_last_denom))
+
+        clamped_logits = (permuted_cluster_logits * permuted_coref_logits[:, :, :-1]).clamp(max=1.0)
+        bce = F.binary_cross_entropy(clamped_logits, padded_target_clusters[:,:,:-1], reduction='none')
+        cost_coref = torch.sum(bce * mask_bce_target, [-1,-2]) / coref_bce_denom
+        cost_coref += torch.sum(gold_is_cluster.squeeze(-1) * permuted_coref_logits[:, :, -1] * permuted_cluster_logits.squeeze(-1), -1) / \
+            coref_lastcol_denom
+        cost_junk = torch.sum(bce * (1-mask_bce_target), [-1,-2]) / junk_bce_denom
+        cost_junk += torch.sum((1-gold_is_cluster.squeeze(-1)) * permuted_coref_logits[:, :, -1] * permuted_cluster_logits.squeeze(-1), -1) / \
+            junk_last_denom
 
         costs_parts['loss_is_cluster'] = self.cost_is_cluster * cost_is_cluster.detach()
         costs_parts['loss_is_mention'] = self.cost_is_mention * cost_is_mention.detach()
         costs_parts['loss_coref'] = self.cost_coref * cost_coref.detach()
-        total_cost = self.cost_coref * cost_coref + self.cost_is_cluster * cost_is_cluster + self.cost_is_mention * cost_is_mention
+        costs_parts['loss_junk'] = self.cost_is_mention * cost_junk.detach()
+        total_cost = self.cost_coref * cost_coref + self.cost_is_cluster * cost_is_cluster + \
+            self.cost_is_mention * cost_is_mention + self.cost_is_mention * cost_junk
         return total_cost, costs_parts
 
 class Backbone(nn.Module):
