@@ -211,15 +211,15 @@ def is_cluster_contains_linked_entities(cluster, entities_per_sentence, sentence
         return found_entity_in_cluster
 
 
-def print_per_batch(example_ind, is_print, cluster_logits, coref_logits, mention_logits, coref_threshold, cluster_threshold, gold_clusters, gold_mentions, input_ids,
+def print_per_batch(example_ind, is_print, cluster_logits, coref_logits, mention_logits, span_mask, coref_threshold, cluster_threshold, gold_clusters, gold_mentions, input_ids,
 count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, count_missed_mentions,
 count_missed_pronouns, count_excess_pronous, count_excess_mentions, tokenizer, slots):
     if len(mention_logits) > 0:
         predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach().unsqueeze(0), coref_logits.cpu().detach().unsqueeze(0), mention_logits.cpu().detach().unsqueeze(0),
-                                                        coref_threshold, cluster_threshold, [gold_mentions], slots)
+                                                        coref_threshold, cluster_threshold, [gold_mentions], slots, span_mask.cpu().detach().unsqueeze(0))
     else:
         predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach().unsqueeze(0), coref_logits.cpu().detach().unsqueeze(0), [],
-                                                        coref_threshold, cluster_threshold, [gold_mentions], slots)
+                                                        coref_threshold, cluster_threshold, [gold_mentions], slots, span_mask.cpu().detach().unsqueeze(0))
 
     gold, gold_correct, pred, pred_correct, pred_to_most_similar_gold, pred_to_most_similar_golds_list, gold_is_completely_missed, gold_to_most_similar_pred = match_clusters(
         gold_clusters, predicted_clusters[0])
@@ -319,7 +319,7 @@ count_missed_pronouns, count_excess_pronous, count_excess_mentions, tokenizer, s
 
 
 
-def print_predictions(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, all_gold_mentions, all_input_ids, coref_threshold, cluster_threshold, args, tokenizer):
+def print_predictions(all_cluster_logits, all_coref_logits, all_mention_logits, all_span_mask, all_gold_clusters, all_gold_mentions, all_input_ids, coref_threshold, cluster_threshold, args, tokenizer):
 
     count_clusters = 0
     count_mentions = 0
@@ -342,6 +342,7 @@ def print_predictions(all_cluster_logits, all_coref_logits, all_mention_logits, 
     for i, input_ids in enumerate(all_input_ids):
         gold_clusters = all_gold_clusters[i]
         gold_mentions = all_gold_mentions[i]
+        span_mask = all_span_mask[i]
         cluster_logits, coref_logits, mention_logits = all_cluster_logits[i], all_coref_logits[i], []
         if len(all_mention_logits) > 0:
             mention_logits = all_mention_logits[i]
@@ -349,7 +350,7 @@ def print_predictions(all_cluster_logits, all_coref_logits, all_mention_logits, 
 
         count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, \
             count_missed_mentions, count_missed_pronouns, count_excess_pronous, count_excess_mentions = print_per_batch(i, i in indices_to_print,
-            cluster_logits, coref_logits, mention_logits, coref_threshold, cluster_threshold, gold_clusters, gold_mentions, input_ids,
+            cluster_logits, coref_logits, mention_logits, span_mask, coref_threshold, cluster_threshold, gold_clusters, gold_mentions, input_ids,
             count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, count_missed_mentions,
             count_missed_pronouns, count_excess_pronous, count_excess_mentions, tokenizer, args.slots)
 
@@ -368,7 +369,7 @@ def print_predictions(all_cluster_logits, all_coref_logits, all_mention_logits, 
     print("{}% excess pronouns".format(0 if count_excess_mentions == 0 else 1. * count_excess_pronous / count_excess_mentions * 100))
 
 
-def error_analysis(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, all_gold_mentions, all_input_ids, coref_threshold, cluster_threshold, slots):
+def error_analysis(all_cluster_logits, all_coref_logits, all_mention_logits, all_span_mask, all_gold_clusters, all_gold_mentions, all_input_ids, coref_threshold, cluster_threshold, slots):
     total_sub_clusters_gold = 0
     total_sub_clusters_pred = 0
     total_num_gold_clusters_in_one_pred_cluster = 0
@@ -381,14 +382,15 @@ def error_analysis(all_cluster_logits, all_coref_logits, all_mention_logits, all
     for i in range(len(all_input_ids)):
         gold_clusters = all_gold_clusters[i]
         gold_mentions = all_gold_mentions[i]
+        span_mask = all_span_mask[i]
         cluster_logits, coref_logits, mention_logits = all_cluster_logits[i], all_coref_logits[i], []
         if len(all_mention_logits) > 0:
             mention_logits = all_mention_logits[i]
             predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach().unsqueeze(0), coref_logits.cpu().detach().unsqueeze(0), mention_logits.cpu().detach().unsqueeze(0),
-                                                            coref_threshold, cluster_threshold, [gold_mentions], slots)
+                                                            coref_threshold, cluster_threshold, [gold_mentions], slots, span_mask.cpu().detach().unsqueeze(0))
         else:
             predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach().unsqueeze(0), coref_logits.cpu().detach().unsqueeze(0), [],
-                                                            coref_threshold, cluster_threshold, [gold_mentions], slots)
+                                                            coref_threshold, cluster_threshold, [gold_mentions], slots, span_mask.cpu().detach().unsqueeze(0))
 
         num_gold_clusters_in_one_pred_cluster, num_pred_clusters_in_one_gold_cluster, \
         sum_num_split_gold_clusters, sum_num_split_pred_clusters, sum_biggest_prec_gold_cluster_in_pred_cluster, \

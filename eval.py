@@ -114,10 +114,12 @@ def evaluate(args, eval_dataloader, eval_dataset, model, prefix="", coref_thresh
     batch_sizes = []
     all_cluster_logits_cpu = []
     all_coref_logits_cpu = []
+    all_span_mask_cpu = []
     all_mention_logits_cpu = []
     all_cluster_logits_cuda = []
     all_input_ids = []
     all_coref_logits_cuda = []
+    all_span_mask_cuda = []
     all_mention_logits_cuda = []
     all_gold_clusters = []
     all_mentions = []
@@ -140,9 +142,9 @@ def evaluate(args, eval_dataloader, eval_dataset, model, prefix="", coref_thresh
             
         with torch.no_grad():
             outputs = model(input_ids, max_mentions, input_mask, gold_mentions, gold_mentions_mask, gold_matrix, True)
-            cluster_logits, coref_logits, mention_logits, mentions_list = \
+            cluster_logits, coref_logits, mention_logits, mentions_list, span_mask = \
                 outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits'], \
-                    outputs['mentions'].detach().cpu().numpy()
+                    outputs['mentions'].detach().cpu().numpy(), outputs['span_mask']
             mentions_list = [[(m[0], m[1]) for m in mentions_list[j] if m[0] != 0 or m[1] != 0] for j in range(mentions_list.shape[0])]
             gold_clusters_list = [gc for g in gold_clusters_list for gc in g]
 
@@ -165,23 +167,27 @@ def evaluate(args, eval_dataloader, eval_dataset, model, prefix="", coref_thresh
             all_mention_logits_cpu += [ml.detach().cpu() for ml in mention_logits]
         all_cluster_logits_cuda += [cl.detach().clone() for cl in cluster_logits]
         all_coref_logits_cuda += [cl.detach().clone() for cl in coref_logits]
+        all_span_mask_cuda += [sm.detach().clone() for sm in span_mask]
         all_cluster_logits_cpu += [cl.detach().cpu() for cl in cluster_logits]
         all_coref_logits_cpu += [cl.detach().cpu() for cl in coref_logits]
+        all_span_mask_cpu += [sm.detach().cpu() for sm in span_mask]
 
     eval_loss = np.average(losses, weights=batch_sizes)
     losses_parts = {key:np.average(losses_parts[key]) for key in losses_parts.keys()}
 
     pmp, rmp, f1mp, pm, rm, f1m, p,r,f1, best_coref_threshold, best_cluster_threshold, metrics = \
-        calc_best_avg_f1(all_cluster_logits_cpu, all_coref_logits_cpu, all_mention_logits_cpu, \
+        calc_best_avg_f1(all_cluster_logits_cpu, all_coref_logits_cpu, all_mention_logits_cpu, all_span_mask_cpu, \
             all_gold_clusters, all_mentions, coref_threshold, cluster_threshold, \
                 thresh_delta, args.slots)
 
     print("============ EVAL EXAMPLES ============")
-    print_predictions(all_cluster_logits_cuda, all_coref_logits_cuda, all_mention_logits_cuda, all_gold_clusters, all_mentions, all_input_ids, coref_threshold, cluster_threshold, args, eval_dataset.tokenizer)
+    print_predictions(all_cluster_logits_cuda, all_coref_logits_cuda, all_mention_logits_cuda, all_span_mask_cuda, \
+        all_gold_clusters, all_mentions, all_input_ids, coref_threshold, cluster_threshold, args, eval_dataset.tokenizer)
     prec_gold_to_one_pred, prec_pred_to_one_gold, avg_gold_split_without_perfect, avg_gold_split_with_perfect, \
         avg_pred_split_without_perfect, avg_pred_split_with_perfect, prec_biggest_gold_in_pred_without_perfect, \
             prec_biggest_gold_in_pred_with_perfect, prec_biggest_pred_in_gold_without_perfect, prec_biggest_pred_in_gold_with_perfect = \
-                error_analysis(all_cluster_logits_cuda, all_coref_logits_cuda, all_mention_logits_cuda, all_gold_clusters, all_mentions, all_input_ids, coref_threshold, cluster_threshold, args.slots)
+                error_analysis(all_cluster_logits_cuda, all_coref_logits_cuda, all_mention_logits_cuda, \
+                    all_span_mask_cuda, all_gold_clusters, all_mentions, all_input_ids, coref_threshold, cluster_threshold, args.slots)
 
     results = {'loss': eval_loss,
                'avg_f1': f1,

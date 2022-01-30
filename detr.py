@@ -130,10 +130,10 @@ class DETR(nn.Module):
         bs = input_ids.shape[0]
         span_starts, span_ends, span_mask, longfomer_output, cost_is_mention = \
             self.backbone(input_ids, mask, gold_mentions, gold_mentions_mask)
-        span_emb = self.get_span_emb(longfomer_output, span_starts, span_ends, span_mask)  # [mentions, emb']
+        span_emb = self.get_span_emb(longfomer_output, span_starts, span_ends)  # [mentions, emb']
         span_emb_proj = self.span_proj(span_emb) # [bs, mentions, emb]
         # mentions = [torch.cat([span_starts[i].unsqueeze(-1), span_ends[i].unsqueeze(-1)], -1) for i in range(bs)]
-        cluster_logits, coref_logits, mention_logits = self.slot_attention(span_emb_proj, max_mentions_len[0], span_mask.unsqueeze(1))
+        cluster_logits, coref_logits, mention_logits = self.slot_attention(span_emb_proj, max_mentions_len[0])
         mentions = torch.cat([torch.cat([span_starts.unsqueeze(-1), span_ends.unsqueeze(-1)], -1), \
             torch.zeros(bs, max_mentions_len[0] - span_starts.shape[-1], 2, device=span_starts.device, dtype=torch.long)], 1)
         span_mask = torch.cat([span_mask, torch.zeros(bs, max_mentions_len[0] - span_mask.shape[-1], device=span_mask.device, dtype=torch.long)], -1)
@@ -147,7 +147,8 @@ class DETR(nn.Module):
                 "predict_matrix": predict_matrix,
                 "mention_logits": mention_logits, 
                 'mentions': mentions,
-                'cost_is_mention': cost_is_mention}        
+                'cost_is_mention': cost_is_mention, 
+                'span_mask': span_mask}        
         loss, loss_parts = self.criterion(out, {'clusters':gold_matrix})
 
         out.pop('predict_matrix')
@@ -176,7 +177,7 @@ class DETR(nn.Module):
         return torch.cat([gold_matrix, torch.zeros(gold_matrix.shape[0], gold_matrix.shape[1], 1, device=gold_matrix[b].device)], -1), \
             new_coref_logits
 
-    def slot_attention(self, input_emb, max_mentions, span_mask):
+    def slot_attention(self, input_emb, max_mentions):
         bs, doc_len, emb, device = *input_emb.shape, input_emb.device
 
         if self.args.random_queries:
@@ -197,7 +198,7 @@ class DETR(nn.Module):
             q = self.slots_to_q(slots)
 
             dots = torch.einsum('bid,bjd->bij', q, k) * self.slots_scale
-            attn = dots.softmax(dim=1) * span_mask + self.slots_eps
+            attn = dots.softmax(dim=1) + self.slots_eps
             attn = attn / attn.sum(dim=-1, keepdim=True)
 
             updates = torch.einsum('bjd,bij->bid', v, attn)
@@ -217,64 +218,24 @@ class DETR(nn.Module):
         coref_logits = (dots.softmax(dim=1) + self.slots_eps).clamp(max=1.0)
         cluster_logits = self.slots_mlp_classifier(slots)
 
-        coref_logits = span_mask * coref_logits + (-1) * (1-span_mask)
         coref_logits = torch.cat([coref_logits, (torch.ones(bs, coref_logits.shape[1], max_mentions-coref_logits.shape[2]) * -1).to(coref_logits.device)], dim=2)
 
         return cluster_logits, coref_logits, torch.tensor([], device=coref_logits.device)
 
-    def calc_cluster_and_coref_logits(self, last_hs, memory, is_gold_mention, span_mask, max_num_mentions):
-        # last_hs [bs, num_queries, emb]
-        # memory [bs, tokens, emb]
-
-        cluster_logits = self.is_cluster_score(last_hs).sigmoid()  # [bs, num_queries, 1]
-        if self.args.add_junk:
-            mention_logits = self.mention_classifier(memory).sigmoid()  # [bs, tokens, 1]
-
-        #TODO: check cross attention? (without values)
-
-        bs = last_hs.shape[0]
-        mention_logits_masked = []
-        coref_logits = []
-        for i in range(bs):
-            cur_memory = memory[i][span_mask[i]==1].unsqueeze(0)
-            cur_last_hs = last_hs[i].unsqueeze(0)
-            num_tokens_or_mentions = cur_memory.shape[1]
-            last_hs_tiled = cur_last_hs.unsqueeze(2).repeat(1, 1, num_tokens_or_mentions, 1) # [bs, num_queries, tokens/mentions, emb]
-            memory_tiled = cur_memory.unsqueeze(1).repeat(1, self.num_queries, 1, 1) # [bs, num_queries, tokens/mentions, emb]
-            coref_features = torch.cat([last_hs_tiled, memory_tiled], -1) # [bs, num_queries, tokens/mentions, 2 * emb]
-            coref_logits_unnorm = self.IO_score(coref_features).squeeze(-1) # [bs, num_queries, tokens/mentions, 1]
-
-
-        # if not args.add_junk: 
-            # cur_coref_logits = coref_logits_unnorm.softmax(dim=1)
-        # else:
-            cur_coref_logits = coref_logits_unnorm.sigmoid()
-            coref_logits.append(torch.cat([cur_coref_logits, (torch.ones(1, cur_coref_logits.shape[1], max_num_mentions-cur_coref_logits.shape[2]) * -1).to(cur_coref_logits.device)], dim=2))
-
-            if self.args.add_junk:
-                mention_logits_masked.append(torch.cat([mention_logits[i][span_mask[i]==1].unsqueeze(0), (torch.ones(1, max_num_mentions-cur_coref_logits.shape[2], 1) * -1).to(mention_logits.device)], dim=1))
-        # if not is_gold_mention:  #TODO: do I want this?
-        #     coref_logits = coref_logits * cluster_logits
-
-        if self.args.add_junk:
-            mention_logits_masked = torch.cat(mention_logits_masked)
-
-        return cluster_logits, torch.cat(coref_logits), mention_logits_masked
-
-    def get_span_emb(self, context_outputs_list, span_starts, span_ends, span_mask):
+    def get_span_emb(self, context_outputs_list, span_starts, span_ends):
         span_emb_construct = []
-        span_start_emb = span_mask.unsqueeze(-1) * context_outputs_list[torch.arange(context_outputs_list.shape[0]).unsqueeze(-1), span_starts] # [bs, k, emb]
+        span_start_emb = context_outputs_list[torch.arange(context_outputs_list.shape[0]).unsqueeze(-1), span_starts] # [bs, k, emb]
         span_emb_construct.append(span_start_emb)
 
-        span_end_emb = span_mask.unsqueeze(-1) * context_outputs_list[torch.arange(context_outputs_list.shape[0]).unsqueeze(-1), span_ends] # [bs, k, emb]
+        span_end_emb = context_outputs_list[torch.arange(context_outputs_list.shape[0]).unsqueeze(-1), span_ends] # [bs, k, emb]
         span_emb_construct.append(span_end_emb)
 
         span_width = (1 + span_ends - span_starts).clamp(max=30)  # [bs, k]
         span_width_index = span_width - 1  # [bs, k]
-        span_width_emb = span_mask.unsqueeze(-1) * self.span_width_embed.weight[span_width_index]
+        span_width_emb = self.span_width_embed.weight[span_width_index]
         span_emb_construct.append(span_width_emb)
 
-        mention_word_score = self.get_masked_mention_word_scores(context_outputs_list, span_starts, span_ends, span_mask)  # [K, T]
+        mention_word_score = self.get_masked_mention_word_scores(context_outputs_list, span_starts, span_ends)  # [K, T]
         head_attn_reps = torch.matmul(mention_word_score, context_outputs_list)  # [K, emb]
         span_emb_construct.append(head_attn_reps)
         # span_emb_construct.append((genre[i].unsqueeze(0)/1.0).repeat(num_mentions[i], 1))
@@ -282,7 +243,7 @@ class DETR(nn.Module):
 
         return span_emb_cat  # [bs, k, emb]
 
-    def get_masked_mention_word_scores(self, encoded_doc, span_starts, span_ends, span_mask):
+    def get_masked_mention_word_scores(self, encoded_doc, span_starts, span_ends):
         bs = encoded_doc.shape[0]
         num_words = encoded_doc.shape[1]  # T
         num_c = span_starts.shape[1]  # NC
@@ -290,7 +251,6 @@ class DETR(nn.Module):
         doc_range = torch.arange(0, num_words, device=span_starts.device).unsqueeze(0).unsqueeze(0).repeat(bs, num_c, 1)  # [bs, K, T]
         mention_mask = torch.logical_and(doc_range >= span_starts.unsqueeze(-1),
                                       doc_range <= span_ends.unsqueeze(-1))  # [bs, K, T]
-        mention_mask = torch.logical_and(mention_mask, span_mask.unsqueeze(-1) == 1)
 
         word_attn = self.span_word_attn_projection(encoded_doc).squeeze(-1)
         mention_word_attn = F.softmax(mention_mask.to(dtype=torch.float32, device=encoded_doc.device).log() + word_attn.unsqueeze(1), -1)
