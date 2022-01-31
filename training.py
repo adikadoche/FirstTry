@@ -28,6 +28,7 @@ def train_one_epoch(model: torch.nn.Module,
             skip_steps -= 1
             continue
 
+        torch.autograd.set_detect_anomaly(True)
         model.train()
         # model.eval()
         
@@ -48,7 +49,7 @@ def train_one_epoch(model: torch.nn.Module,
         loss = outputs['loss']
 
         if loss.numel() > 1:
-            loss = loss.mean()  # mean() to average on multi-gpu parallel training   ####
+            loss = loss.mean() * (torch.sum(sum_text_len) / args.max_total_seq_len)  # mean() to average on multi-gpu parallel training   ####
         if args.gradient_accumulation_steps > 1:
             loss = loss / args.gradient_accumulation_steps
 
@@ -331,7 +332,6 @@ def eval_train(train_dataloader, eval_dataset, args, model, cluster_threshold, c
     all_gold_clusters = []
     all_input_ids = []
     all_gold_mentions = []
-    all_span_mask_cuda = []
 
     cluster_train_evaluator = CorefEvaluator()
     mention_train_evaluator = MentionEvaluator()
@@ -356,21 +356,21 @@ def eval_train(train_dataloader, eval_dataset, args, model, cluster_threshold, c
             cluster_logits, coref_logits, mention_logits, mentions_list, span_mask = \
                 outputs['cluster_logits'], outputs['coref_logits'], outputs['mention_logits'], \
                     outputs['mentions'].detach().cpu().numpy(), outputs['span_mask']
-            mentions_list = [[(m[0], m[1]) for m in mentions_list[j] if m[0] != 0 or m[1] != 0] for j in range(mentions_list.shape[0])]
+            mentions_list = [[(m[0], m[1]) for m in mentions_list[j]] for j in range(mentions_list.shape[0])]
             gold_clusters_list = [gc for g in gold_clusters_list for gc in g]
             input_ids = input_ids.reshape(input_ids.shape[0]*input_ids.shape[1], -1)
 
             for i in range(cluster_logits.shape[0]):
                 predicted_clusters = calc_predicted_clusters(cluster_logits[i].unsqueeze(0).cpu().detach(), \
                     coref_logits[i].unsqueeze(0).cpu().detach(), [], coref_threshold, cluster_threshold, \
-                        [mentions_list[i]], args.slots, span_mask[i].unsqueeze(0).cpu().detach())
+                        [mentions_list[i]], args.slots)
                 cluster_train_evaluator.update(predicted_clusters, [gold_clusters_list[i]])
                 gold_mentions_e = [[[]]] if [gold_clusters_list[i]] == [[]] or [gold_clusters_list[i]] == [()] \
                     else [[[m for d in c for m in d]] for c in [gold_clusters_list[i]]]
                 predicted_mentions_e = [[[]]] if predicted_clusters == [[]] or predicted_clusters == [()] \
                     else [[[m for d in c for m in d]] for c in predicted_clusters]
                 mention_train_evaluator.update(predicted_mentions_e, gold_mentions_e)
-                men_propos_train_evaluator.update([mentions_list[i]], gold_mentions_e)
+                men_propos_train_evaluator.update([[mentions_list[i][:torch.sum(span_mask[i])]]], gold_mentions_e)
 
                 all_gold_mentions += [mentions_list[i]]
                 all_input_ids += input_ids[i].unsqueeze(0)   
@@ -380,10 +380,9 @@ def eval_train(train_dataloader, eval_dataset, args, model, cluster_threshold, c
             all_mention_logits_cuda += [ml.detach().clone() for ml in mention_logits]
         all_cluster_logits_cuda += [cl.detach().clone() for cl in cluster_logits]
         all_coref_logits_cuda += [cl.detach().clone() for cl in coref_logits]
-        all_span_mask_cuda += [sm.detach().clone() for sm in span_mask]
 
     print("============ TRAIN EXAMPLES ============")
-    print_predictions(all_cluster_logits_cuda, all_coref_logits_cuda, all_mention_logits_cuda, all_span_mask_cuda, \
+    print_predictions(all_cluster_logits_cuda, all_coref_logits_cuda, all_mention_logits_cuda, \
         all_gold_clusters, all_gold_mentions, all_input_ids, coref_threshold, cluster_threshold, args, \
             eval_dataset.tokenizer)
 

@@ -60,39 +60,41 @@ class HungarianMatcher(nn.Module):
         coref_logits = outputs["predict_matrix"]  # [bs, num_queries, num_mentions]
         bs = outputs["predict_matrix"].shape[0]
 
-        permuted_coref_logits = coref_logits.clone()
-        permuted_targets_clusters = targets_clusters.clone()
-        permuted_cluster_logits = cluster_logits.clone()
+        hasgold_coref_logits = coref_logits.clone()
+        hasgold_targets_clusters = targets_clusters.clone()
+        hasgold_cluster_logits = cluster_logits.clone()
 
+        matched_predicted_cluster_id = torch.arange(0, coref_logits.shape[1], device=coref_logits.device).\
+            unsqueeze(0).repeat(coref_logits.shape[0], 1)
+        matched_target_cluster_id = torch.arange(0, targets_clusters.shape[1], device=coref_logits.device).\
+            unsqueeze(0).repeat(targets_clusters.shape[0], 1)
         indices_with_clusters = torch.arange(0, bs, device=targets_clusters.device)\
             [torch.sum(targets_clusters, [1,2]) > 0]
         if len(indices_with_clusters) == 0:
-            return permuted_coref_logits, permuted_cluster_logits, permuted_targets_clusters
+            return matched_predicted_cluster_id, matched_target_cluster_id
 
-        cluster_logits = cluster_logits[:, :self.args.num_queries, :]
-        coref_logits = coref_logits[:, :self.args.num_queries, :]
+        hasgold_coref_logits = hasgold_coref_logits[:, :self.args.num_queries, :]
+        hasgold_cluster_logits = hasgold_cluster_logits[:, :self.args.num_queries, :]
         if len(indices_with_clusters) < bs:
-            targets_clusters = targets_clusters[indices_with_clusters]
-            cluster_logits = cluster_logits[indices_with_clusters, :self.args.num_queries, :]
-            coref_logits = coref_logits[indices_with_clusters, :self.args.num_queries, :]
-        num_gold_mentions = torch.sum(targets_clusters,[-1,-2])
-        num_gold_clusters = torch.sum(torch.sum(targets_clusters, -1) > 0, -1)
+            hasgold_targets_clusters = hasgold_targets_clusters[indices_with_clusters]
+            hasgold_coref_logits = hasgold_coref_logits[indices_with_clusters, :self.args.num_queries, :]
+            hasgold_cluster_logits = hasgold_cluster_logits[indices_with_clusters, :self.args.num_queries, :]
+        num_gold_mentions = torch.sum(hasgold_targets_clusters,[-1,-2])
+        num_gold_clusters = torch.sum(torch.sum(hasgold_targets_clusters, -1) > 0, -1)
 
         if self.args.use_gold_mentions or self.args.use_topk_mentions:
-            cost_is_cluster = F.binary_cross_entropy(cluster_logits, torch.ones_like(cluster_logits), reduction='none') # [bs, num_queries, 1]
-            cost_is_cluster = cost_is_cluster.repeat(1, 1, targets_clusters.shape[1]) # [bs, num_queries, gold_clusters]            
+            cost_is_cluster = F.binary_cross_entropy(hasgold_cluster_logits, torch.ones_like(hasgold_cluster_logits), reduction='none') # [bs, num_queries, 1]
+            cost_is_cluster = cost_is_cluster.repeat(1, 1, hasgold_targets_clusters.shape[1]) # [bs, num_queries, gold_clusters]            
 
-            cluster_repeated = targets_clusters.unsqueeze(1).repeat(1, coref_logits.shape[1], 1, 1)[:, :, :, :-1]
-            coref_logits_repeated = coref_logits.unsqueeze(2).repeat(1, 1, targets_clusters.shape[1], 1)
+            cluster_repeated = hasgold_targets_clusters.unsqueeze(1).repeat(1, hasgold_coref_logits.shape[1], 1, 1)[:, :, :, :-1]
+            coref_logits_repeated = hasgold_coref_logits.unsqueeze(2).repeat(1, 1, hasgold_targets_clusters.shape[1], 1)
 
-            mask_bce_target = torch.logical_and((torch.sum(targets_clusters, -1) > 0).unsqueeze(-1), \
-                (torch.sum(targets_clusters, 1) > 0).unsqueeze(1)).type(torch.long)[:,:,:-1].unsqueeze(1)
             coref_bce_denom = torch.maximum(num_gold_mentions, torch.ones_like(num_gold_mentions))
             coref_bce_denom = coref_bce_denom.unsqueeze(-1).repeat(1,coref_logits_repeated.shape[1]).unsqueeze(-1)
 
-            cluster_logits_repeated = cluster_logits.repeat(1, 1, coref_logits_repeated.shape[2]).unsqueeze(-1)
+            cluster_logits_repeated = hasgold_cluster_logits.repeat(1, 1, coref_logits_repeated.shape[2]).unsqueeze(-1)
             clamped_logits = (cluster_logits_repeated * coref_logits_repeated[:, :, :, :-1]).clamp(max=1.0)
-            cost_coref = torch.sum(mask_bce_target * F.binary_cross_entropy(clamped_logits, cluster_repeated, reduction='none'),-1) / \
+            cost_coref = torch.sum(F.binary_cross_entropy(clamped_logits, cluster_repeated, reduction='none'),-1) / \
                 coref_bce_denom
             cost_coref += cluster_logits_repeated.squeeze(-1) * coref_logits_repeated[:, :, :, -1]
 
@@ -103,14 +105,16 @@ class HungarianMatcher(nn.Module):
                 indices = linear_sum_assignment(cur_total_cost)
                 ind1, ind2 = indices
 
-                full_ind1 = [*ind1,*[i for i in range(coref_logits.shape[1]) if i not in ind1]]
-                full_ind2 = [*ind2,*[i for i in range(targets_clusters.shape[1]) if i not in ind2]]
+                full_ind1 = [*ind1,*[i for i in range(matched_predicted_cluster_id.shape[1]) if i not in ind1]]
+                full_ind2 = [*ind2,*[i for i in range(matched_target_cluster_id.shape[1]) if i not in ind2]]
 
-                permuted_coref_logits[b, :coref_logits.shape[1]] = coref_logits[j, full_ind1, :]
-                permuted_cluster_logits[b, :cluster_logits.shape[1]] = cluster_logits[j, full_ind1, :]
-                permuted_targets_clusters[b] = targets_clusters[j, full_ind2, :]
+                matched_predicted_cluster_id[b] = torch.tensor(full_ind1, device=matched_predicted_cluster_id.device)
+                matched_target_cluster_id[b] = torch.tensor(full_ind2, device=matched_target_cluster_id.device)
+                # coref_logits[b, :len(full_ind1)] = coref_logits[b, full_ind1, :]
+                # cluster_logits[b, :len(full_ind1)] = cluster_logits[b, full_ind1, :]
+                # targets_clusters[b] = targets_clusters[b, full_ind2, :]
 
-        return permuted_coref_logits, permuted_cluster_logits, permuted_targets_clusters
+        return matched_predicted_cluster_id, matched_target_cluster_id
 
 
 def build_matcher(args):

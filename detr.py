@@ -120,7 +120,6 @@ class DETR(nn.Module):
                - "aux_outputs": Optional, only returned when auxilary losses are activated. It is a list of
                                 dictionnaries containing the two above keys for each decoder layer.
         """
-        #narrow to only gpu max len?
         max_input = torch.max(torch.sum(mask, -1, dtype=torch.long)[0])
         max_mentions = torch.max(torch.sum(gold_mentions_mask, -1, dtype=torch.long)[0])
         input_ids, max_mentions_len, mask, gold_mentions, gold_mentions_mask, gold_matrix = \
@@ -147,8 +146,8 @@ class DETR(nn.Module):
                 "predict_matrix": predict_matrix,
                 "mention_logits": mention_logits, 
                 'mentions': mentions,
-                'cost_is_mention': cost_is_mention, 
-                'span_mask': span_mask}        
+                'span_mask': span_mask,
+                'cost_is_mention': cost_is_mention}        
         loss, loss_parts = self.criterion(out, {'clusters':gold_matrix})
 
         out.pop('predict_matrix')
@@ -159,6 +158,28 @@ class DETR(nn.Module):
         out.update(loss_parts)
             
         return out
+
+    # def create_target_and_predict_matrix(self, gold_mentions_list, mentions_list, gold_matrix, coref_logits, span_mask):
+    #     common_ind = torch.logical_and(torch.all(mentions_list.unsqueeze(1).repeat(1,gold_mentions_list.shape[1],1,1) == \
+    #         gold_mentions_list.unsqueeze(2).repeat(1,1,mentions_list.shape[1],1), -1), \
+    #             (span_mask==1).unsqueeze(1).repeat(1,gold_mentions_list.shape[1],1)).nonzero()
+    #     common_batch = torch.sum(common_ind[:,0].unsqueeze(-1).repeat(1, gold_matrix.shape[0]) == \
+    #         torch.arange(0,gold_matrix.shape[0],device=gold_matrix.device), -2)
+    #     new_coref_logits = torch.zeros(gold_matrix.shape[0], coref_logits.shape[1], torch.max(common_batch)+1, \
+    #         device=gold_matrix.device)
+    #     new_gold_matrix = torch.zeros(gold_matrix.shape[0], gold_matrix.shape[1], torch.max(common_batch)+1, \
+    #         device=gold_matrix.device)
+    #     junk_mentions_mask = (~torch.any(torch.all(mentions_list.unsqueeze(2).repeat(1,1,gold_mentions_list.shape[1],1) == \
+    #         gold_mentions_list.unsqueeze(1).repeat(1,mentions_list.shape[1],1,1), -1), -1)).type(torch.long)
+    #     junk_mentions_mask = junk_mentions_mask * span_mask
+
+    #     for b in range(gold_matrix.shape[0]):
+    #         cur_common_ind = common_ind[common_ind[:,0]==b]
+    #         new_coref_logits[b, :, :cur_common_ind.shape[0]] = coref_logits[b, :, cur_common_ind[:,2]]  
+    #         new_gold_matrix[b, :, :cur_common_ind.shape[0]] = gold_matrix[b, :, cur_common_ind[:,1]]        
+    #     new_coref_logits[:, :, -1] = torch.sum(coref_logits * junk_mentions_mask.unsqueeze(1), -1)
+    #     return new_gold_matrix, new_coref_logits
+
 
     def create_target_and_predict_matrix(self, gold_mentions_list, mentions_list, gold_matrix, coref_logits, span_mask):
         new_coref_logits = torch.zeros(gold_matrix.shape[0], coref_logits.shape[1], gold_matrix.shape[-1]+1, \
@@ -288,9 +309,15 @@ class MatchingLoss(nn.Module):
                       The expected keys in each dict depends on the losses applied, see each loss' doc
         """
         # Retrieve the matching between the outputs of the last layer and the targets
-        permuted_coref_logits, permuted_cluster_logits, permuted_targets_clusters = self.matcher(outputs, targets)
+        matched_predicted_cluster_id, matched_target_cluster_id = self.matcher(outputs, targets)
+        x=matched_target_cluster_id.reshape(-1)
+        yy=torch.arange(0,matched_target_cluster_id.shape[0], device=matched_target_cluster_id.device).unsqueeze(0).repeat(matched_target_cluster_id.shape[1],1).transpose(0,1).reshape(-1)
+        permuted_targets_clusters = targets['clusters'][yy,x].reshape(targets['clusters'].shape)
+        x=matched_predicted_cluster_id.reshape(-1)
+        yy=torch.arange(0,matched_predicted_cluster_id.shape[0], device=matched_predicted_cluster_id.device).unsqueeze(0).repeat(matched_predicted_cluster_id.shape[1],1).transpose(0,1).reshape(-1)
+        permuted_cluster_logits = outputs["cluster_logits"][yy,x].reshape(outputs["cluster_logits"].shape)
+        permuted_coref_logits = outputs["predict_matrix"][yy,x].reshape(outputs["predict_matrix"].shape)
 
-        num_gold_mentions = torch.sum(permuted_targets_clusters,[-1,-2])
         costs_parts = {}
 
         gold_is_cluster_bool = torch.sum(permuted_targets_clusters, -1) > 0
@@ -312,11 +339,13 @@ class MatchingLoss(nn.Module):
             torch.zeros(permuted_targets_clusters.shape[0], \
                 permuted_coref_logits.shape[1]-permuted_targets_clusters.shape[1], \
                     permuted_targets_clusters.shape[2], device=permuted_targets_clusters.device)], 1)
-        mask_bce_target = torch.logical_and((torch.sum(padded_target_clusters, -1) > 0).unsqueeze(-1), \
+        coref_mask_bce_target = torch.logical_and((torch.sum(padded_target_clusters, -1) > 0).unsqueeze(-1), \
             (torch.sum(padded_target_clusters, 1) > 0).unsqueeze(1)).type(torch.long)[:,:,:-1]
-        coref_bce_denom = torch.sum(mask_bce_target, [-1,-2])
+        coref_bce_denom = torch.sum(coref_mask_bce_target, [-1,-2])
         coref_bce_denom = torch.maximum(coref_bce_denom, torch.ones_like(coref_bce_denom))
-        junk_bce_denom = torch.sum(1-mask_bce_target, [-1,-2])
+        junk_mask_bce_target = torch.logical_and((torch.sum(padded_target_clusters, -1) == 0).unsqueeze(-1), \
+            (torch.sum(padded_target_clusters, 1) > 0).unsqueeze(1)).type(torch.long)[:,:,:-1]
+        junk_bce_denom = torch.sum(junk_mask_bce_target, [-1,-2])
         junk_bce_denom = torch.maximum(junk_bce_denom, torch.ones_like(junk_bce_denom))
         coref_lastcol_denom = torch.sum(gold_is_cluster.squeeze(-1), -1)
         coref_lastcol_denom = torch.maximum(coref_lastcol_denom, torch.ones_like(coref_lastcol_denom))
@@ -325,19 +354,19 @@ class MatchingLoss(nn.Module):
 
         clamped_logits = (permuted_cluster_logits * permuted_coref_logits[:, :, :-1]).clamp(max=1.0)
         bce = F.binary_cross_entropy(clamped_logits, padded_target_clusters[:,:,:-1], reduction='none')
-        cost_coref = torch.sum(bce * mask_bce_target, [-1,-2]) / coref_bce_denom
+        cost_coref = torch.sum(bce * coref_mask_bce_target, [-1,-2]) / coref_bce_denom
         cost_coref += torch.sum(gold_is_cluster.squeeze(-1) * permuted_coref_logits[:, :, -1] * permuted_cluster_logits.squeeze(-1), -1) / \
             coref_lastcol_denom
-        cost_junk = torch.sum(bce * (1-mask_bce_target), [-1,-2]) / junk_bce_denom
+        cost_junk = torch.sum(bce * junk_mask_bce_target, [-1,-2]) / junk_bce_denom
         cost_junk += torch.sum((1-gold_is_cluster.squeeze(-1)) * permuted_coref_logits[:, :, -1] * permuted_cluster_logits.squeeze(-1), -1) / \
             junk_last_denom
 
         costs_parts['loss_is_cluster'] = self.cost_is_cluster * cost_is_cluster.detach()
-        costs_parts['loss_is_mention'] = self.cost_is_mention * cost_is_mention.detach()
+        costs_parts['loss_is_mention']= self.cost_is_mention * self.cost_coref * cost_is_mention.detach()
         costs_parts['loss_coref'] = self.cost_coref * cost_coref.detach()
-        costs_parts['loss_junk'] = self.cost_is_mention * cost_junk.detach()
+        costs_parts['loss_junk'] = self.cost_is_cluster * cost_junk.detach()
         total_cost = self.cost_coref * cost_coref + self.cost_is_cluster * cost_is_cluster + \
-            self.cost_is_mention * cost_is_mention + self.cost_is_mention * cost_junk
+            self.cost_is_mention * self.cost_coref * cost_is_mention + self.cost_is_cluster * cost_junk
         return total_cost, costs_parts
 
 class Backbone(nn.Module):
@@ -564,9 +593,6 @@ class MenPropose(BertPreTrainedModel):
             junk_probs[indices_with_gold_mentions.unsqueeze(-1).expand(indices_with_gold_mentions.shape[0], gold_start.shape[1]),
                                                         gold_start, gold_end] = 0
             junk_probs[indices_with_gold_mentions, 0, 0] = mention_probs[indices_with_gold_mentions, 0, 0]   #resumig (0,0) probs because it's not a mention for sure (speaker header) and if it's in the mask it will zero in the prev line
-        sq_attention_mask = attention_mask.unsqueeze(1).repeat(1, attention_mask.shape[-1], 1) * \
-            attention_mask.unsqueeze(-1).repeat(1, 1, attention_mask.shape[-1])
-        mention_mask = mention_mask * sq_attention_mask
  
         cost_is_mention = cost_gold + torch.sum(F.binary_cross_entropy(junk_probs * mention_mask, torch.zeros_like(junk_probs), reduction='none'), [-1, -2]) / \
             torch.sum(mention_mask, [-1, -2])
