@@ -393,6 +393,8 @@ class MatchingLoss(nn.Module):
             else:
                 cost_coref = .5 * torch.sum(dist_matrix[i] * goldgold_dist_mask[i]) / goldgold_denom
                 # cost_junk = .5 * torch.sum(dist_matrix[i] * junkgold_dist_mask[i]) / junkgold_denom
+                junkgold_denom = torch.sum(junkgold_dist_mask[i])
+                junkgold_denom = torch.maximum(torch.ones_like(junkgold_denom), junkgold_denom)
                 cost_junk_denom = .5 * torch.sum(dist_matrix[i] * junkgold_dist_mask[i]) / junkgold_denom
                 if cost_junk_denom > 0:
                     cost_junk = 1 / cost_junk_denom
