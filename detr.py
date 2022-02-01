@@ -395,11 +395,8 @@ class MatchingLoss(nn.Module):
                 # cost_junk = .5 * torch.sum(dist_matrix[i] * junkgold_dist_mask[i]) / junkgold_denom
                 junkgold_denom = torch.sum(junkgold_dist_mask[i])
                 junkgold_denom = torch.maximum(torch.ones_like(junkgold_denom), junkgold_denom)
-                cost_junk_denom = .5 * torch.sum(dist_matrix[i] * junkgold_dist_mask[i]) / junkgold_denom
-                if cost_junk_denom > 0:
-                    cost_junk = 1 / cost_junk_denom
-                else:
-                    cost_junk = torch.tensor(0)
+                junk_dists = dist_matrix[i] * junkgold_dist_mask[i]
+                cost_junk = .5 * torch.sum(1 / junk_dists[junk_dists > 0]) / junkgold_denom
 
             costs_parts['loss_is_cluster'].append(self.cost_is_cluster * cost_is_cluster.detach().cpu())
             costs_parts['loss_is_mention'].append(self.cost_is_mention * cost_is_mention.detach().cpu())
