@@ -359,44 +359,45 @@ class MatchingLoss(nn.Module):
                 weight_mention = targets_mentions[i] + self.eos_coef * (1 - targets_mentions[i])
                 cost_is_mention = F.binary_cross_entropy(mention_logits, targets_mentions[i], weight=weight_mention)
 
-            # cost_coref = torch.tensor(0)
-            # cost_junk = torch.tensor(0)
-            # if matched_predicted_cluster_id[i] is not False:  #TODO: add zero rows?
-            #     permuted_coref_logits = coref_logits[matched_predicted_cluster_id[i].numpy()]
-            #     junk_coref_logits = coref_logits[[x for x in range(coref_logits.shape[0]) if x not in matched_predicted_cluster_id[i].numpy()]]
-            #     permuted_gold = targets_clusters[i][matched_gold_cluster_id[i].numpy()]
-            #     permuted_gold = permuted_gold[:, :-1]
-            #     junk_gold = torch.zeros_like(junk_coref_logits[:, :-1])
-            #     if self.args.cluster_block:
-            #         premuted_cluster_logits = cluster_logits[matched_predicted_cluster_id[i].numpy()]
-            #         junk_cluster_logits = cluster_logits[[x for x in range(coref_logits.shape[0]) if x not in matched_predicted_cluster_id[i].numpy()]]
-            #         clamped_logits = (premuted_cluster_logits.unsqueeze(1) * permuted_coref_logits[:, :-1]).clamp(max=1.0)
-            #         cost_coref = F.binary_cross_entropy(clamped_logits, permuted_gold, reduction='mean') + \
-            #                                                 torch.mean(permuted_coref_logits[:, -1] * premuted_cluster_logits)
-            #         clamped_junk_logits = (junk_cluster_logits.unsqueeze(1) * junk_coref_logits[:, :-1]).clamp(max=1.0)
-            #         cost_junk = F.binary_cross_entropy(clamped_junk_logits, junk_gold, reduction='mean') + \
-            #                                                 torch.mean(junk_coref_logits[:, -1] * junk_cluster_logits)
-            #     else:
-            #         cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_gold, reduction='mean')
-            # elif coref_logits.shape[1] > 0:
-            #     clamped_logits = coref_logits.clamp(max=1.0)
-            #     cost_coref = F.binary_cross_entropy(clamped_logits, torch.zeros_like(coref_logits), reduction='mean')
+            cost_coref = torch.tensor(0)
+            cost_junk = torch.tensor(0)
+            if matched_predicted_cluster_id[i] is not False:  #TODO: add zero rows?
+                permuted_coref_logits = coref_logits[matched_predicted_cluster_id[i].numpy()]
+                junk_coref_logits = coref_logits[[x for x in range(coref_logits.shape[0]) if x not in matched_predicted_cluster_id[i].numpy()]]
+                permuted_gold = targets_clusters[i][matched_gold_cluster_id[i].numpy()]
+                permuted_gold = permuted_gold[:, :-1]
+                junk_gold = torch.zeros_like(junk_coref_logits[:, :-1])
+                if self.args.cluster_block:
+                    premuted_cluster_logits = cluster_logits[matched_predicted_cluster_id[i].numpy()]
+                    junk_cluster_logits = cluster_logits[[x for x in range(coref_logits.shape[0]) if x not in matched_predicted_cluster_id[i].numpy()]]
+                    clamped_logits = (premuted_cluster_logits.unsqueeze(1) * permuted_coref_logits[:, :-1]).clamp(max=1.0)
+                    cost_coref = F.binary_cross_entropy(clamped_logits, permuted_gold, reduction='mean') + \
+                                                            torch.mean(permuted_coref_logits[:, -1] * premuted_cluster_logits)
+                    clamped_junk_logits = (junk_cluster_logits.unsqueeze(1) * junk_coref_logits[:, :-1]).clamp(max=1.0)
+                    cost_junk = F.binary_cross_entropy(clamped_junk_logits, junk_gold, reduction='mean') + \
+                                                            torch.mean(junk_coref_logits[:, -1] * junk_cluster_logits)
+                else:
+                    cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_gold, reduction='mean')
+            elif coref_logits.shape[1] > 0:
+                clamped_logits = coref_logits.clamp(max=1.0)
+                cost_coref = F.binary_cross_entropy(clamped_logits, torch.zeros_like(coref_logits), reduction='mean')
+
             goldgold_denom = torch.sum(goldgold_dist_mask[i])
             goldgold_denom = torch.maximum(torch.ones_like(goldgold_denom), goldgold_denom)
             if self.args.loss_max:
-                cost_coref = .5 * torch.sum(dist_matrix[i] * goldgold_dist_mask[i]) / goldgold_denom
+                cost_coref += .5 * torch.sum(dist_matrix[i] * goldgold_dist_mask[i]) / goldgold_denom
                 passed_thresh = torch.maximum(torch.zeros_like(dist_matrix[i]), \
                     (.3-dist_matrix[i]) * junkgold_dist_mask[i])
                 junkgold_denom = torch.sum(passed_thresh>0)
                 junkgold_denom = torch.maximum(torch.ones_like(junkgold_denom), junkgold_denom)
-                cost_junk = .5 * torch.sum(passed_thresh) / junkgold_denom  #TODO implement dbscan in predict clusters/slot attention?
+                cost_junk += .5 * torch.sum(passed_thresh) / junkgold_denom  #TODO implement dbscan in predict clusters/slot attention?
             else:
-                cost_coref = .5 * torch.sum(dist_matrix[i] * goldgold_dist_mask[i]) / goldgold_denom
+                cost_coref += .5 * torch.sum(dist_matrix[i] * goldgold_dist_mask[i]) / goldgold_denom
                 # cost_junk = .5 * torch.sum(dist_matrix[i] * junkgold_dist_mask[i]) / junkgold_denom
                 junkgold_denom = torch.sum(junkgold_dist_mask[i])
                 junkgold_denom = torch.maximum(torch.ones_like(junkgold_denom), junkgold_denom)
                 junk_dists = dist_matrix[i] * junkgold_dist_mask[i]
-                cost_junk = .5 * torch.sum(1 / junk_dists[junk_dists > 0]) / junkgold_denom
+                cost_junk += .5 * torch.sum(1 / junk_dists[junk_dists > 0]) / junkgold_denom
 
             costs_parts['loss_is_cluster'].append(self.cost_is_cluster * cost_is_cluster.detach().cpu())
             costs_parts['loss_is_mention'].append(self.cost_is_mention * cost_is_mention.detach().cpu())
