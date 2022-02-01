@@ -384,9 +384,9 @@ class MatchingLoss(nn.Module):
             goldgold_denom = torch.sum(goldgold_dist_mask[i])
             goldgold_denom = torch.maximum(torch.ones_like(goldgold_denom), goldgold_denom)
             if self.args.loss_max:
-                cost_coref = .5 * torch.sum(torch.pow(dist_matrix[i],2) * goldgold_dist_mask[i]) / goldgold_denom
-                passed_thresh = torch.pow(torch.maximum(torch.zeros_like(dist_matrix[i]), \
-                    (.3-dist_matrix[i]) * junkgold_dist_mask[i]),2)
+                cost_coref = .5 * torch.sum(dist_matrix[i] * goldgold_dist_mask[i]) / goldgold_denom
+                passed_thresh = torch.maximum(torch.zeros_like(dist_matrix[i]), \
+                    (.3-dist_matrix[i]) * junkgold_dist_mask[i])
                 junkgold_denom = torch.sum(passed_thresh>0)
                 junkgold_denom = torch.maximum(torch.ones_like(junkgold_denom), junkgold_denom)
                 cost_junk = .5 * torch.sum(passed_thresh) / junkgold_denom  #TODO implement dbscan in predict clusters/slot attention?
