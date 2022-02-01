@@ -61,9 +61,12 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             mentions_list = mentions_list.detach().cpu().numpy()
             mentions_list = [[(m[0], m[1]) for m in mentions_list[j] if m[0] != -1 and m[1] != -1] for j in range(mentions_list.shape[0])]
 
-            if args.use_topk_mentions:
-                gold_matrix, outputs['coref_logits'] = create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_matrix, outputs['coref_logits'])
-            loss, loss_parts = criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
+            gold_matrix, outputs['coref_logits'], dist_matrix, goldgold_dist_mask, junkgold_dist_mask = \
+                create_target_and_predict_matrix( \
+                gold_mentions_list, mentions_list, gold_matrix, outputs['coref_logits'], outputs['inputs'])
+
+            loss, loss_parts = criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector}, \
+                dist_matrix, goldgold_dist_mask, junkgold_dist_mask)
 
         if args.n_gpu > 1 or args.train_batch_size > 1:
             loss = loss.mean()  # mean() to average on multi-gpu parallel training
@@ -178,6 +181,9 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
         else:
             args.resume_global_step = int(loaded_args['global_step'])
             args.num_train_epochs = (args.t_total - args.resume_global_step // args.train_batch_size) * args.gradient_accumulation_steps // len(train_loader)
+        
+            results = report_eval(args, eval_loader, eval_dataset, args.resume_global_step, model, criterion, coref_threshold, cluster_threshold, thresh_delta)
+
         if not args.do_train:
             return args.resume_global_step
 

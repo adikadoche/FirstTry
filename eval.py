@@ -157,10 +157,12 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", c
             mentions_list = mentions_list.detach().cpu().numpy()
             mentions_list = [[(m[0], m[1]) for m in mentions_list[j] if m[0] != -1 and m[1] != -1] for j in range(mentions_list.shape[0])]
 
-            if args.use_topk_mentions:
-                gold_matrix, outputs['coref_logits'] = create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_matrix, outputs['coref_logits'])
+            gold_matrix, outputs['coref_logits'], dist_matrix, goldgold_dist_mask, junkgold_dist_mask = \
+                create_target_and_predict_matrix( \
+                gold_mentions_list, mentions_list, gold_matrix, outputs['coref_logits'], outputs['inputs'])
 
-            loss, loss_parts = criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector})
+            loss, loss_parts = criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector}, \
+                dist_matrix, goldgold_dist_mask, junkgold_dist_mask)
             losses.append(loss.mean().detach().cpu())
             for key in loss_parts.keys():
                 if key in losses_parts.keys() and len(losses_parts[key]) > 0:

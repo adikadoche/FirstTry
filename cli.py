@@ -109,6 +109,7 @@ def parse_args():
     parser.add_argument('--num_junk_queries', default=150, type=int,
                         help="Number of query slots")
     parser.add_argument('--pre_norm', action='store_true')
+    parser.add_argument('--loss_max', action='store_true')
     parser.add_argument('--hidden_dim', default=256, type=int,
                         help="Size of the embeddings (dimension of the transformer)")
 

@@ -6,6 +6,7 @@ from typing import List
 # import git
 import itertools
 import torch
+import torch.nn.functional as F
 import numpy as np
 import torch.distributed as dist
 from tqdm import tqdm
@@ -202,9 +203,12 @@ def create_gold_matrix(device, doc_len, num_queries, gold_clusters, gold_mention
 
     return gold_per_token_batch
 
-def create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_matrix, coref_logits):
+def create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_matrix, coref_logits, inputs):
     target_matrix_list = []
     new_coref_logits = []
+    dist_matrix = []
+    goldgold_dist_mask = []
+    junkgold_dist_mask = []
     for b in range(len(gold_matrix)):
         junk_mentions_indices = torch.tensor([i for i, m in enumerate(mentions_list[b]) if m not in gold_mentions_list[b] and m != (0,0)], dtype=torch.long, device=gold_matrix[0].device)
         common_mentions = [m for m in mentions_list[b] if m in gold_mentions_list[b] and m != (0,0)]
@@ -226,10 +230,33 @@ def create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_mat
 
         cur_coref_logits = torch.zeros(gold_matrix[b].shape[1]+1, coref_logits[b].shape[0], device=gold_matrix[b].device)
         cur_coref_logits[common_gold_ind == 1] = torch.index_select(coref_logits[b].transpose(0,1), 0, common_predict_ind)         
-        # if len(junk_mentions_indices) > 0:
         cur_coref_logits[-1] = torch.sum(coref_logits[b][:, junk_mentions_indices], 1)
         new_coref_logits.append(cur_coref_logits.transpose(0,1).unsqueeze(0))
-    return target_matrix_list, torch.cat(new_coref_logits, 0)
+
+        ordered_inputs = inputs[b, torch.cat([common_predict_ind, junk_mentions_indices],0)].unsqueeze(0)
+        common_gold_matrix = gold_matrix[b][:,common_gold_ind[:-1]==1]
+
+        indices = torch.arange(0,len(common_mentions),device=target_matrix.device).reshape(1,-1).repeat(torch.sum(torch.sum(target_matrix,-1)>0),1)
+        indices = torch.cat([torch.arange(0,indices.shape[0],device=target_matrix.device).reshape(-1,1,1).repeat(1,indices.shape[1],1), indices.unsqueeze(-1)],-1)
+        x=torch.masked_select(indices[:,:,0], common_gold_matrix[:torch.sum(torch.sum(target_matrix,-1)>0)]==1)
+        y=torch.masked_select(indices[:,:,1], common_gold_matrix[:torch.sum(torch.sum(target_matrix,-1)>0)]==1)
+
+        ordered_inputs[:,:len(y)] = ordered_inputs[:,y]
+        ordered_inputs = F.normalize(ordered_inputs, dim=-1)
+        cur_dist_matrix = torch.bmm(ordered_inputs, ordered_inputs.transpose(1,2)).squeeze()
+        cur_dist_matrix = 1 - (cur_dist_matrix + 1) / 2
+        dist_matrix.append(cur_dist_matrix)
+
+        cur_dist_mask = torch.zeros_like(cur_dist_matrix)
+        cur_dist_mask[:len(x),:len(y)] = common_gold_matrix[x][:,y]
+        cur_junkgold_mask = 1 - cur_dist_mask.clone()
+        is_junk_mention = torch.arange(0,cur_dist_matrix.shape[0],device=inputs.device) >= len(common_mentions)
+        cur_junkgold_mask = cur_junkgold_mask * \
+            ~(is_junk_mention.reshape(-1,1).repeat(1,cur_dist_matrix.shape[1]) * \
+                is_junk_mention.reshape(1,-1).repeat(cur_dist_matrix.shape[0],1))
+        goldgold_dist_mask.append(cur_dist_mask)
+        junkgold_dist_mask.append(cur_junkgold_mask)
+    return target_matrix_list, torch.cat(new_coref_logits, 0), dist_matrix, goldgold_dist_mask, junkgold_dist_mask
 
 def make_mentions_from_clustered_tokens(self, coref_logits):
     pass

@@ -7,3 +7,5 @@ slurm_logs
 wandb/*
 test.csv
 coref-detr/*
+*.pkl
+*.ipynb

@@ -137,8 +137,7 @@ class DETR(nn.Module):
         span_emb, span_mask = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends, new_num_mentions)  # [mentions, emb']
         span_emb_proj = self.span_proj(span_emb) # [mentions, emb]
         # mentions = [torch.cat([span_starts[i].unsqueeze(-1), span_ends[i].unsqueeze(-1)], -1) for i in range(bs)]
-        if self.args.slots:
-            cluster_logits, coref_logits, mention_logits = self.slot_attention(span_emb_proj, max_mentions_len[0])
+        inputs, cluster_logits, coref_logits, mention_logits = self.slot_attention(span_emb_proj, max_mentions_len[0])
         mentions = torch.cat([\
             torch.cat([\
                 torch.cat([span_starts[i].unsqueeze(-1), span_ends[i].unsqueeze(-1)], -1), \
@@ -148,6 +147,7 @@ class DETR(nn.Module):
         cost_is_mention = torch.cat(cost_is_mention, 0)
         out = {"coref_logits": coref_logits,
                 "cluster_logits": cluster_logits,
+                "inputs": inputs,
                 "mention_logits": mention_logits, 
                 'mentions': mentions,
                 'cost_is_mention': cost_is_mention}
@@ -195,8 +195,9 @@ class DETR(nn.Module):
         cluster_logits = self.slots_mlp_classifier(slots)
 
         coref_logits = torch.cat([coref_logits, (torch.ones(1, coref_logits.shape[1], max_mentions-coref_logits.shape[2]) * -1).to(coref_logits.device)], dim=2)
+        inputs = torch.cat([inputs, (torch.ones(1, max_mentions-inputs.shape[1], inputs.shape[2]) * -1).to(inputs.device)], dim=1)
 
-        return cluster_logits, coref_logits, torch.tensor([], device=coref_logits.device)
+        return inputs, cluster_logits, coref_logits, torch.tensor([], device=coref_logits.device)
 
     def calc_cluster_and_coref_logits(self, last_hs, memory, is_gold_mention, span_mask, max_num_mentions):
         # last_hs [bs, num_queries, emb]
@@ -312,7 +313,7 @@ class MatchingLoss(nn.Module):
         self.eos_coef = eos_coef
 
 
-    def forward(self, outputs, targets):
+    def forward(self, outputs, targets, dist_matrix, goldgold_dist_mask, junkgold_dist_mask):
         """ This performs the loss computation.
         Parameters:
              outputs: dict of tensors, see the output specification of the model for the format
@@ -358,34 +359,52 @@ class MatchingLoss(nn.Module):
                 weight_mention = targets_mentions[i] + self.eos_coef * (1 - targets_mentions[i])
                 cost_is_mention = F.binary_cross_entropy(mention_logits, targets_mentions[i], weight=weight_mention)
 
-            cost_coref = torch.tensor(0)
-            cost_junk = torch.tensor(0)
-            if matched_predicted_cluster_id[i] is not False:  #TODO: add zero rows?
-                permuted_coref_logits = coref_logits[matched_predicted_cluster_id[i].numpy()]
-                junk_coref_logits = coref_logits[[x for x in range(coref_logits.shape[0]) if x not in matched_predicted_cluster_id[i].numpy()]]
-                permuted_gold = targets_clusters[i][matched_gold_cluster_id[i].numpy()]
-                permuted_gold = permuted_gold[:, :-1]
-                junk_gold = torch.zeros_like(junk_coref_logits[:, :-1])
-                if self.args.cluster_block:
-                    premuted_cluster_logits = cluster_logits[matched_predicted_cluster_id[i].numpy()]
-                    junk_cluster_logits = cluster_logits[[x for x in range(coref_logits.shape[0]) if x not in matched_predicted_cluster_id[i].numpy()]]
-                    clamped_logits = (premuted_cluster_logits.unsqueeze(1) * permuted_coref_logits[:, :-1]).clamp(max=1.0)
-                    cost_coref = F.binary_cross_entropy(clamped_logits, permuted_gold, reduction='mean') + \
-                                                            torch.mean(permuted_coref_logits[:, -1] * premuted_cluster_logits)
-                    clamped_junk_logits = (junk_cluster_logits.unsqueeze(1) * junk_coref_logits[:, :-1]).clamp(max=1.0)
-                    cost_junk = F.binary_cross_entropy(clamped_junk_logits, junk_gold, reduction='mean') + \
-                                                            torch.mean(junk_coref_logits[:, -1] * junk_cluster_logits)
+            # cost_coref = torch.tensor(0)
+            # cost_junk = torch.tensor(0)
+            # if matched_predicted_cluster_id[i] is not False:  #TODO: add zero rows?
+            #     permuted_coref_logits = coref_logits[matched_predicted_cluster_id[i].numpy()]
+            #     junk_coref_logits = coref_logits[[x for x in range(coref_logits.shape[0]) if x not in matched_predicted_cluster_id[i].numpy()]]
+            #     permuted_gold = targets_clusters[i][matched_gold_cluster_id[i].numpy()]
+            #     permuted_gold = permuted_gold[:, :-1]
+            #     junk_gold = torch.zeros_like(junk_coref_logits[:, :-1])
+            #     if self.args.cluster_block:
+            #         premuted_cluster_logits = cluster_logits[matched_predicted_cluster_id[i].numpy()]
+            #         junk_cluster_logits = cluster_logits[[x for x in range(coref_logits.shape[0]) if x not in matched_predicted_cluster_id[i].numpy()]]
+            #         clamped_logits = (premuted_cluster_logits.unsqueeze(1) * permuted_coref_logits[:, :-1]).clamp(max=1.0)
+            #         cost_coref = F.binary_cross_entropy(clamped_logits, permuted_gold, reduction='mean') + \
+            #                                                 torch.mean(permuted_coref_logits[:, -1] * premuted_cluster_logits)
+            #         clamped_junk_logits = (junk_cluster_logits.unsqueeze(1) * junk_coref_logits[:, :-1]).clamp(max=1.0)
+            #         cost_junk = F.binary_cross_entropy(clamped_junk_logits, junk_gold, reduction='mean') + \
+            #                                                 torch.mean(junk_coref_logits[:, -1] * junk_cluster_logits)
+            #     else:
+            #         cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_gold, reduction='mean')
+            # elif coref_logits.shape[1] > 0:
+            #     clamped_logits = coref_logits.clamp(max=1.0)
+            #     cost_coref = F.binary_cross_entropy(clamped_logits, torch.zeros_like(coref_logits), reduction='mean')
+            goldgold_denom = torch.sum(goldgold_dist_mask[i])
+            goldgold_denom = torch.maximum(torch.ones_like(goldgold_denom), goldgold_denom)
+            if self.args.loss_max:
+                cost_coref = .5 * torch.sum(torch.pow(dist_matrix[i],2) * goldgold_dist_mask[i]) / goldgold_denom
+                passed_thresh = torch.pow(torch.maximum(torch.zeros_like(dist_matrix[i]), \
+                    (.3-dist_matrix[i]) * junkgold_dist_mask[i]),2)
+                junkgold_denom = torch.sum(passed_thresh>0)
+                junkgold_denom = torch.maximum(torch.ones_like(junkgold_denom), junkgold_denom)
+                cost_junk = .5 * torch.sum(passed_thresh) / junkgold_denom  #TODO implement dbscan in predict clusters/slot attention?
+            else:
+                cost_coref = .5 * torch.sum(dist_matrix[i] * goldgold_dist_mask[i]) / goldgold_denom
+                # cost_junk = .5 * torch.sum(dist_matrix[i] * junkgold_dist_mask[i]) / junkgold_denom
+                cost_junk_denom = .5 * torch.sum(dist_matrix[i] * junkgold_dist_mask[i]) / junkgold_denom
+                if cost_junk_denom > 0:
+                    cost_junk = 1 / cost_junk_denom
                 else:
-                    cost_coref = F.binary_cross_entropy(permuted_coref_logits, permuted_gold, reduction='mean')
-            elif coref_logits.shape[1] > 0:
-                clamped_logits = coref_logits.clamp(max=1.0)
-                cost_coref = F.binary_cross_entropy(clamped_logits, torch.zeros_like(coref_logits), reduction='mean')
+                    cost_junk = torch.tensor(0)
 
             costs_parts['loss_is_cluster'].append(self.cost_is_cluster * cost_is_cluster.detach().cpu())
             costs_parts['loss_is_mention'].append(self.cost_is_mention * cost_is_mention.detach().cpu())
             costs_parts['loss_coref'].append(self.cost_coref * cost_coref.detach().cpu())
-            costs_parts['loss_junk'].append(self.cost_is_mention * cost_junk.detach().cpu())
-            total_cost = self.cost_coref * cost_coref + self.cost_is_cluster * cost_is_cluster + self.cost_is_mention * cost_is_mention + self.cost_is_mention * cost_junk
+            costs_parts['loss_junk'].append(self.cost_coref * cost_junk.detach().cpu())
+            total_cost = self.cost_coref * cost_coref + self.cost_is_cluster * cost_is_cluster + \
+                self.cost_is_mention * cost_is_mention + self.cost_coref * cost_junk
             costs.append(total_cost)
         return torch.stack(costs), costs_parts
 
