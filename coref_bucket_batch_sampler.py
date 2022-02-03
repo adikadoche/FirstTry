@@ -77,6 +77,9 @@ class BucketBatchSampler(DataLoader):
     def __len__(self):
         return len(self.batches)
 
+    def num_examples(self):
+        return len(self.data_source.examples)
+
     def calc_effective_per_example_batch_len(self, example_len):
         return math.ceil((example_len + 2) / 512) * 512
 

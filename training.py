@@ -131,7 +131,7 @@ def create_optimization(model, args, train_loader):
         args.t_total = args.max_steps
         args.num_train_epochs = args.max_steps // (len(train_loader) // args.gradient_accumulation_steps) + 1
     else:
-        args.t_total = len(train_loader) // args.gradient_accumulation_steps * args.num_train_epochs
+        args.t_total = train_loader.num_examples() // args.gradient_accumulation_steps * args.num_train_epochs
 
     # lr_scheduler = get_constant_schedule_with_warmup(optimizer, num_warmup_steps=int(args.warmup_steps / args.train_batch_size))
     lr_scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=args.warmup_steps,
@@ -168,7 +168,7 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
             args.resume_global_step = 0
         else:
             args.resume_global_step = int(loaded_args['global_step'])
-            args.num_train_epochs = (args.t_total - args.resume_global_step) * args.gradient_accumulation_steps // len(train_loader)
+            args.num_train_epochs = (args.t_total - args.resume_global_step) * args.gradient_accumulation_steps // train_loader.num_examples()
         
             results = report_eval(args, eval_loader, eval_dataset, args.resume_global_step, model, criterion, coref_threshold, cluster_threshold, thresh_delta)
 
