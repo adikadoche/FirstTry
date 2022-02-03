@@ -13,6 +13,7 @@ import logging
 from cli import parse_args
 import torch
 import wandb 
+from transformers import AutoTokenizer
 
 # from modeling import Adi
 from datetime import datetime
@@ -20,7 +21,7 @@ from detr import build_DETR
 from training import set_seed, train
 from eval import make_evaluation
 from data import get_dataset, get_data_objects
-
+from coref_bucket_batch_sampler import BucketBatchSampler
 
 logger = logging.getLogger(__name__)
 
@@ -45,9 +46,9 @@ def main():
         if args.no_cuda:
             args.n_gpu = 0
         else:
-            args.n_gpu = 1
-            os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-            os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+            args.n_gpu = 2
+            os.environ["CUDA_VISIBLE_DEVICES"] = "4,6"
+            # os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
     if args.local_rank == -1 or args.no_cuda:
         device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
         args.n_gpu = torch.cuda.device_count() if not args.no_cuda else 0
@@ -61,9 +62,9 @@ def main():
         if args.no_cuda:
             args.n_gpu = 0
         else:
-            args.n_gpu = 1
-            os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-            os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+            args.n_gpu = 2
+            os.environ["CUDA_VISIBLE_DEVICES"] = "4,6"
+            # os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
     # Setup logging
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
@@ -98,10 +99,22 @@ def main():
 
     model.to(args.device)
 
-    eval_dataset, eval_sampler, eval_loader, args.eval_batch_size = get_data_objects(args, args.predict_file, False)
+    if args.tokenizer_name:
+        tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name, cache_dir=args.cache_dir, add_prefix_space=True)
+    elif args.model_name_or_path:
+        tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir, add_prefix_space=True)
+    else:
+        raise ValueError(
+            "You are instantiating a new tokenizer from scratch. This is not supported, but you can do it from another script, save it,"
+            "and load it from here, using --tokenizer_name"
+        )
+    
+    eval_dataset = get_dataset(args, tokenizer, evaluate=True)
+    eval_loader = BucketBatchSampler(eval_dataset, max_total_seq_len=args.max_total_seq_len, batch_size_1=True, n_gpu=1)
 
     if args.do_train:
-        train_dataset, train_sampler, train_loader, args.train_batch_size = get_data_objects(args, args.train_file, True)
+        train_dataset = get_dataset(args, tokenizer, evaluate=False)
+        train_loader = BucketBatchSampler(train_dataset, max_total_seq_len=args.max_total_seq_len, batch_size_1=args.batch_size_1, n_gpu=args.n_gpu)
         # if args.do_profile:
         #     profiler = cProfile.Profile()
         #     profiler.enable()

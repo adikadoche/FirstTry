@@ -1,7 +1,5 @@
-SPEAKER_START_ID = 49518  # 'Ġ#####'
-SPEAKER_END_ID = 22560  # 'Ġ###'
-SPEAKER_START_TOKEN = ' #####'  # 'Ġ#####'
-SPEAKER_END_TOKEN = ' ###'  # 'Ġ###'
+SPEAKER_START_ID = ' #####'
+SPEAKER_END_ID = ' ###'
 NULL_ID_FOR_COREF = 0
 TOKENS_PAD = 1
 SPEAKER_PAD = 0

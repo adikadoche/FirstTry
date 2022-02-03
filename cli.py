@@ -26,6 +26,20 @@ def parse_args():
         type=str,
         help="run name for w&b",
     )
+    parser.add_argument(
+        "--train_file_cache",
+        default=None,
+        type=str,
+        required=True,
+        help="The output directory where the datasets will be written and read from.",
+    )
+    parser.add_argument(
+        "--predict_file_cache",
+        default=None,
+        type=str,
+        required=True,
+        help="The output directory where the datasets will be written and read from.",
+    )
     parser.add_argument("--tokenizer_name",
                         default="allenai/longformer-base-4096",
                         type=str,
@@ -91,7 +105,7 @@ def parse_args():
     )
 
     parser.add_argument("--max_total_seq_len", type=int, default=3500)
-
+    parser.add_argument("--batch_size_1", action="store_true")
 
     # * Transformer
     parser.add_argument('--enc_layers', default=6, type=int,

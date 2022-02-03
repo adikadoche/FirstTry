@@ -56,20 +56,17 @@ class HungarianMatcher(nn.Module):
                 len(index_i) = len(index_j) = min(num_queries, num_target_boxes)
         """
         targets_clusters = targets['clusters']
-        targets_mentions = targets['mentions']
-        bs = outputs["coref_logits"].shape[0]
+        bs = len(outputs["coref_logits"])
         matched_predicted_cluster_id = []
         matched_gold_cluster_id = []
         for i in range(bs):
-            if targets_clusters[i].shape[1] == 0 or sum(sum(targets_clusters[i])) == 0:
+            if torch.sum(targets_clusters[i]) == 0:
                 matched_predicted_cluster_id.append(False)
                 matched_gold_cluster_id.append(False)
                 continue
 
             coref_logits = outputs["coref_logits"][i].squeeze(0)[:self.args.num_queries] # [num_queries, tokens]
             cluster_logits = outputs["cluster_logits"][i][:self.args.num_queries] # [num_queries, 1]
-            if self.args.add_junk:
-                mention_logits = outputs["mention_logits"][i].squeeze(-1).unsqueeze(0) # [1, tokens]
 
             if self.args.use_gold_mentions or self.args.use_topk_mentions:
                 real_cluster_target_rows = torch.sum(targets_clusters[i], -1) > 0
@@ -117,7 +114,7 @@ class HungarianMatcher(nn.Module):
             
                 # total_cost = self.cost_coref * cost_coref
                 pass
-            total_cost = total_cost.cpu()
+            total_cost = total_cost.cpu().detach()
             indices = linear_sum_assignment(total_cost)
             ind1, ind2 = indices
 
