@@ -339,12 +339,9 @@ class MatchingLoss(nn.Module):
             #TODO: normalize according to number of clusters? (identical to DETR)
 
             gold_is_cluster = torch.zeros_like(cluster_logits)
-            # gold_is_cluster[:self.args.num_queries] = 1
+            gold_is_cluster[:self.args.num_queries] = 1
             weight_cluster = self.eos_coef * torch.ones_like(cluster_logits)
-            # weight_cluster[:self.args.num_queries] = 1
-            if matched_predicted_cluster_id[i] is not False:
-                gold_is_cluster[matched_predicted_cluster_id[i]] = 1
-                weight_cluster[matched_predicted_cluster_id[i]] = 1
+            weight_cluster[:self.args.num_queries] = 1
             cost_is_cluster = F.binary_cross_entropy(cluster_logits, gold_is_cluster, weight=weight_cluster)
                 
             if self.args.use_topk_mentions and not self.args.is_frozen:
