@@ -20,6 +20,7 @@ from detr import build_DETR
 from training import set_seed, train
 from eval import make_evaluation
 from data import get_dataset, get_data_objects
+from toydata import get_toy_data_objects
 
 
 logger = logging.getLogger(__name__)
@@ -46,7 +47,7 @@ def main():
             args.n_gpu = 0
         else:
             args.n_gpu = 1
-            os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+            os.environ["CUDA_VISIBLE_DEVICES"] = "5"
             os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
     if args.local_rank == -1 or args.no_cuda:
         device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
@@ -62,7 +63,7 @@ def main():
             args.n_gpu = 0
         else:
             args.n_gpu = 1
-            os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+            os.environ["CUDA_VISIBLE_DEVICES"] = "5"
             os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
     # Setup logging
@@ -98,10 +99,12 @@ def main():
 
     model.to(args.device)
 
-    eval_dataset, eval_sampler, eval_loader, args.eval_batch_size = get_data_objects(args, args.predict_file, False)
+    # eval_dataset, eval_sampler, eval_loader, args.eval_batch_size = get_data_objects(args, args.predict_file, False)
+    eval_dataset, eval_loader, args.eval_batch_size = get_toy_data_objects(False, 500, args)
 
     if args.do_train:
         train_dataset, train_sampler, train_loader, args.train_batch_size = get_data_objects(args, args.train_file, True)
+        train_dataset, train_loader, args.train_batch_size = get_toy_data_objects(True, 3000, args)
         # if args.do_profile:
         #     profiler = cProfile.Profile()
         #     profiler.enable()

@@ -44,7 +44,7 @@
                 // "--predict_file",
                 // "/home/gamir/adiz/datasets/ontonotes/overfit/devveryshort.english.jsonlines",
                 "--do_train",
-                "--resume_from", "/home/gamir/adiz/Code/runs/firsttry/output_dir/01_25_2022_16_52_29_bestfreeze1prenosep_topjunkkslots_block/checkpoint-112040",
+                // "--resume_from", "/home/gamir/adiz/Code/runs/firsttry/output_dir/01_25_2022_16_52_29_bestfreeze1prenosep_topjunkkslots_block/checkpoint-112040",
                 "--eval",
                 "all",
                 // "--add_junk",
@@ -103,6 +103,13 @@
                 "OUTPUT_DIR": "/home/gamir/adiz/Code/runs/s2e-coref/output_dir",
                 "CACHE_DIR": "/home/gamir/adiz/Code/runs/s2e-coref/cache_dir"
             }
+        },
+        {
+            "name": "Toy",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/toydata.py",
+            "console": "integratedTerminal",
         }
     ]
 }
