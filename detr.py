@@ -136,6 +136,8 @@ class DETR(nn.Module):
             # mentions[i] = [(start[j], end[j]) for j in range(span_starts[i].shape[0])]
         span_emb, span_mask = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends, new_num_mentions)  # [mentions, emb']
         span_emb_proj = self.span_proj(span_emb) # [mentions, emb]
+        if max_mentions_len[0] == -1:
+            max_mentions_len *= -1 * new_num_mentions[0]
         # mentions = [torch.cat([span_starts[i].unsqueeze(-1), span_ends[i].unsqueeze(-1)], -1) for i in range(bs)]
         inputs, cluster_logits, coref_logits, mention_logits = self.slot_attention(span_emb_proj, max_mentions_len[0])
         mentions = torch.cat([\

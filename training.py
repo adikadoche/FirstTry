@@ -46,8 +46,11 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             continue
 
         gold_matrix = create_gold_matrix(args.device, sum_text_len, args.num_queries, gold_clusters, gold_mentions_list)
-        max_mentions = torch.tensor(gold_mentions.shape[1], device=gold_mentions.device) if args.use_gold_mentions \
-            else sum_text_len.max() // int(-10*args.topk_lambda +6)
+        if input_ids.shape[0] > 1:
+            max_mentions = torch.tensor(gold_mentions.shape[1], device=gold_mentions.device) if args.use_gold_mentions \
+                else torch.ones_like(sum_text_len.max()) * int((args.topk_lambda//0.1+1) * len(gold_mentions_list))
+        else:
+            max_mentions = -1 * torch.ones_like(sum_text_len.max())
         max_mentions = max_mentions.repeat([input_ids.shape[0], 1])
 
         if args.amp:
