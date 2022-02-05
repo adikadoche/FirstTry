@@ -49,8 +49,12 @@ def prepare_batches(text, clusters):
     batches = []
     for i in range(len(text)):
         batch = dict()
-        batch['clusters'] = clusters[i]
         batch['input_ids'] = [tokenizer.encode(text[i])]
+        batch['clusters'] = clusters[i]
+        for c in clusters[i]:
+            for m in c:
+                if m[1] > len(batch['input_ids'][0]):
+                    print('x')
         batch['text_len'] = [len(batch['input_ids'][0])]
         batch['input_mask'] = [[1] * batch['text_len'][0]]
         batches.append(batch)
@@ -69,7 +73,7 @@ def write_data_file(path, batches):
             writer.write('\n')
 
 def get_batches(is_training, num_of_texts):
-    path = f'/home/gamir/adiz/datasets/toynames/{is_training}.txt'
+    path = f'/home/gamir/adiz/datasets/toynames/{is_training}_{str(num_of_texts)}.txt'
     if os.path.isfile(path):
         batches = read_data_file(path)
         return batches
