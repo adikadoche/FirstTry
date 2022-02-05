@@ -19,9 +19,9 @@ logger = logging.getLogger(__name__)
 
 
 
-def report_eval(args, eval_dataloader, eval_dataset, global_step, model, criterion, coref_threshold, cluster_threshold, thresh_delta=0.02):
+def report_eval(args, eval_dataloader, eval_dataset, global_step, model, criterion, coref_threshold, thresh_delta=0.02):
     if args.local_rank == -1:  # Only evaluate when single GPU otherwise metrics may not average well
-        results = evaluate(args, eval_dataloader, eval_dataset, model, criterion, str(global_step), coref_threshold, cluster_threshold, thresh_delta)
+        results = evaluate(args, eval_dataloader, eval_dataset, model, criterion, str(global_step), coref_threshold, thresh_delta)
         if not args.is_debug:
             dict_to_log = {}
             for key, value in results.items():
@@ -75,9 +75,8 @@ def make_evaluation(model, criterion, eval_loader, eval_dataset, args):
                         loaded_args = load_from_checkpoint(model, checkpoint, args.device)
                         global_step = int(loaded_args['global_step'])
                         coref_threshold = loaded_args['numbers']['coref_threshold']
-                        cluster_threshold = loaded_args['numbers']['cluster_threshold']
                         thresh_delta = loaded_args['numbers']['thresh_delta']
-                        results = report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, coref_threshold, cluster_threshold, thresh_delta)
+                        results = report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, coref_threshold, thresh_delta)
                         if results['avg_f1'] > best_f1:
                             best_checkpoint = checkpoint
                             best_f1 = results['avg_f1']
@@ -102,7 +101,7 @@ def make_evaluation(model, criterion, eval_loader, eval_dataset, args):
                     wandb.log(dict_to_log, step=global_step)
                 return True
 
-def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", coref_threshold=0.5, cluster_threshold=0.5, thresh_delta=0.02):  #TODO: use threshold when resuming from checkpoint rather than searching it
+def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", coref_threshold=0.5, thresh_delta=0.02):  #TODO: use threshold when resuming from checkpoint rather than searching it
     if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]:
         os.makedirs(args.output_dir)
 
@@ -113,10 +112,8 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", c
     losses = []
     losses_parts = {}
     batch_sizes = []
-    all_cluster_logits_cpu = []
     all_coref_logits_cpu = []
     all_mention_logits_cpu = []
-    all_cluster_logits_cuda = []
     all_input_ids = []
     all_coref_logits_cuda = []
     all_mention_logits_cuda = []
@@ -143,28 +140,23 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", c
         input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = tensor_and_remove_empty(batch, gold_mentions_list, args)
         if len(input_ids) == 0:
             continue
-        if input_ids.shape[0] > 1:
-            max_mentions = torch.tensor(gold_mentions.shape[1], device=gold_mentions.device) if args.use_gold_mentions \
-                else torch.ones_like(sum_text_len.max()) * int((args.topk_lambda//0.1+1) * len(gold_mentions_list))
-        else:
-            max_mentions = -1 * torch.ones_like(sum_text_len.max())
         max_mentions = max_mentions.repeat([input_ids.shape[0], 1])
             
         with torch.no_grad():
             # orig_input_dim = input_ids.shape
             # input_ids = torch.reshape(input_ids, (1, -1))
             # input_mask = torch.reshape(input_mask, (1, -1))
-            outputs = model(input_ids, max_mentions, input_mask, gold_mentions, num_mentions)
-            cluster_logits, coref_logits, mention_logits, mentions_list = \
-                outputs['cluster_logits'], outputs['coref_logits'].clone(), outputs['mention_logits'], outputs['mentions']
+            outputs = model(input_ids, input_mask)
+            coref_logits, mention_logits, mentions_list = \
+                outputs['coref_logits'].clone(), outputs['mention_logits'], outputs['mentions']
             mentions_list = mentions_list.detach().cpu().numpy()
-            mentions_list = [[(m[0], m[1]) for m in mentions_list[j] if m[0] != -1 and m[1] != -1] for j in range(mentions_list.shape[0])]
+            mentions_list = [[(m[0], m[1]) for m in mentions_list if m[0] != -1 and m[1] != -1]]
 
             gold_matrix, outputs['coref_logits'], dist_matrix, goldgold_dist_mask, junkgold_dist_mask = \
                 create_target_and_predict_matrix( \
                 gold_mentions_list, mentions_list, gold_matrix, outputs['coref_logits'], outputs['inputs'])
 
-            loss, loss_parts = criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector}, \
+            loss, loss_parts = criterion(outputs, {'clusters':gold_matrix}, \
                 dist_matrix, goldgold_dist_mask, junkgold_dist_mask)
             losses.append(loss.mean().detach().cpu())
             for key in loss_parts.keys():
@@ -181,30 +173,27 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", c
         if args.add_junk:
             all_mention_logits_cuda += [ml.detach().clone() for ml in mention_logits]
             all_mention_logits_cpu += [ml.detach().cpu() for ml in mention_logits]
-        all_cluster_logits_cuda += [cl.detach().clone() for cl in cluster_logits]
         all_coref_logits_cuda += [cl.detach().clone() for cl in coref_logits]
-        all_cluster_logits_cpu += [cl.detach().cpu() for cl in cluster_logits]
         all_coref_logits_cpu += [cl.detach().cpu() for cl in coref_logits]
 
     eval_loss = np.average(losses, weights=batch_sizes)
     losses_parts = {key:np.average(losses_parts[key]) for key in losses_parts.keys()}
 
-    pmp, rmp, f1mp, pm, rm, f1m, p,r,f1, best_coref_threshold, best_cluster_threshold, metrics = \
-        calc_best_avg_f1(all_cluster_logits_cpu, all_coref_logits_cpu, all_mention_logits_cpu, \
-            all_gold_clusters, all_mentions, coref_threshold, cluster_threshold, \
+    pmp, rmp, f1mp, pm, rm, f1m, p,r,f1, best_coref_threshold, metrics = \
+        calc_best_avg_f1(all_coref_logits_cpu, all_mention_logits_cpu, \
+            all_gold_clusters, all_mentions, coref_threshold, \
                 thresh_delta, args.slots)
 
     print("============ EVAL EXAMPLES ============")
-    print_predictions(all_cluster_logits_cuda, all_coref_logits_cuda, all_mention_logits_cuda, all_gold_clusters, all_mentions, all_input_ids, coref_threshold, cluster_threshold, args, eval_dataset.tokenizer)
+    print_predictions(all_coref_logits_cuda, all_mention_logits_cuda, all_gold_clusters, all_mentions, all_input_ids, coref_threshold, args, eval_dataset.tokenizer)
     prec_gold_to_one_pred, prec_pred_to_one_gold, avg_gold_split_without_perfect, avg_gold_split_with_perfect, \
         avg_pred_split_without_perfect, avg_pred_split_with_perfect, prec_biggest_gold_in_pred_without_perfect, \
             prec_biggest_gold_in_pred_with_perfect, prec_biggest_pred_in_gold_without_perfect, prec_biggest_pred_in_gold_with_perfect = \
-                error_analysis(all_cluster_logits_cuda, all_coref_logits_cuda, all_mention_logits_cuda, all_gold_clusters, all_mentions, all_input_ids, coref_threshold, cluster_threshold, args.slots)
+                error_analysis(all_coref_logits_cuda, all_mention_logits_cuda, all_gold_clusters, all_mentions, all_input_ids, coref_threshold, args.slots)
 
     results = {'loss': eval_loss,
                'avg_f1': f1,
                'coref_threshold': best_coref_threshold, 
-               'cluster_threshold': best_cluster_threshold,
                'precision': p,
                'recall': r,  
                'mentions_avg_f1': f1m,
