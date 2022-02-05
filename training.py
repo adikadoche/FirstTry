@@ -375,8 +375,11 @@ def eval_train(train_dataloader, eval_dataset, args, model, cluster_threshold, c
         input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = tensor_and_remove_empty(batch, gold_mentions_list, args)
         if len(input_ids) == 0:
             continue
-        max_mentions = torch.tensor(gold_mentions.shape[1], device=gold_mentions.device) if args.use_gold_mentions \
-            else sum_text_len.max() // int(-10*args.topk_lambda +6)
+        if input_ids.shape[0] > 1:
+            max_mentions = torch.tensor(gold_mentions.shape[1], device=gold_mentions.device) if args.use_gold_mentions \
+                else torch.ones_like(sum_text_len.max()) * int((args.topk_lambda//0.1+1) * len(gold_mentions_list))
+        else:
+            max_mentions = -1 * torch.ones_like(sum_text_len.max())
         max_mentions = max_mentions.repeat([input_ids.shape[0], 1])
 
         with torch.no_grad():
