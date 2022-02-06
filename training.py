@@ -348,7 +348,7 @@ def eval_train(train_dataloader, eval_dataset, args, model):
             mentions_list = mentions_list.detach().cpu().numpy()
             mentions_list = [[(m[0], m[1]) for m in mentions_list if m[0] != -1 and m[1] != -1]]
 
-            predicted_clusters = calc_predicted_clusters(coref_logits.cpu().detach(), [], mentions_list, args.slots)
+            predicted_clusters = calc_predicted_clusters(coref_logits.cpu().detach(), args.num_queries, mentions_list, args.slots)
             cluster_train_evaluator.update(predicted_clusters, gold_clusters)
             gold_mentions_e = [[[]]] if gold_clusters == [[]] or gold_clusters == [()] else [[[m for d in c for m in d]] for c in gold_clusters]
             predicted_mentions_e = [[[]]] if predicted_clusters == [[]] or predicted_clusters == [()] else [[[m for d in c for m in d]] for c in predicted_clusters]

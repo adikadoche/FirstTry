@@ -261,7 +261,7 @@ def create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_mat
 def make_mentions_from_clustered_tokens(self, coref_logits):
     pass
 
-def calc_predicted_clusters(coref_logits, mention_logits, gold_mentions: List, slots=False):
+def calc_predicted_clusters(coref_logits, num_gold_queries, gold_mentions: List, slots=False):
     # when we are using gold mentions, we get coref_logits at the size of the gold mentions ([bs, clusters, gold_mentions]) (because we know they are mentions, what we are predicting is the clustering)
     
     bs = coref_logits.shape[0]
@@ -271,8 +271,8 @@ def calc_predicted_clusters(coref_logits, mention_logits, gold_mentions: List, s
         cur_coref_logits = coref_logits[i]
 
         if slots:
-            max_coref_score, max_coref_cluster_ind = cur_coref_logits.max(0) #[gold_mention] choosing the index of the best cluster per gold mention
-            coref_bools = max_coref_score > 0
+            _, max_coref_cluster_ind = cur_coref_logits.max(0) #[gold_mention] choosing the index of the best cluster per gold mention
+            coref_bools = max_coref_cluster_ind < num_gold_queries
 
         true_coref_indices = np.where(coref_bools)[0] #indices of the gold mention that their clusters pass threshold
         max_coref_cluster_ind_filtered = max_coref_cluster_ind[coref_bools] #index of the best clusters per gold mention, if it passes the threshold
@@ -299,16 +299,16 @@ def calc_predicted_clusters(coref_logits, mention_logits, gold_mentions: List, s
     return clusters
 
 def calc_best_avg_f1(all_coref_logits, all_mention_logits, all_gold_clusters, \
-    all_mentions, slots):
+    all_mentions, slots, num_queries):
     p, r, f1, pm, rm, f1m, pmp, rmp, f1mp, metrics = evaluate_by_threshold(\
         all_coref_logits, all_mention_logits, all_gold_clusters, \
-            all_mentions, slots)
+            all_mentions, slots, num_queries)
     best = pmp, rmp, f1mp, pm, rm, f1m, p,r,f1
     best_metrics = metrics
 
     return best + (best_metrics,)
 
-def evaluate_by_threshold(all_coref_logits, all_mention_logits, all_gold_clusters, all_mentions, slots):
+def evaluate_by_threshold(all_coref_logits, all_mention_logits, all_gold_clusters, all_mentions, slots, num_queries):
     cluster_evaluator = CorefEvaluator()
     mention_evaluator = MentionEvaluator()
     men_propos_evaluator = MentionEvaluator()
@@ -317,9 +317,9 @@ def evaluate_by_threshold(all_coref_logits, all_mention_logits, all_gold_cluster
             zip(all_coref_logits, all_gold_clusters, all_mentions)):
         if len(all_mention_logits) > 0:
             mention_logits = all_mention_logits[i]
-            predicted_clusters = calc_predicted_clusters(coref_logits.unsqueeze(0), mention_logits.unsqueeze(0), [mentions], slots)
+            predicted_clusters = calc_predicted_clusters(coref_logits.unsqueeze(0), num_queries, [mentions], slots)
         else:
-            predicted_clusters = calc_predicted_clusters(coref_logits.unsqueeze(0), [], [mentions], slots)
+            predicted_clusters = calc_predicted_clusters(coref_logits.unsqueeze(0), num_queries, [mentions], slots)
         # prec_correct_mentions, prec_gold, prec_junk, prec_correct_gold_clusters, prec_correct_predict_clusters = \
         #     get_more_metrics(predicted_clusters, gold_clusters, gold_mentions)  #TODO: predicted_clusters[0]?
         # metrics[0] += prec_correct_mentions / len(all_cluster_logits)

@@ -213,12 +213,12 @@ def is_cluster_contains_linked_entities(cluster, entities_per_sentence, sentence
 
 def print_per_batch(example_ind, is_print, coref_logits, mention_logits, gold_clusters, gold_mentions, input_ids,
 count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, count_missed_mentions,
-count_missed_pronouns, count_excess_pronous, count_excess_mentions, tokenizer, slots):
+count_missed_pronouns, count_excess_pronous, count_excess_mentions, tokenizer, slots, num_queries):
     if len(mention_logits) > 0:
-        predicted_clusters = calc_predicted_clusters(coref_logits.cpu().detach().unsqueeze(0), mention_logits.cpu().detach().unsqueeze(0),
+        predicted_clusters = calc_predicted_clusters(coref_logits.cpu().detach().unsqueeze(0), num_queries,
                                                         [gold_mentions], slots)
     else:
-        predicted_clusters = calc_predicted_clusters(coref_logits.cpu().detach().unsqueeze(0), [],
+        predicted_clusters = calc_predicted_clusters(coref_logits.cpu().detach().unsqueeze(0), num_queries,
                                                         [gold_mentions], slots)
 
     gold, gold_correct, pred, pred_correct, pred_to_most_similar_gold, pred_to_most_similar_golds_list, gold_is_completely_missed, gold_to_most_similar_pred = match_clusters(
@@ -351,7 +351,7 @@ def print_predictions(all_coref_logits, all_mention_logits, all_gold_clusters, a
             count_missed_mentions, count_missed_pronouns, count_excess_pronous, count_excess_mentions = print_per_batch(i, i in indices_to_print,
             coref_logits, mention_logits, gold_clusters, gold_mentions, input_ids,
             count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, count_missed_mentions,
-            count_missed_pronouns, count_excess_pronous, count_excess_mentions, tokenizer, args.slots)
+            count_missed_pronouns, count_excess_pronous, count_excess_mentions, tokenizer, args.slots, args.num_queries)
 
 
     print("{} gold clusters".format(count_clusters))
@@ -368,7 +368,7 @@ def print_predictions(all_coref_logits, all_mention_logits, all_gold_clusters, a
     print("{}% excess pronouns".format(0 if count_excess_mentions == 0 else 1. * count_excess_pronous / count_excess_mentions * 100))
 
 
-def error_analysis(all_coref_logits, all_mention_logits, all_gold_clusters, all_gold_mentions, all_input_ids, slots):
+def error_analysis(all_coref_logits, all_mention_logits, all_gold_clusters, all_gold_mentions, all_input_ids, slots, num_queries):
     total_sub_clusters_gold = 0
     total_sub_clusters_pred = 0
     total_num_gold_clusters_in_one_pred_cluster = 0
@@ -384,10 +384,10 @@ def error_analysis(all_coref_logits, all_mention_logits, all_gold_clusters, all_
         coref_logits, mention_logits = all_coref_logits[i], []
         if len(all_mention_logits) > 0:
             mention_logits = all_mention_logits[i]
-            predicted_clusters = calc_predicted_clusters(coref_logits.cpu().detach().unsqueeze(0), mention_logits.cpu().detach().unsqueeze(0),
+            predicted_clusters = calc_predicted_clusters(coref_logits.cpu().detach().unsqueeze(0), num_queries,
                                                             [gold_mentions], slots)
         else:
-            predicted_clusters = calc_predicted_clusters(coref_logits.cpu().detach().unsqueeze(0), [],
+            predicted_clusters = calc_predicted_clusters(coref_logits.cpu().detach().unsqueeze(0), num_queries,
                                                             [gold_mentions], slots)
 
         num_gold_clusters_in_one_pred_cluster, num_pred_clusters_in_one_gold_cluster, \

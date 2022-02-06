@@ -233,7 +233,7 @@ class MatchingLoss(nn.Module):
         targets_clusters = targets['clusters']
         bs = outputs["coref_logits"].shape[0]
         costs = []
-        costs_parts = {'loss_is_cluster':[], 'loss_coref':[], 'loss_junk':[]}
+        costs_parts = {'loss_coref':[], 'loss_junk':[]}
         for i in range(bs):
             # Compute the average number of target boxes accross all nodes, for normalization purposes
             coref_logits = outputs["coref_logits"][i].squeeze(0)  # [num_queries+num_junk_queries, tokens]

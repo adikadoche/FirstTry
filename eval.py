@@ -179,14 +179,14 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix=""): 
     pmp, rmp, f1mp, pm, rm, f1m, p,r,f1, metrics = \
         calc_best_avg_f1(all_coref_logits_cpu, all_mention_logits_cpu, \
             all_gold_clusters, all_mentions, \
-                args.slots)
+                args.slots, args.num_queries)
 
     print("============ EVAL EXAMPLES ============")
     print_predictions(all_coref_logits_cuda, all_mention_logits_cuda, all_gold_clusters, all_mentions, all_input_ids, args, eval_dataset.tokenizer)
     prec_gold_to_one_pred, prec_pred_to_one_gold, avg_gold_split_without_perfect, avg_gold_split_with_perfect, \
         avg_pred_split_without_perfect, avg_pred_split_with_perfect, prec_biggest_gold_in_pred_without_perfect, \
             prec_biggest_gold_in_pred_with_perfect, prec_biggest_pred_in_gold_without_perfect, prec_biggest_pred_in_gold_with_perfect = \
-                error_analysis(all_coref_logits_cuda, all_mention_logits_cuda, all_gold_clusters, all_mentions, all_input_ids, args.slots)
+                error_analysis(all_coref_logits_cuda, all_mention_logits_cuda, all_gold_clusters, all_mentions, all_input_ids, args.slots, args.num_queries)
 
     results = {'loss': eval_loss,
                'avg_f1': f1,
