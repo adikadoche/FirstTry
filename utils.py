@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 #         }, os.path.join(output_dir, 'model.step-{}.pt'.format(global_step)))
 #     logger.info("Saved model checkpoint to %s", output_dir)
 
-def save_checkpoint(args, global_step, numbers, model, optimizer, lr_scheduler, output_dir, amp=None):
+def save_checkpoint(args, global_step, epoch, numbers, model, optimizer, lr_scheduler, output_dir, amp=None):
     # Save model checkpoint
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -46,7 +46,8 @@ def save_checkpoint(args, global_step, numbers, model, optimizer, lr_scheduler, 
         'numbers': numbers,
         'optimizer': optimizer.state_dict(),
         'lr_scheduler': lr_scheduler.state_dict(),
-        'args': args
+        'args': args,
+        'epoch': epoch
         }, os.path.join(output_dir, 'model.step-{}.pt'.format(global_step)))
     logger.info("Saved model checkpoint to %s", output_dir)
 
@@ -61,8 +62,9 @@ def load_from_checkpoint(model, resume_from, device=None, optimizer=None, lr_sch
     if lr_scheduler is not None:
         lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
     numbers = checkpoint['numbers']
+    epoch = checkpoint['epoch']
             
-    return {'global_step':global_step, 'numbers':numbers}
+    return {'global_step':global_step, 'epoch':epoch, 'numbers':numbers}
 
 # def load_from_checkpoint(model, resume_from, device=None, optimizer=None, lr_scheduler=None, amp=None):
 #     global_step = resume_from.rstrip('/').split('-')[-1]

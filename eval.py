@@ -19,9 +19,9 @@ logger = logging.getLogger(__name__)
 
 
 
-def report_eval(args, eval_dataloader, eval_dataset, global_step, model, criterion, coref_threshold, cluster_threshold, thresh_delta=0.02):
+def report_eval(args, eval_dataloader, eval_dataset, epoch, global_step, model, criterion, coref_threshold, cluster_threshold, thresh_delta=0.02):
     if args.local_rank == -1:  # Only evaluate when single GPU otherwise metrics may not average well
-        results = evaluate(args, eval_dataloader, eval_dataset, model, criterion, str(global_step), coref_threshold, cluster_threshold, thresh_delta)
+        results = evaluate(args, eval_dataloader, eval_dataset, model, criterion, str(epoch), coref_threshold, cluster_threshold, thresh_delta)
         if not args.is_debug:
             dict_to_log = {}
             for key, value in results.items():
@@ -37,8 +37,8 @@ def make_evaluation(model, criterion, eval_loader, eval_dataset, args):
     if args.eval == 'specific':
         checkpoint = args.output_dir
         loaded_args = load_from_checkpoint(model, checkpoint, args.device)
-        global_step = loaded_args['global_step']
-        evaluate(args, eval_loader, model, criterion, global_step)
+        epoch = loaded_args['epoch']
+        evaluate(args, eval_loader, model, criterion, epoch)
     elif args.eval == 'vanilla':
         evaluate(args, eval_loader, model, criterion, '0')
     elif args.eval == 'all':
@@ -73,11 +73,12 @@ def make_evaluation(model, criterion, eval_loader, eval_dataset, args):
                 try:
                     for checkpoint in checkpoints:
                         loaded_args = load_from_checkpoint(model, checkpoint, args.device)
+                        epoch = int(loaded_args['epoch'])
                         global_step = int(loaded_args['global_step'])
                         coref_threshold = loaded_args['numbers']['coref_threshold']
                         cluster_threshold = loaded_args['numbers']['cluster_threshold']
                         thresh_delta = loaded_args['numbers']['thresh_delta']
-                        results = report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, coref_threshold, cluster_threshold, thresh_delta)
+                        results = report_eval(args, eval_loader, eval_dataset, epoch, global_step, model, criterion, coref_threshold, cluster_threshold, thresh_delta)
                         if results['avg_f1'] > best_f1:
                             best_checkpoint = checkpoint
                             best_f1 = results['avg_f1']
