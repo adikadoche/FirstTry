@@ -176,7 +176,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix=""): 
     eval_loss = np.average(losses, weights=batch_sizes)
     losses_parts = {key:np.average(losses_parts[key]) for key in losses_parts.keys()}
 
-    pmp, rmp, f1mp, pm, rm, f1m, p,r,f1, metrics = \
+    pm, rm, f1m, p,r,f1, metrics = \
         calc_best_avg_f1(all_coref_logits_cpu, all_mention_logits_cpu, \
             all_gold_clusters, all_mentions, \
                 args.slots, args.num_queries)
@@ -195,9 +195,9 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix=""): 
                'mentions_avg_f1': f1m,
                'mentions_precision': pm,
                'mentions_recall': rm,  
-               'mention_proposals_avg_f1': f1mp,
-               'mention_proposals_precision': pmp,
-               'mention_proposals_recall': rmp,  
+            #    'mention_proposals_avg_f1': f1mp,
+            #    'mention_proposals_precision': pmp,
+            #    'mention_proposals_recall': rmp,  
                'prec_gold_to_one_pred': prec_gold_to_one_pred,  
                'prec_pred_to_one_gold': prec_pred_to_one_gold,  
                'avg_gold_split_without_perfect': avg_gold_split_without_perfect,  

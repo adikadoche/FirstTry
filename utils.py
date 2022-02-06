@@ -300,10 +300,10 @@ def calc_predicted_clusters(coref_logits, num_gold_queries, gold_mentions: List,
 
 def calc_best_avg_f1(all_coref_logits, all_mention_logits, all_gold_clusters, \
     all_mentions, slots, num_queries):
-    p, r, f1, pm, rm, f1m, pmp, rmp, f1mp, metrics = evaluate_by_threshold(\
+    p, r, f1, pm, rm, f1m, metrics = evaluate_by_threshold(\
         all_coref_logits, all_mention_logits, all_gold_clusters, \
             all_mentions, slots, num_queries)
-    best = pmp, rmp, f1mp, pm, rm, f1m, p,r,f1
+    best = pm, rm, f1m, p,r,f1
     best_metrics = metrics
 
     return best + (best_metrics,)
@@ -311,7 +311,7 @@ def calc_best_avg_f1(all_coref_logits, all_mention_logits, all_gold_clusters, \
 def evaluate_by_threshold(all_coref_logits, all_mention_logits, all_gold_clusters, all_mentions, slots, num_queries):
     cluster_evaluator = CorefEvaluator()
     mention_evaluator = MentionEvaluator()
-    men_propos_evaluator = MentionEvaluator()
+    # men_propos_evaluator = MentionEvaluator()
     metrics = [0] * 5
     for i, (coref_logits, gold_clusters, mentions) in enumerate(
             zip(all_coref_logits, all_gold_clusters, all_mentions)):
@@ -333,11 +333,11 @@ def evaluate_by_threshold(all_coref_logits, all_mention_logits, all_gold_cluster
         predicted_mentions_e = [[[]]] if predicted_clusters == [[]] or predicted_clusters == [()] else [
             [[m for d in c for m in d]] for c in predicted_clusters]
         mention_evaluator.update(predicted_mentions_e, gold_mentions_e)
-        men_propos_evaluator.update([[mentions]], gold_mentions_e)
+        # men_propos_evaluator.update([[mentions]], gold_mentions_e)
     p, r, f1 = cluster_evaluator.get_prf()
     pm, rm, f1m = mention_evaluator.get_prf()
-    pmp, rmp, f1mp = men_propos_evaluator.get_prf()
-    return p, r, f1, pm, rm, f1m, pmp, rmp, f1mp, metrics
+    # pmp, rmp, f1mp = men_propos_evaluator.get_prf()
+    return p, r, f1, pm, rm, f1m, metrics
 
 def get_more_metrics(predicted_clusters, gold_clusters, gold_mentions):
     prec_correct_mentions, prec_gold, prec_junk, prec_correct_gold_clusters, prec_correct_predict_clusters = 0,0,0,0,0
