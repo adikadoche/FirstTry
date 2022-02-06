@@ -243,13 +243,12 @@ def create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_mat
 
         ordered_inputs[:,:len(y)] = ordered_inputs[:,y]
         ordered_inputs = F.normalize(ordered_inputs, dim=-1)
-        cur_dist_matrix = torch.bmm(ordered_inputs[:,:len(y)], ordered_inputs.transpose(1,2)).squeeze()
+        cur_dist_matrix = torch.bmm(ordered_inputs[:,:len(y)], ordered_inputs.transpose(1,2)).squeeze(0)
         cur_dist_matrix = 1 - (cur_dist_matrix + 1) / 2
         dist_matrix.append(cur_dist_matrix)
 
         cur_dist_mask = torch.zeros_like(cur_dist_matrix)
-        if cur_dist_mask.shape[0]>0:
-            cur_dist_mask[:len(x),:len(y)] = common_gold_matrix[x][:,y]
+        cur_dist_mask[:len(x),:len(y)] = common_gold_matrix[x][:,y]
         cur_junkgold_mask = 1 - cur_dist_mask.clone()
         under_diag_mask = torch.ones_like(cur_dist_matrix)[:,:cur_dist_matrix.shape[0]].\
             triu(diagonal=0)
