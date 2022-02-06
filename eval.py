@@ -19,9 +19,9 @@ logger = logging.getLogger(__name__)
 
 
 
-def report_eval(args, eval_dataloader, eval_dataset, global_step, model, criterion, coref_threshold, thresh_delta=0.02):
+def report_eval(args, eval_dataloader, eval_dataset, global_step, model, criterion):
     if args.local_rank == -1:  # Only evaluate when single GPU otherwise metrics may not average well
-        results = evaluate(args, eval_dataloader, eval_dataset, model, criterion, str(global_step), coref_threshold, thresh_delta)
+        results = evaluate(args, eval_dataloader, eval_dataset, model, criterion, str(global_step))
         if not args.is_debug:
             dict_to_log = {}
             for key, value in results.items():
@@ -74,9 +74,7 @@ def make_evaluation(model, criterion, eval_loader, eval_dataset, args):
                     for checkpoint in checkpoints:
                         loaded_args = load_from_checkpoint(model, checkpoint, args.device)
                         global_step = int(loaded_args['global_step'])
-                        coref_threshold = loaded_args['numbers']['coref_threshold']
-                        thresh_delta = loaded_args['numbers']['thresh_delta']
-                        results = report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, coref_threshold, thresh_delta)
+                        results = report_eval(args, eval_loader, eval_dataset, global_step, model, criterion)
                         if results['avg_f1'] > best_f1:
                             best_checkpoint = checkpoint
                             best_f1 = results['avg_f1']
@@ -101,7 +99,7 @@ def make_evaluation(model, criterion, eval_loader, eval_dataset, args):
                     wandb.log(dict_to_log, step=global_step)
                 return True
 
-def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", coref_threshold=0.5, thresh_delta=0.02):  #TODO: use threshold when resuming from checkpoint rather than searching it
+def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix=""):  #TODO: use threshold when resuming from checkpoint rather than searching it
     if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]:
         os.makedirs(args.output_dir)
 
@@ -178,21 +176,20 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", c
     eval_loss = np.average(losses, weights=batch_sizes)
     losses_parts = {key:np.average(losses_parts[key]) for key in losses_parts.keys()}
 
-    pmp, rmp, f1mp, pm, rm, f1m, p,r,f1, best_coref_threshold, metrics = \
+    pmp, rmp, f1mp, pm, rm, f1m, p,r,f1, metrics = \
         calc_best_avg_f1(all_coref_logits_cpu, all_mention_logits_cpu, \
-            all_gold_clusters, all_mentions, coref_threshold, \
-                thresh_delta, args.slots)
+            all_gold_clusters, all_mentions, \
+                args.slots)
 
     print("============ EVAL EXAMPLES ============")
-    print_predictions(all_coref_logits_cuda, all_mention_logits_cuda, all_gold_clusters, all_mentions, all_input_ids, coref_threshold, args, eval_dataset.tokenizer)
+    print_predictions(all_coref_logits_cuda, all_mention_logits_cuda, all_gold_clusters, all_mentions, all_input_ids, args, eval_dataset.tokenizer)
     prec_gold_to_one_pred, prec_pred_to_one_gold, avg_gold_split_without_perfect, avg_gold_split_with_perfect, \
         avg_pred_split_without_perfect, avg_pred_split_with_perfect, prec_biggest_gold_in_pred_without_perfect, \
             prec_biggest_gold_in_pred_with_perfect, prec_biggest_pred_in_gold_without_perfect, prec_biggest_pred_in_gold_with_perfect = \
-                error_analysis(all_coref_logits_cuda, all_mention_logits_cuda, all_gold_clusters, all_mentions, all_input_ids, coref_threshold, args.slots)
+                error_analysis(all_coref_logits_cuda, all_mention_logits_cuda, all_gold_clusters, all_mentions, all_input_ids, args.slots)
 
     results = {'loss': eval_loss,
                'avg_f1': f1,
-               'coref_threshold': best_coref_threshold, 
                'precision': p,
                'recall': r,  
                'mentions_avg_f1': f1m,

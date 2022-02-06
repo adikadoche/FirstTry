@@ -150,19 +150,15 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
     logger.info("Training/evaluation parameters %s", args)
     optimizer, lr_scheduler = create_optimization(model, args, train_loader)
 
-    thresh_delta = 0.2    
-    coref_threshold = 0.5 # starting threshold, later fixed by eval
     best_f1 = -1
     best_f1_global_step = -1
     last_saved_global_step = -1
     if args.resume_from:
         logger.info("Loading from checkpoint {}".format(args.resume_from))
         loaded_args = load_from_checkpoint(model, args.resume_from, args.device, optimizer, lr_scheduler)
-        coref_threshold = loaded_args['numbers']['coref_threshold']
         best_f1_global_step = loaded_args['numbers']['best_f1_global_step']
         last_saved_global_step = loaded_args['numbers']['last_saved_global_step']
         best_f1 = loaded_args['numbers']['best_f1']
-        thresh_delta = loaded_args['numbers']['thresh_delta']   
 
         if args.reset_optim:
             optimizer, lr_scheduler = create_optimization(model, args, train_loader)
@@ -171,7 +167,7 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
             args.resume_global_step = int(loaded_args['global_step'])
             args.num_train_epochs = (args.t_total - args.resume_global_step // args.train_batch_size) * args.gradient_accumulation_steps // len(train_loader)
         
-            results = report_eval(args, eval_loader, eval_dataset, args.resume_global_step, model, criterion, coref_threshold, thresh_delta)
+            results = report_eval(args, eval_loader, eval_dataset, args.resume_global_step, model, criterion)
 
         if not args.do_train:
             return args.resume_global_step
@@ -242,19 +238,10 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
         if args.local_rank in [-1, 0]:
             if args.eval_epochs > 0 and (epoch + 1) % args.eval_epochs == 0 or \
                     epoch + 1 == args.num_train_epochs and (args.eval_epochs > 0 or args.eval_steps > 0):
-                results = report_eval(args, eval_loader, eval_dataset, global_step, model, criterion, coref_threshold, thresh_delta)
-                new_coref_threshold, eval_f1 = results['coref_threshold'],  results['avg_f1']
+                results = report_eval(args, eval_loader, eval_dataset, global_step, model, criterion)
+                eval_f1 = results['avg_f1']
 
-                if new_coref_threshold == coref_threshold:
-                    same_thresh_count += 1
-                    if same_thresh_count == 5 and thresh_delta == 0.2:
-                        thresh_delta = 0.02
-                        same_thresh_count = 0
-                else:
-                    same_thresh_count = 0
-                coref_threshold = new_coref_threshold
-
-            cluster_evaluator, mention_evaluator, men_propos_evaluator = eval_train(train_loader, eval_dataset, args, model, coref_threshold)
+            cluster_evaluator, mention_evaluator, men_propos_evaluator = eval_train(train_loader, eval_dataset, args, model)
 
             p_train, r_train, f1_train = cluster_evaluator.get_prf()
             pm_train, rm_train, f1m_train = mention_evaluator.get_prf()
@@ -277,9 +264,7 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
 
             if args.save_epochs > 0 and (epoch + 1) % args.save_epochs == 0 or epoch + 1 == args.num_train_epochs:
                 if eval_f1 > best_f1:
-                    numbers = {'coref_threshold':coref_threshold, 
-                        'thresh_delta': thresh_delta,
-                        'best_f1_global_step': global_step,
+                    numbers = {'best_f1_global_step': global_step,
                         'last_saved_global_step': last_saved_global_step,
                         'best_f1': eval_f1}
                     prev_best_f1 = best_f1
@@ -295,9 +280,7 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
                         shutil.rmtree(path_to_remove)
                         print(f'removed checkpoint with f1 {prev_best_f1} from {path_to_remove}')
                 else:
-                    numbers = {'coref_threshold':coref_threshold, 
-                        'thresh_delta': thresh_delta,
-                        'best_f1_global_step': best_f1_global_step,
+                    numbers = {'best_f1_global_step': best_f1_global_step,
                         'last_saved_global_step': global_step,
                         'best_f1': best_f1}
                     output_dir = os.path.join(args.output_dir, 'checkpoint-{}'.format(global_step))
@@ -334,7 +317,7 @@ def set_seed(args):
         torch.cuda.manual_seed_all(args.seed)
 
 
-def eval_train(train_dataloader, eval_dataset, args, model, coref_threshold):
+def eval_train(train_dataloader, eval_dataset, args, model):
     model.eval()
     
     all_coref_logits_cuda = []
@@ -365,7 +348,7 @@ def eval_train(train_dataloader, eval_dataset, args, model, coref_threshold):
             mentions_list = mentions_list.detach().cpu().numpy()
             mentions_list = [[(m[0], m[1]) for m in mentions_list if m[0] != -1 and m[1] != -1]]
 
-            predicted_clusters = calc_predicted_clusters(coref_logits.cpu().detach(), [], coref_threshold, mentions_list, args.slots)
+            predicted_clusters = calc_predicted_clusters(coref_logits.cpu().detach(), [], mentions_list, args.slots)
             cluster_train_evaluator.update(predicted_clusters, gold_clusters)
             gold_mentions_e = [[[]]] if gold_clusters == [[]] or gold_clusters == [()] else [[[m for d in c for m in d]] for c in gold_clusters]
             predicted_mentions_e = [[[]]] if predicted_clusters == [[]] or predicted_clusters == [()] else [[[m for d in c for m in d]] for c in predicted_clusters]
@@ -381,6 +364,6 @@ def eval_train(train_dataloader, eval_dataset, args, model, coref_threshold):
         all_coref_logits_cuda += [cl.detach().clone() for cl in coref_logits]
 
     print("============ TRAIN EXAMPLES ============")
-    print_predictions(all_coref_logits_cuda, all_mention_logits_cuda, all_gold_clusters, all_gold_mentions, all_input_ids, coref_threshold, args, eval_dataset.tokenizer)
+    print_predictions(all_coref_logits_cuda, all_mention_logits_cuda, all_gold_clusters, all_gold_mentions, all_input_ids, args, eval_dataset.tokenizer)
 
     return cluster_train_evaluator, mention_train_evaluator, men_propos_train_evaluator
