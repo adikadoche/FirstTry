@@ -243,17 +243,18 @@ def create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_mat
 
         ordered_inputs[:,:len(y)] = ordered_inputs[:,y]
         ordered_inputs = F.normalize(ordered_inputs, dim=-1)
-        cur_dist_matrix = torch.bmm(ordered_inputs, ordered_inputs.transpose(1,2)).squeeze()
+        cur_dist_matrix = torch.bmm(ordered_inputs[:,:len(y)], ordered_inputs.transpose(1,2)).squeeze()
         cur_dist_matrix = 1 - (cur_dist_matrix + 1) / 2
         dist_matrix.append(cur_dist_matrix)
 
         cur_dist_mask = torch.zeros_like(cur_dist_matrix)
-        cur_dist_mask[:len(x),:len(y)] = common_gold_matrix[x][:,y]
+        if cur_dist_mask.shape[0]>0:
+            cur_dist_mask[:len(x),:len(y)] = common_gold_matrix[x][:,y]
         cur_junkgold_mask = 1 - cur_dist_mask.clone()
-        is_junk_mention = torch.arange(0,cur_dist_matrix.shape[0],device=inputs.device) >= len(common_mentions)
-        cur_junkgold_mask = cur_junkgold_mask * \
-            ~(is_junk_mention.reshape(-1,1).repeat(1,cur_dist_matrix.shape[1]) * \
-                is_junk_mention.reshape(1,-1).repeat(cur_dist_matrix.shape[0],1))
+        under_diag_mask = torch.ones_like(cur_dist_matrix)[:,:cur_dist_matrix.shape[0]].\
+            triu(diagonal=0)
+        cur_junkgold_mask[:, :cur_junkgold_mask.shape[0]] = cur_junkgold_mask[:, :cur_junkgold_mask.shape[0]] * \
+            under_diag_mask
         goldgold_dist_mask.append(cur_dist_mask)
         junkgold_dist_mask.append(cur_junkgold_mask)
     return target_matrix_list, torch.cat(new_coref_logits, 0), dist_matrix, goldgold_dist_mask, junkgold_dist_mask
