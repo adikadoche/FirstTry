@@ -53,7 +53,7 @@ class DETR(nn.Module):
 
         self.span_word_attn_projection = nn.Linear(hidden_size, 1) #
         self.span_width_embed = nn.Embedding(30, 20) #
-        self.span_proj = nn.Linear(3*hidden_size+20, hidden_dim) # TODO config #
+        self.span_proj = nn.Linear(6144, hidden_dim) # TODO config #
              
         # self.mention_classifier = nn.Linear(hidden_dim, 1)
 
@@ -134,8 +134,8 @@ class DETR(nn.Module):
             new_num_mentions[i] = torch.sum(mentions_mask)
             # start, end = span_starts[i].detach().cpu().numpy(), span_ends[i].detach().cpu().numpy()
             # mentions[i] = [(start[j], end[j]) for j in range(span_starts[i].shape[0])]
-        span_emb, span_mask = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends, new_num_mentions)  # [mentions, emb']
-        span_emb_proj = self.span_proj(span_emb) # [mentions, emb]
+        # span_emb, span_mask = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends, new_num_mentions)  # [mentions, emb']
+        span_emb_proj = self.span_proj(longfomer_no_pad_list[0]).unsqueeze(0) # [mentions, emb]
         if max_mentions_len[0] == -1:
             max_mentions_len *= -1 * new_num_mentions[0]
         # mentions = [torch.cat([span_starts[i].unsqueeze(-1), span_ends[i].unsqueeze(-1)], -1) for i in range(bs)]
@@ -349,9 +349,9 @@ class MatchingLoss(nn.Module):
             if self.args.use_topk_mentions and not self.args.is_frozen:
                 cost_is_mention = outputs["cost_is_mention"][i]
             elif self.args.use_topk_mentions and self.args.is_frozen:
-                cost_is_mention = torch.tensor(0)
+                cost_is_mention = torch.tensor(0., device=coref_logits.device)
             elif not self.args.add_junk or sum(targets_mentions[i].shape) == 0:
-                cost_is_mention = torch.tensor(0)
+                cost_is_mention = torch.tensor(0., device=coref_logits.device)
             else:
                 if sum(mention_logits.shape) == 0:
                     mention_logits = mention_logits.reshape(1)
@@ -617,12 +617,24 @@ class MenPropose(BertPreTrainedModel):
         # Compute representations
         start_mention_reps = self.start_mention_mlp(sequence_output) if self.do_mlps else sequence_output
         end_mention_reps = self.end_mention_mlp(sequence_output) if self.do_mlps else sequence_output
+        start_coref_reps = self.start_coref_mlp(sequence_output) if self.do_mlps else sequence_output
+        end_coref_reps = self.end_coref_mlp(sequence_output) if self.do_mlps else sequence_output
 
         # mention scores
         mention_logits, mention_mask = self._calc_mention_logits(start_mention_reps, end_mention_reps)
 
         # prune mentions
         mention_start_ids, mention_end_ids, span_mask, _ = self._prune_topk_mentions(mention_logits, attention_mask)
+        batch_size, _, dim = start_coref_reps.size()
+        max_k = mention_start_ids.size(-1)
+        size = (batch_size, max_k, dim)
+
+        # Antecedent scores
+        # gather reps
+        topk_start_coref_reps = torch.gather(start_coref_reps, dim=1, index=mention_start_ids.unsqueeze(-1).expand(size))
+        topk_end_coref_reps = torch.gather(end_coref_reps, dim=1, index=mention_end_ids.unsqueeze(-1).expand(size))
+
+        start_end_coref_reps = torch.cat([topk_start_coref_reps, topk_end_coref_reps], -1)
 
         mention_probs = mention_logits.sigmoid()
         junk_probs = torch.clone(mention_probs)
@@ -642,5 +654,5 @@ class MenPropose(BertPreTrainedModel):
  
         cost_is_mention = cost_gold + F.binary_cross_entropy(junk_probs, torch.zeros_like(junk_probs))
        
-        return (mention_start_ids, mention_end_ids, span_mask, sequence_output, cost_is_mention.unsqueeze(0))
+        return (mention_start_ids, mention_end_ids, span_mask, start_end_coref_reps, cost_is_mention.unsqueeze(0))
  
