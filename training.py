@@ -233,6 +233,7 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
     logger.info("  Gradient Accumulation steps = %d", args.gradient_accumulation_steps)
     logger.info("  Total optimization steps = %d", args.t_total)
 
+    trainepoch = 3
 
     model.zero_grad()
     recent_losses = []
@@ -269,26 +270,27 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset):
                 cluster_threshold = new_cluster_threshold
                 coref_threshold = new_coref_threshold
 
-            cluster_evaluator, mention_evaluator, men_propos_evaluator = eval_train(train_loader, eval_dataset, args, model, cluster_threshold, coref_threshold)
+            if trainepoch > 0 and (epoch + 1) % trainepoch == 0:
+                cluster_evaluator, mention_evaluator, men_propos_evaluator = eval_train(train_loader, eval_dataset, args, model, cluster_threshold, coref_threshold)
 
-            p_train, r_train, f1_train = cluster_evaluator.get_prf()
-            pm_train, rm_train, f1m_train = mention_evaluator.get_prf()
-            pmp_train, rmp_train, f1mp_train = men_propos_evaluator.get_prf()
-            if args.local_rank in [-1, 0]:
-                if not args.is_debug:
-                    dict_to_log = {}
-                    dict_to_log['Train Precision'] = p_train
-                    dict_to_log['Train Recall'] = r_train
-                    dict_to_log['Train F1'] = f1_train
-                    dict_to_log['Train Mention Precision'] = pm_train
-                    dict_to_log['Train Mention Recall'] = rm_train
-                    dict_to_log['Train Mention F1'] = f1m_train
-                    dict_to_log['Train MentionProposal Precision'] = pmp_train
-                    dict_to_log['Train MentionProposal Recall'] = rmp_train
-                    dict_to_log['Train MentionProposal F1'] = f1mp_train
-                    wandb.log(dict_to_log, step=global_step)
-                logger.info('Train f1, precision, recall: {}, Mentions f1, precision, recall: {}, Mention Proposals f1, precision, recall: {}'.format(\
-                    (f1_train, p_train, r_train), (f1m_train, pm_train, rm_train), (f1mp_train, pmp_train, rmp_train)))
+                p_train, r_train, f1_train = cluster_evaluator.get_prf()
+                pm_train, rm_train, f1m_train = mention_evaluator.get_prf()
+                pmp_train, rmp_train, f1mp_train = men_propos_evaluator.get_prf()
+                if args.local_rank in [-1, 0]:
+                    if not args.is_debug:
+                        dict_to_log = {}
+                        dict_to_log['Train Precision'] = p_train
+                        dict_to_log['Train Recall'] = r_train
+                        dict_to_log['Train F1'] = f1_train
+                        dict_to_log['Train Mention Precision'] = pm_train
+                        dict_to_log['Train Mention Recall'] = rm_train
+                        dict_to_log['Train Mention F1'] = f1m_train
+                        dict_to_log['Train MentionProposal Precision'] = pmp_train
+                        dict_to_log['Train MentionProposal Recall'] = rmp_train
+                        dict_to_log['Train MentionProposal F1'] = f1mp_train
+                        wandb.log(dict_to_log, step=global_step)
+                    logger.info('Train f1, precision, recall: {}, Mentions f1, precision, recall: {}, Mention Proposals f1, precision, recall: {}'.format(\
+                        (f1_train, p_train, r_train), (f1m_train, pm_train, rm_train), (f1mp_train, pmp_train, rmp_train)))
 
             if args.save_epochs > 0 and (epoch + 1) % args.save_epochs == 0 or epoch + 1 == args.num_train_epochs:
                 if eval_f1 > best_f1:
