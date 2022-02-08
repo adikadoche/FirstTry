@@ -19,8 +19,12 @@ from matcher import build_matcher
 from transformer import build_transformer
 from transformers import AutoConfig, CONFIG_MAPPING
 from utils import mask_tensor
+from transformers import AdamW, get_linear_schedule_with_warmup
+import copy
 
 logger = logging.getLogger(__name__)
+def _get_clones(module, N):
+    return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
 
 
 class DETR(nn.Module):
@@ -54,6 +58,7 @@ class DETR(nn.Module):
         self.span_word_attn_projection = nn.Linear(hidden_size, 1) #
         self.span_width_embed = nn.Embedding(30, 20) #
         self.span_proj = nn.Linear(3*hidden_size+20, hidden_dim) # TODO config #
+        self.span_self_attentions = _get_clones(nn.MultiheadAttention(hidden_dim, 1), 3)
              
         # self.mention_classifier = nn.Linear(hidden_dim, 1)
 
@@ -136,6 +141,8 @@ class DETR(nn.Module):
             # mentions[i] = [(start[j], end[j]) for j in range(span_starts[i].shape[0])]
         span_emb, span_mask = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends, new_num_mentions)  # [mentions, emb']
         span_emb_proj = self.span_proj(span_emb) # [mentions, emb]
+        for i in range(len(self.span_self_attentions)):
+            span_emb_proj = self.span_self_attentions[i](span_emb_proj, span_emb_proj, span_emb_proj)[0]
         if max_mentions_len[0] == -1:
             max_mentions_len *= -1 * new_num_mentions[0]
         # mentions = [torch.cat([span_starts[i].unsqueeze(-1), span_ends[i].unsqueeze(-1)], -1) for i in range(bs)]
