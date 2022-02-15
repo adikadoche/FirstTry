@@ -57,8 +57,8 @@ class DETR(nn.Module):
 
         self.span_word_attn_projection = nn.Linear(hidden_size, 1) #
         self.span_width_embed = nn.Embedding(30, 20) #
-        self.span_proj = nn.Linear(3*hidden_size+20, hidden_dim) # TODO config #
-        self.span_self_attentions = _get_clones(nn.MultiheadAttention(hidden_dim, 1), 3)
+        self.span_proj = nn.Linear(2*hidden_size, hidden_dim) # TODO config #
+        # self.span_self_attentions = _get_clones(nn.MultiheadAttention(hidden_dim, 1), 3)
              
         # self.mention_classifier = nn.Linear(hidden_dim, 1)
 
@@ -141,8 +141,8 @@ class DETR(nn.Module):
             # mentions[i] = [(start[j], end[j]) for j in range(span_starts[i].shape[0])]
         span_emb, span_mask = self.get_span_emb(longfomer_no_pad_list, span_starts, span_ends, new_num_mentions)  # [mentions, emb']
         span_emb_proj = self.span_proj(span_emb) # [mentions, emb]
-        for i in range(len(self.span_self_attentions)):
-            span_emb_proj = self.span_self_attentions[i](span_emb_proj, span_emb_proj, span_emb_proj)[0]
+        # for i in range(len(self.span_self_attentions)):
+        #     span_emb_proj = self.span_self_attentions[i](span_emb_proj, span_emb_proj, span_emb_proj)[0]
         if max_mentions_len[0] == -1:
             max_mentions_len *= -1 * new_num_mentions[0]
         # mentions = [torch.cat([span_starts[i].unsqueeze(-1), span_ends[i].unsqueeze(-1)], -1) for i in range(bs)]
@@ -262,19 +262,19 @@ class DETR(nn.Module):
             span_end_emb = context_outputs_list[i][span_ends[i][:num_mentions[i]]]  # [k, emb]
             span_emb_construct.append(span_end_emb)
 
-            span_width = (1 + span_ends[i][:num_mentions[i]] - span_starts[i][:num_mentions[i]]).clamp(max=30)  # [k]
+            # span_width = (1 + span_ends[i][:num_mentions[i]] - span_starts[i][:num_mentions[i]]).clamp(max=30)  # [k]
 
-            # if self.config["use_features"]:
-            span_width_index = span_width - 1  # [k]
-            span_width_emb = self.span_width_embed.weight[span_width_index]
-            # TODO add dropout
-            # span_width_emb = tf.nn.dropout(span_width_emb, self.dropout)
-            span_emb_construct.append(span_width_emb)
+            # # if self.config["use_features"]:
+            # span_width_index = span_width - 1  # [k]
+            # span_width_emb = self.span_width_embed.weight[span_width_index]
+            # # TODO add dropout
+            # # span_width_emb = tf.nn.dropout(span_width_emb, self.dropout)
+            # span_emb_construct.append(span_width_emb)
 
-            # if self.config["model_heads"]:
-            mention_word_score = self.get_masked_mention_word_scores(context_outputs_list[i], span_starts[i][:num_mentions[i]], span_ends[i][:num_mentions[i]])  # [K, T]
-            head_attn_reps = torch.matmul(mention_word_score, context_outputs_list[i])  # [K, emb]
-            span_emb_construct.append(head_attn_reps)
+            # # if self.config["model_heads"]:
+            # mention_word_score = self.get_masked_mention_word_scores(context_outputs_list[i], span_starts[i][:num_mentions[i]], span_ends[i][:num_mentions[i]])  # [K, T]
+            # head_attn_reps = torch.matmul(mention_word_score, context_outputs_list[i])  # [K, emb]
+            # span_emb_construct.append(head_attn_reps)
             # span_emb_construct.append((genre[i].unsqueeze(0)/1.0).repeat(num_mentions[i], 1))
             span_emb_cat = torch.cat(span_emb_construct, 1)
             span_mask = torch.cat([torch.ones(span_emb_cat.shape[0], dtype=torch.int, device=context_outputs_list[i].device), \
