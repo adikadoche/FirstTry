@@ -156,12 +156,12 @@ class DETR(nn.Module):
         speaker_map = torch.cat([onehot_speaker[str2int[s]].unsqueeze(0) for s in doc["speaker"]], 0)[out['mentions']]
 
         span_reps = torch.cat([out['words'][out['mentions']], speaker_map], dim=-1)
-        span_emb_proj = self.span_proj(span_reps) # [mentions, emb]
+        span_emb_proj = self.span_proj(span_reps).unsqueeze(0) # [mentions, emb]
         for i in range(len(self.span_self_attentions)):
             span_emb_proj = self.span_self_attentions[i](span_emb_proj, span_emb_proj, span_emb_proj)[0]
 
         out['inputs'], out['cluster_logits'], out['coref_logits'] = \
-            self.slot_attention(span_emb_proj.unsqueeze(0))
+            self.slot_attention(span_emb_proj)
 
         # bs = input_ids.shape[0]
         # longfomer_no_pad_list, span_starts, span_ends, mentions, cost_is_mention = [[]]*bs, [[]]*bs, [[]]*bs, [[]]*bs, [[]]*bs
