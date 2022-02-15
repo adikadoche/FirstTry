@@ -70,8 +70,8 @@ class DETR(nn.Module):
 
         self.span_word_attn_projection = nn.Linear(self.bert_emb, 1) #
         self.span_width_embed = nn.Embedding(30, 20) #
-        self.span_proj = nn.Linear(2*self.bert_emb + self.args.max_num_speakers, self.hidden_dim) # TODO config #
-        # self.span_self_attentions = _get_clones(nn.MultiheadAttention(hidden_dim, 1), 3)
+        self.span_proj = nn.Linear(self.bert_emb + self.args.max_num_speakers, self.hidden_dim) # TODO config #
+        self.span_self_attentions = _get_clones(nn.MultiheadAttention(self.hidden_dim, 1), 3)
              
         # self.mention_classifier = nn.Linear(hidden_dim, 1)
 
@@ -147,16 +147,18 @@ class DETR(nn.Module):
         out['mentions_scores'], out['span_scores'], out['span_y'] = \
             self.sp.get_training_predict(doc, out['words'], out['mentions'])
         # mentions = words[out['coref_indices']]
-        start_mentions = torch.matmul(out['mentions_scores'][:,:,0].softmax(1), out['words'])
-        end_mentions = torch.matmul(out['mentions_scores'][:,:,1].softmax(1), out['words'])
+        # start_mentions = torch.matmul(out['mentions_scores'][:,:,0].softmax(1), out['words'])
+        # end_mentions = torch.matmul(out['mentions_scores'][:,:,1].softmax(1), out['words'])
 
         str2int = {s: i for i, s in enumerate(set(doc["speaker"]))}
         onehot_speaker = torch.eye(self.args.max_num_speakers, device=self.args.device)
         # word id -> speaker id
         speaker_map = torch.cat([onehot_speaker[str2int[s]].unsqueeze(0) for s in doc["speaker"]], 0)[out['mentions']]
 
-        span_reps = torch.cat([start_mentions, end_mentions, speaker_map], dim=-1)
+        span_reps = torch.cat([out['words'][out['mentions']], speaker_map], dim=-1)
         span_emb_proj = self.span_proj(span_reps) # [mentions, emb]
+        for i in range(len(self.span_self_attentions)):
+            span_emb_proj = self.span_self_attentions[i](span_emb_proj, span_emb_proj, span_emb_proj)[0]
 
         out['inputs'], out['cluster_logits'], out['coref_logits'] = \
             self.slot_attention(span_emb_proj.unsqueeze(0))

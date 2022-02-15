@@ -405,7 +405,8 @@ def eval_train(train_dataloader, eval_dataset, args, model, cluster_threshold, c
             mentions_list = outputs['mentions']
             mentions_list = mentions_list.detach().cpu().numpy()
             mentions_list = [(m, m) for m in mentions_list]
-            gold_clusters = [[[(m[0],m[1]) for m in batch["span_clusters"][j]] for j in range(len(batch["span_clusters"]))]]
+            # gold_clusters = [[[(m[0],m[1]) for m in batch["span_clusters"][j]] for j in range(len(batch["span_clusters"]))]]
+            gold_clusters = [[[(m,m) for m in batch["word_clusters"][j]] for j in range(len(batch["word_clusters"]))]]
             predicted_mentions_list = [model.sp.predict(batch, outputs['words'], [outputs['mentions'].detach().cpu().numpy()])[0]]
 
             predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), cluster_threshold, predicted_mentions_list, args.slots)
@@ -417,7 +418,7 @@ def eval_train(train_dataloader, eval_dataset, args, model, cluster_threshold, c
             mention_train_evaluator.update(predicted_mentions_e, gold_mentions_e)
             men_propos_train_evaluator.update([predicted_mentions_list], gold_mentions_e)
 
-        all_gold_mentions += predicted_mentions_list
+        all_gold_mentions += [mentions_list]
         all_input_ids += torch.masked_select(input_ids, input_mask).reshape(1, -1)    
         all_gold_clusters += gold_clusters
             
