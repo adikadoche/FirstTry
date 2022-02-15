@@ -214,15 +214,11 @@ def is_cluster_contains_linked_entities(cluster, entities_per_sentence, sentence
 def print_per_batch(example_ind, is_print, cluster_logits, coref_logits, mention_logits, coref_threshold, cluster_threshold, gold_clusters, gold_mentions, input_ids,
 count_clusters, count_mentions, count_pronouns_mentions, count_clusters_with_pronoun_mention, count_missed_mentions,
 count_missed_pronouns, count_excess_pronous, count_excess_mentions, tokenizer, slots):
-    if len(mention_logits) > 0:
-        predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach().unsqueeze(0), coref_logits.cpu().detach().unsqueeze(0), mention_logits.cpu().detach().unsqueeze(0),
-                                                        coref_threshold, cluster_threshold, [gold_mentions], slots)
-    else:
-        predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach().unsqueeze(0), coref_logits.cpu().detach().unsqueeze(0), [],
-                                                        coref_threshold, cluster_threshold, [gold_mentions], slots)
+    predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach().unsqueeze(0), coref_logits.cpu().detach().unsqueeze(0),
+                                                    cluster_threshold, [gold_mentions], slots)
 
     gold, gold_correct, pred, pred_correct, pred_to_most_similar_gold, pred_to_most_similar_golds_list, gold_is_completely_missed, gold_to_most_similar_pred = match_clusters(
-        gold_clusters, predicted_clusters[0])
+        gold_clusters, predicted_clusters)
 
     pred_is_completely_missed = [similar_pred == -1 for similar_pred in pred_to_most_similar_gold]
     real_input_ids = [t for t in input_ids.reshape(-1) if t != 1]
@@ -382,18 +378,13 @@ def error_analysis(all_cluster_logits, all_coref_logits, all_mention_logits, all
         gold_clusters = all_gold_clusters[i]
         gold_mentions = all_gold_mentions[i]
         cluster_logits, coref_logits, mention_logits = all_cluster_logits[i], all_coref_logits[i], []
-        if len(all_mention_logits) > 0:
-            mention_logits = all_mention_logits[i]
-            predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach().unsqueeze(0), coref_logits.cpu().detach().unsqueeze(0), mention_logits.cpu().detach().unsqueeze(0),
-                                                            coref_threshold, cluster_threshold, [gold_mentions], slots)
-        else:
-            predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach().unsqueeze(0), coref_logits.cpu().detach().unsqueeze(0), [],
-                                                            coref_threshold, cluster_threshold, [gold_mentions], slots)
+        predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach().unsqueeze(0), coref_logits.cpu().detach().unsqueeze(0),
+                                                        cluster_threshold, [gold_mentions], slots)
 
         num_gold_clusters_in_one_pred_cluster, num_pred_clusters_in_one_gold_cluster, \
         sum_num_split_gold_clusters, sum_num_split_pred_clusters, sum_biggest_prec_gold_cluster_in_pred_cluster, \
             sum_biggest_prec_pred_cluster_in_gold_cluster, total_gold_clusters, total_pred_clusters = clusters_error_analysis(
-            gold_clusters, predicted_clusters[0])
+            gold_clusters, predicted_clusters)
         total_sub_clusters_gold += total_gold_clusters
         total_sub_clusters_pred += total_pred_clusters
         total_num_gold_clusters_in_one_pred_cluster += num_gold_clusters_in_one_pred_cluster

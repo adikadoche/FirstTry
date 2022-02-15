@@ -15,23 +15,10 @@ def parse_args():
         help="Model type selected in the list: " + ", ".join(MODEL_TYPES),
     )
     parser.add_argument(
-        "--model_name_or_path",
-        default="allenai/longformer-base-4096",
-        type=str,
-        help="Path to pretrained model or model identifier from huggingface.co/models",
-    )
-    parser.add_argument(
         "--run_name",
         default="",
         type=str,
         help="run name for w&b",
-    )
-    parser.add_argument("--tokenizer_name",
-                        default="allenai/longformer-base-4096",
-                        type=str,
-                        help="Pretrained tokenizer name or path if not the same as model_name")
-    parser.add_argument(
-        "--config_name", default="allenai/longformer-base-4096", type=str, help="Pretrained config name or path if not the same as model_name"
     )
     parser.add_argument(
         "--output_dir",
@@ -63,6 +50,8 @@ def parse_args():
                         type=str,
                         help="Where do you want to store the pre-trained models downloaded from s3")
     parser.add_argument("--max_seq_length", default=4096, type=int)
+    parser.add_argument("--bert_model", type=str, choices=['allenai/longformer-large-4096', 'allenai/longformer-base-4096', \
+        'SpanBERT/spanbert-large-cased', 'roberta-large'], default='allenai/longformer-large-4096')
 
     parser.add_argument("--do_profile", action="store_true", help="Whether to run profiling.")
     parser.add_argument("--is_debug", action="store_true", help="Whether to run profiling.")

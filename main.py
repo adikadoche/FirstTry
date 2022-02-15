@@ -98,10 +98,10 @@ def main():
 
     model.to(args.device)
 
-    eval_dataset, eval_sampler, eval_loader, args.eval_batch_size = get_data_objects(args, args.predict_file, False)
+    eval_dataset, eval_avg_span, eval_loader, args.eval_batch_size = get_data_objects(args, args.predict_file, False)
 
     if args.do_train:
-        train_dataset, train_sampler, train_loader, args.train_batch_size = get_data_objects(args, args.train_file, True)
+        train_dataset, train_avg_span, train_loader, args.train_batch_size = get_data_objects(args, args.train_file, True)
         # if args.do_profile:
         #     profiler = cProfile.Profile()
         #     profiler.enable()
@@ -120,7 +120,7 @@ def main():
         #         f.write(result)
         #         f.close()
         # else:
-        global_step = train(args, model, criterion, train_loader, eval_loader, eval_dataset)
+        global_step = train(args, model, criterion, train_loader, eval_loader, eval_dataset, train_avg_span, eval_avg_span)
     make_evaluation(model, criterion, eval_loader, eval_dataset, args) #TODO: report_eval won't work in here because of missing parameters
 
 # Press the green button in the gutter to run the script.

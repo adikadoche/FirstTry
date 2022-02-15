@@ -1,53 +1,152 @@
-import json
+import torch
 import random
+import jsonlines
+import os
+import pickle
 
 import numpy as np
 from torch.utils.data import Dataset
 from transformers import AutoTokenizer
-from consts import TOKENS_PAD, SPEAKER_PAD, GENRES, SPEAKER_END_TOKEN, SPEAKER_START_TOKEN
+from consts import TOKENS_PAD, SPEAKER_PAD, GENRES, SPEAKER_END_TOKEN, SPEAKER_START_TOKEN, TOKENIZER_FILTERS, TOKENIZER_MAPS, BERT_WINDOW_SIZE
 
 
 class OntonotesDataset(Dataset):
 
     def __init__(self, filepath, is_training, batch_size, args) -> None:
         super().__init__()
-        with open(filepath) as f:
-            lines = f.readlines()
-            self.examples = [json.loads(jsonline) for jsonline in lines]
-        if is_training and args.limit_trainset >= 0:
-            self.examples = self.examples[:args.limit_trainset]
-        if args.use_gold_mentions:
-            for i, e in reversed(list(enumerate(self.examples))):
-                if len(e['clusters']) == 0:
-                    del self.examples[i]
         self.is_training = is_training
         self.args = args
         self.batch_size = batch_size
-        self.subtoken_maps = {}
-        if args.tokenizer_name:
-            self.tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name, cache_dir=args.cache_dir)
-        elif args.model_name_or_path:
-            self.tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, cache_dir=args.cache_dir)
+        if args.bert_model:
+            self.tokenizer = AutoTokenizer.from_pretrained(args.bert_model, cache_dir=args.cache_dir)
         else:
             raise ValueError(
                 "You are instantiating a new tokenizer from scratch. This is not supported, but you can do it from another script, save it,"
-                "and load it from here, using --tokenizer_name"
+                "and load it from here, using --bert_model"
             )
+
+        cache_filename = filepath + ".pickle"
+        if os.path.exists(cache_filename):
+            with open(cache_filename, mode="rb") as cache_f:
+                self.examples = pickle.load(cache_f)
+        else:
+            self.examples = self._tokenize_docs(filepath)
+            with open(cache_filename, mode="wb") as cache_f:
+                pickle.dump(self.examples, cache_f)
+        if is_training and args.limit_trainset >= 0:
+            self.examples = self.examples[:args.limit_trainset]
+        # if args.use_gold_mentions:
+        #     for i, e in reversed(list(enumerate(self.examples))):
+        #         if len(e['clusters']) == 0:
+        #             del self.examples[i]
+        # self.subtoken_maps = {}
+        self.avg_spans = sum(len(doc["head2span"]) for doc in self.examples) / len(self.examples)
 
         if is_training:
             for i, e in reversed(list(enumerate(self.examples))):
-                if e['doc_key'] == 'nw/wsj/20/wsj_2013_0':
+                if e['document_id'] == 'nw/wsj/20/wsj_2013_0':
                     self.examples.pop(i)
         # self.tensorized_examples = self.get_all_tensorized_examples()
 
+    def _tokenize_docs(self, path: str):
+        print(f"Tokenizing documents at {path}...", flush=True)
+        out = []
+        filter_func = TOKENIZER_FILTERS.get(self.args.bert_model,
+                                            lambda _: True)
+        token_map = TOKENIZER_MAPS.get(self.args.bert_model, {})
+        with jsonlines.open(path, mode="r") as data_f:
+            for doc in data_f:
+                doc["span_clusters"] = [[tuple(mention) for mention in cluster]
+                                   for cluster in doc["span_clusters"]]
+                word2subword = []
+                subwords = []
+                word_id = []
+                for i, word in enumerate(doc["cased_words"]):
+                    tokenized_word = (token_map[word]
+                                      if word in token_map
+                                      else self.tokenizer.tokenize(word))
+                    tokenized_word = list(filter(filter_func, tokenized_word))
+                    word2subword.append((len(subwords), len(subwords) + len(tokenized_word)))
+                    subwords.extend(tokenized_word)
+                    word_id.extend([i] * len(tokenized_word))
+                doc["word2subword"] = word2subword
+                doc["subwords"] = subwords
+                doc["word_id"] = word_id
+                out.append(doc)
+        print("Tokenization OK", flush=True)
+        return out
 
     def __len__(self):
         return len(self.examples)
 
     def __getitem__(self, index):
         example = self.examples[index]
-        tensorized_example = self.tensorize_example(example, self.is_training)
+        tensorized_example = self._tensorize_example(example)
         return tensorized_example
+
+    def _tensorize_example(self, example):
+        subwords_batches = self.get_subwords_batches(example)
+
+        special_tokens = np.array([self.tokenizer.cls_token_id,
+                                   self.tokenizer.sep_token_id,
+                                   self.tokenizer.pad_token_id])
+        subword_mask = ~(np.isin(subwords_batches, special_tokens))
+
+        # subwords_batches_tensor = torch.tensor(subwords_batches,
+        #                                        device=self.args.device,
+        #                                        dtype=torch.long)
+        # subword_mask_tensor = torch.tensor(subword_mask,
+        #                                    device=self.args.device)
+
+        # Obtain bert output for selected batches only
+        attention_mask = (subwords_batches != self.tokenizer.pad_token_id)
+
+        copied_example = example.copy()
+        copied_example['attention_mask'] = attention_mask
+        copied_example['subwords_batches'] = subwords_batches
+        copied_example['subword_mask'] = subword_mask
+        
+        return copied_example
+
+    def get_subwords_batches(self, example) -> np.ndarray:
+        """
+        Turns a list of subwords to a list of lists of subword indices
+        of max length == batch_size (or shorter, as batch boundaries
+        should match sentence boundaries). Each batch is enclosed in cls and sep
+        special tokens.
+
+        Returns:
+            batches of bert tokens [n_batches, batch_size]
+        """
+        batch_size = BERT_WINDOW_SIZE[self.args.bert_model] - 2  # to save space for CLS and SEP
+
+        subwords = example["subwords"]
+        subwords_batches = []
+        start, end = 0, 0
+
+        while end < len(subwords):
+            end = min(end + batch_size, len(subwords))
+
+            # Move back till we hit a sentence end
+            if end < len(subwords):
+                sent_id = example["sent_id"][example["word_id"][end]]
+                while end and example["sent_id"][example["word_id"][end - 1]] == sent_id:
+                    end -= 1
+
+            length = end - start
+            batch = [self.tokenizer.cls_token] + subwords[start:end] + [self.tokenizer.sep_token]
+            batch_ids = [-1] + list(range(start, end)) + [-1]
+
+            # Padding to desired length
+            # -1 means the token is a special token
+            batch += [self.tokenizer.pad_token] * (batch_size - length)
+            batch_ids += [-1] * (batch_size - length)
+
+            subwords_batches.append([self.tokenizer.convert_tokens_to_ids(token)
+                                    for token in batch])
+            start += length
+
+        return np.array(subwords_batches)
 
     def get_all_tensorized_examples(self):
         tensorized_examples = []

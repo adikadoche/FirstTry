@@ -21,3 +21,23 @@ PRONOUNS = {'i', 'me', 'my', 'mine', 'myself',
             'this', 'these', 'that', 'those'}
             
 GENRES =  {g: i+1 for i, g in enumerate(["bc", "bn", "mz", "nw", "pt", "tc", "wb"])}
+
+
+# Filters out unwanted tokens produced by the tokenizer
+TOKENIZER_FILTERS = {
+    "albert-xxlarge-v2": (lambda token: token != "▁"),  # U+2581, not just "_"
+    "albert-large-v2": (lambda token: token != "▁"),
+}
+
+# Maps some words to tokens directly, without a tokenizer
+TOKENIZER_MAPS = {
+    "roberta-large": {".": ["."], ",": [","], "!": ["!"], "?": ["?"],
+                      ":":[":"], ";":[";"], "'s": ["'s"]}
+}
+
+BERT_WINDOW_SIZE = {
+    "allenai/longformer-large-4096" : 4096,
+    "allenai/longformer-base-4096" : 4096,
+    "SpanBERT/spanbert-large-cased" : 512,
+    "roberta-large" : 512,
+}

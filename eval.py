@@ -19,9 +19,9 @@ logger = logging.getLogger(__name__)
 
 
 
-def report_eval(args, eval_dataloader, eval_dataset, global_step, model, criterion, coref_threshold, cluster_threshold, thresh_delta=0.02):
+def report_eval(args, eval_dataloader, eval_dataset, global_step, model, criterion, coref_threshold, cluster_threshold, thresh_delta=0.02, eval_avg_span=55.5):
     if args.local_rank == -1:  # Only evaluate when single GPU otherwise metrics may not average well
-        results = evaluate(args, eval_dataloader, eval_dataset, model, criterion, str(global_step), coref_threshold, cluster_threshold, thresh_delta)
+        results = evaluate(args, eval_dataloader, eval_dataset, model, criterion, str(global_step), coref_threshold, cluster_threshold, thresh_delta, eval_avg_span)
         if not args.is_debug:
             dict_to_log = {}
             for key, value in results.items():
@@ -102,7 +102,7 @@ def make_evaluation(model, criterion, eval_loader, eval_dataset, args):
                     wandb.log(dict_to_log, step=global_step)
                 return True
 
-def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", coref_threshold=0.5, cluster_threshold=0.5, thresh_delta=0.02):  #TODO: use threshold when resuming from checkpoint rather than searching it
+def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", coref_threshold=0.5, cluster_threshold=0.5, thresh_delta=0.02, eval_avg_span=55.5):  #TODO: use threshold when resuming from checkpoint rather than searching it
     if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]:
         os.makedirs(args.output_dir)
 
@@ -122,50 +122,59 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", c
     all_mention_logits_cuda = []
     all_gold_clusters = []
     all_mentions = []
+    def tensorize(array, device, type=None):
+        if type is not None:
+            return torch.tensor(array, device=device, dtype=type)
+        else:
+            return torch.tensor(array, device=device)
 
     for batch in tqdm(eval_dataloader, desc="Evaluating Validation"):
         model.eval()
+        input_ids = tensorize(batch['subwords_batches'], args.device, type=torch.long)
+        input_mask = tensorize(batch['attention_mask'], args.device)
+        subword_mask_tensor = tensorize(batch['subword_mask'], args.device)
 
-        sum_text_len = [sum(tl) for tl in batch['text_len']]
-        gold_clusters = batch['clusters']
+        # sum_text_len = [sum(tl) for tl in batch['text_len']]
+        # gold_clusters = batch['clusters']
 
 
-        gold_mentions_list = []
-        # if len(gold_clusters) > 0: #TODO:
-        gold_mentions_list = [list(set([tuple(m) for c in gc for m in c])) for gc in gold_clusters]
-        if args.add_junk:
-            gold_mentions_list, gold_mentions_vector = create_junk_gold_mentions(gold_mentions_list, sum_text_len, args.device)
-        else:
-            gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=args.device) for gm in gold_mentions_list]
+        # gold_mentions_list = []
+        # # if len(gold_clusters) > 0: #TODO:
+        # gold_mentions_list = [list(set([tuple(m) for c in gc for m in c])) for gc in gold_clusters]
+        # if args.add_junk:
+        #     gold_mentions_list, gold_mentions_vector = create_junk_gold_mentions(gold_mentions_list, sum_text_len, args.device)
+        # else:
+        #     gold_mentions_vector = [torch.ones(len(gm), dtype=torch.float, device=args.device) for gm in gold_mentions_list]
         
-        gold_matrix = create_gold_matrix(args.device, sum_text_len, args.num_queries, gold_clusters, gold_mentions_list)
+        # gold_matrix = create_gold_matrix(args.device, sum_text_len, args.num_queries, gold_clusters, gold_mentions_list)
 
-        input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = tensor_and_remove_empty(batch, gold_mentions_list, args)
-        if len(input_ids) == 0:
-            continue
-        if input_ids.shape[0] > 1:
-            max_mentions = torch.tensor(gold_mentions.shape[1], device=gold_mentions.device) if args.use_gold_mentions \
-                else torch.ones_like(sum_text_len.max()) * int((args.topk_lambda//0.1+1) * len(gold_mentions_list))
-        else:
-            max_mentions = -1 * torch.ones_like(sum_text_len.max())
-        max_mentions = max_mentions.repeat([input_ids.shape[0], 1])
+        # input_ids, input_mask, sum_text_len, gold_mentions, num_mentions = tensor_and_remove_empty(batch, gold_mentions_list, args)
+        # if len(input_ids) == 0:
+        #     continue
+        # if input_ids.shape[0] > 1:
+        #     max_mentions = torch.tensor(gold_mentions.shape[1], device=gold_mentions.device) if args.use_gold_mentions \
+        #         else torch.ones_like(sum_text_len.max()) * int((args.topk_lambda//0.1+1) * len(gold_mentions_list))
+        # else:
+        #     max_mentions = -1 * torch.ones_like(sum_text_len.max())
+        # max_mentions = max_mentions.repeat([input_ids.shape[0], 1])
             
         with torch.no_grad():
-            # orig_input_dim = input_ids.shape
-            # input_ids = torch.reshape(input_ids, (1, -1))
-            # input_mask = torch.reshape(input_mask, (1, -1))
-            outputs = model(input_ids, max_mentions, input_mask, gold_mentions, num_mentions)
-            cluster_logits, coref_logits, mention_logits, mentions_list = \
-                outputs['cluster_logits'], outputs['coref_logits'].clone(), outputs['mention_logits'], outputs['mentions']
+            outputs = model(batch, input_ids, input_mask, subword_mask_tensor)
+            cluster_logits, coref_logits = \
+                outputs['cluster_logits'], outputs['coref_logits'].clone()
+            mentions_list = outputs['mentions']
             mentions_list = mentions_list.detach().cpu().numpy()
-            mentions_list = [[(m[0], m[1]) for m in mentions_list[j] if m[0] != -1 and m[1] != -1] for j in range(mentions_list.shape[0])]
+            mentions_list = [(m, m) for m in mentions_list]
+            gold_mentions_list = [(m, m) for j in range(len(batch['word_clusters'])) for m in batch["word_clusters"][j]]
 
             gold_matrix, outputs['coref_logits'], dist_matrix, goldgold_dist_mask, junkgold_dist_mask = \
                 create_target_and_predict_matrix( \
-                gold_mentions_list, mentions_list, gold_matrix, outputs['coref_logits'], outputs['inputs'])
+                gold_mentions_list, mentions_list, outputs, batch, args.num_queries)
 
-            loss, loss_parts = criterion(outputs, {'clusters':gold_matrix, 'mentions':gold_mentions_vector}, \
+            loss, loss_parts = criterion(outputs, {'clusters':gold_matrix}, \
                 dist_matrix, goldgold_dist_mask, junkgold_dist_mask)
+            loss_parts['loss_span'][0] = loss_parts['loss_span'][0] / eval_avg_span / 2
+            loss[0] += loss_parts['loss_span'][0]
             losses.append(loss.mean().detach().cpu())
             for key in loss_parts.keys():
                 if key in losses_parts.keys() and len(losses_parts[key]) > 0:
@@ -173,14 +182,13 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", c
                 else:
                     losses_parts[key] = loss_parts[key]
             batch_sizes.append(loss.shape[0]) 
+            predicted_mentions_list = model.sp.predict(batch, outputs['words'], [outputs['mentions'].detach().cpu().numpy()])[0]
 
-        all_mentions += mentions_list
+        all_mentions += [predicted_mentions_list]
         all_input_ids += input_ids    
-        all_gold_clusters += gold_clusters
+        gold_clusters = [[(m[0],m[1]) for m in batch["span_clusters"][j]] for j in range(len(batch["span_clusters"]))]
+        all_gold_clusters += [gold_clusters]
 
-        if args.add_junk:
-            all_mention_logits_cuda += [ml.detach().clone() for ml in mention_logits]
-            all_mention_logits_cpu += [ml.detach().cpu() for ml in mention_logits]
         all_cluster_logits_cuda += [cl.detach().clone() for cl in cluster_logits]
         all_coref_logits_cuda += [cl.detach().clone() for cl in coref_logits]
         all_cluster_logits_cpu += [cl.detach().cpu() for cl in cluster_logits]

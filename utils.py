@@ -203,145 +203,145 @@ def create_gold_matrix(device, doc_len, num_queries, gold_clusters, gold_mention
 
     return gold_per_token_batch
 
-def create_target_and_predict_matrix(gold_mentions_list, mentions_list, gold_matrix, coref_logits, inputs):
-    target_matrix_list = []
-    new_coref_logits = []
-    dist_matrix = []
-    goldgold_dist_mask = []
-    junkgold_dist_mask = []
-    for b in range(len(gold_matrix)):
-        junk_mentions_indices = torch.tensor([i for i, m in enumerate(mentions_list[b]) if m not in gold_mentions_list[b] and m != (0,0)], dtype=torch.long, device=gold_matrix[0].device)
-        common_mentions = [m for m in mentions_list[b] if m in gold_mentions_list[b] and m != (0,0)]
+def create_target_and_predict_matrix(gold_mentions_list, mentions_list, outputs, doc, num_queries):
+    gold_clusters = [[(m, m) for m in doc["word_clusters"][j]] for j in range(len(doc['word_clusters']))]
+    gold_per_token = torch.zeros(num_queries, len(gold_mentions_list), device=outputs['coref_logits'].device)
+    if num_queries < len(gold_clusters):
+        logger.info("in utils, exceeds num_queries with length {}".format(len(gold_clusters)))
+    for cluster_id, cluster in enumerate(gold_clusters):
+        if cluster_id >= num_queries:
+            continue
+        for mention in cluster:
+            mention_index = gold_mentions_list.index(tuple(mention))
+            assert mention_index >= 0
+            gold_per_token[cluster_id, mention_index] = 1
+    gold_matrix = gold_per_token
 
-        common_predict_ind = torch.zeros(len(common_mentions), dtype=torch.long, device=gold_matrix[0].device)
-        common_gold_ind = torch.zeros(len(gold_mentions_list[b])+1, device=gold_matrix[0].device)
 
-        ind = 0
-        for i in range(len(gold_mentions_list[b])):
-            if gold_mentions_list[b][i] in common_mentions:
-                for j in range(len(mentions_list[b])):
-                    if mentions_list[b][j] == gold_mentions_list[b][i]:
-                        common_predict_ind[ind] = j
-                        common_gold_ind[i] = 1
-                        ind += 1
+    junk_mentions_indices = torch.tensor([i for i, m in enumerate(mentions_list) if m not in gold_mentions_list], \
+        dtype=torch.long, device=gold_matrix.device)
+    common_mentions = [m for m in mentions_list if m in gold_mentions_list]
 
-        target_matrix = torch.cat([gold_matrix[b], torch.zeros(gold_matrix[b].shape[0], 1, device=gold_matrix[b].device)], 1)
-        target_matrix_list.append(target_matrix)
+    common_predict_ind = torch.zeros(len(common_mentions), dtype=torch.long, device=gold_matrix.device)
+    common_gold_ind = torch.zeros(len(gold_mentions_list)+1, device=gold_matrix.device)
 
-        cur_coref_logits = torch.zeros(gold_matrix[b].shape[1]+1, coref_logits[b].shape[0], device=gold_matrix[b].device)
-        cur_coref_logits[common_gold_ind == 1] = torch.index_select(coref_logits[b].transpose(0,1), 0, common_predict_ind)         
-        cur_coref_logits[-1] = torch.sum(coref_logits[b][:, junk_mentions_indices], 1)
-        new_coref_logits.append(cur_coref_logits.transpose(0,1).unsqueeze(0))
+    ind = 0
+    for i in range(len(gold_mentions_list)):
+        if gold_mentions_list[i] in common_mentions:
+            for j in range(len(mentions_list)):
+                if mentions_list[j] == gold_mentions_list[i]:
+                    common_predict_ind[ind] = j
+                    common_gold_ind[i] = 1
+                    ind += 1
 
-        ordered_inputs = inputs[b, torch.cat([common_predict_ind, junk_mentions_indices],0)].unsqueeze(0)
-        common_gold_matrix = gold_matrix[b][:,common_gold_ind[:-1]==1]
+    target_matrix = torch.cat([gold_matrix, torch.zeros(gold_matrix.shape[0], 1, device=gold_matrix.device)], 1)
 
-        indices = torch.arange(0,len(common_mentions),device=target_matrix.device).reshape(1,-1).repeat(torch.sum(torch.sum(target_matrix,-1)>0),1)
-        indices = torch.cat([torch.arange(0,indices.shape[0],device=target_matrix.device).reshape(-1,1,1).repeat(1,indices.shape[1],1), indices.unsqueeze(-1)],-1)
-        x=torch.masked_select(indices[:,:,0], common_gold_matrix[:torch.sum(torch.sum(target_matrix,-1)>0)]==1)
-        y=torch.masked_select(indices[:,:,1], common_gold_matrix[:torch.sum(torch.sum(target_matrix,-1)>0)]==1)
+    cur_coref_logits = torch.zeros(gold_matrix.shape[1]+1, outputs['coref_logits'][0].shape[0], device=gold_matrix.device)
+    cur_coref_logits[common_gold_ind == 1] = torch.index_select(outputs['coref_logits'][0].transpose(0,1), 0, common_predict_ind)         
+    cur_coref_logits[-1] = torch.sum(outputs['coref_logits'][0][:, junk_mentions_indices], 1)
+    cur_coref_logits = cur_coref_logits.transpose(0,1)
 
-        ordered_inputs[:,:len(y)] = ordered_inputs[:,y]
-        ordered_inputs = F.normalize(ordered_inputs, dim=-1)
-        cur_dist_matrix = torch.bmm(ordered_inputs, ordered_inputs.transpose(1,2)).squeeze()
-        cur_dist_matrix = 1 - (cur_dist_matrix + 1) / 2
-        dist_matrix.append(cur_dist_matrix)
+    ordered_inputs = outputs['inputs'][0][torch.cat([common_predict_ind, junk_mentions_indices],0)].unsqueeze(0)
+    common_gold_matrix = gold_matrix[:,common_gold_ind[:-1]==1]
 
-        cur_dist_mask = torch.zeros_like(cur_dist_matrix)
-        cur_dist_mask[:len(x),:len(y)] = common_gold_matrix[x][:,y]
-        cur_junkgold_mask = 1 - cur_dist_mask.clone()
-        is_junk_mention = torch.arange(0,cur_dist_matrix.shape[0],device=inputs.device) >= len(common_mentions)
-        cur_junkgold_mask = cur_junkgold_mask * \
-            ~(is_junk_mention.reshape(-1,1).repeat(1,cur_dist_matrix.shape[1]) * \
-                is_junk_mention.reshape(1,-1).repeat(cur_dist_matrix.shape[0],1))
-        goldgold_dist_mask.append(cur_dist_mask)
-        junkgold_dist_mask.append(cur_junkgold_mask)
-    return target_matrix_list, torch.cat(new_coref_logits, 0), dist_matrix, goldgold_dist_mask, junkgold_dist_mask
+    indices = torch.arange(0,len(common_mentions),device=target_matrix.device).reshape(1,-1).repeat(torch.sum(torch.sum(target_matrix,-1)>0),1)
+    indices = torch.cat([torch.arange(0,indices.shape[0],device=target_matrix.device).reshape(-1,1,1).repeat(1,indices.shape[1],1), indices.unsqueeze(-1)],-1)
+    x=torch.masked_select(indices[:,:,0], common_gold_matrix[:torch.sum(torch.sum(target_matrix,-1)>0)]==1)
+    y=torch.masked_select(indices[:,:,1], common_gold_matrix[:torch.sum(torch.sum(target_matrix,-1)>0)]==1)
+
+    ordered_inputs[:,:len(y)] = ordered_inputs[:,y]
+    ordered_inputs = F.normalize(ordered_inputs, dim=-1)
+    cur_dist_matrix = torch.bmm(ordered_inputs, ordered_inputs.transpose(1,2)).squeeze()
+    cur_dist_matrix = 1 - (cur_dist_matrix + 1) / 2
+
+    cur_dist_mask = torch.zeros_like(cur_dist_matrix)
+    cur_dist_mask[:len(x),:len(y)] = common_gold_matrix[x][:,y]
+    cur_junkgold_mask = 1 - cur_dist_mask.clone()
+    is_junk_mention = torch.arange(0,cur_dist_matrix.shape[0],device=gold_matrix.device) >= len(common_mentions)
+    cur_junkgold_mask = cur_junkgold_mask * \
+        ~(is_junk_mention.reshape(-1,1).repeat(1,cur_dist_matrix.shape[1]) * \
+            is_junk_mention.reshape(1,-1).repeat(cur_dist_matrix.shape[0],1))
+    return target_matrix, cur_coref_logits, cur_dist_matrix, cur_dist_mask, cur_junkgold_mask
 
 def make_mentions_from_clustered_tokens(self, coref_logits):
     pass
 
-def calc_predicted_clusters(cluster_logits, coref_logits, mention_logits, coref_threshold, cluster_threshold, gold_mentions: List, slots=False):
+def calc_predicted_clusters(cluster_logits, coref_logits, cluster_threshold, gold_mentions: List, slots=False):
     # when we are using gold mentions, we get coref_logits at the size of the gold mentions ([bs, clusters, gold_mentions]) (because we know they are mentions, what we are predicting is the clustering)
     
     bs = cluster_logits.shape[0]
 
-    if gold_mentions is None:
-        cluster_bools = cluster_logits.numpy() >= cluster_threshold #TODO: should the cluster and coref share the same threshold?
-        coref_bools = coref_logits.numpy() >= coref_threshold
+    # if gold_mentions is None:
+    #     cluster_bools = cluster_logits.numpy() >= cluster_threshold #TODO: should the cluster and coref share the same threshold?
+    #     coref_bools = coref_logits.numpy() >= coref_threshold
 
-        true_coref_indices = np.asarray(np.where(coref_bools)).T
-        cluster_id_to_tokens = {k: list(v) for k, v in itertools.groupby(sorted(true_coref_indices, key=lambda x: x[-1]), lambda x: x[-1])}
+    #     true_coref_indices = np.asarray(np.where(coref_bools)).T
+    #     cluster_id_to_tokens = {k: list(v) for k, v in itertools.groupby(sorted(true_coref_indices, key=lambda x: x[-1]), lambda x: x[-1])}
 
-        bsz, num_of_clusters, _ = coref_bools.shape
-        clusters = []
-        for i in range(0, num_of_clusters):
-            current_cluster = []
+    #     bsz, num_of_clusters, _ = coref_bools.shape
+    #     clusters = []
+    #     for i in range(0, num_of_clusters):
+    #         current_cluster = []
 
-            first_token_index = None
-            for token_index, token_logit in enumerate(coref_bools[0, i]):
-                if token_logit:
-                    if first_token_index is None:
-                        first_token_index = token_index
-                elif first_token_index is not None:
-                    current_cluster.append((first_token_index, token_index-1))
-                    first_token_index = None
+    #         first_token_index = None
+    #         for token_index, token_logit in enumerate(coref_bools[0, i]):
+    #             if token_logit:
+    #                 if first_token_index is None:
+    #                     first_token_index = token_index
+    #             elif first_token_index is not None:
+    #                 current_cluster.append((first_token_index, token_index-1))
+    #                 first_token_index = None
 
-            if first_token_index is not None:
-                current_cluster.append((first_token_index, token_index))
+    #         if first_token_index is not None:
+    #             current_cluster.append((first_token_index, token_index))
 
-            if len(current_cluster) > 0:
-                clusters.append(current_cluster)
-    else:
-        cluster_bools = cluster_logits.squeeze(-1).numpy() >= cluster_threshold #TODO: should the cluster and coref share the same threshold?
-        clusters = []
-        for i in range(bs):
-            cur_cluster_bool = cluster_bools[i]
-            cur_coref_logits = coref_logits[i]
-            cur_cluster_bool = np.tile(cur_cluster_bool.reshape([1, -1, 1]), (1, 1, cur_coref_logits.shape[-1]))
-            cluster_mention_mask = cur_cluster_bool
+    #         if len(current_cluster) > 0:
+    #             clusters.append(current_cluster)
+    # else:
+    cluster_bools = cluster_logits.squeeze(-1).numpy() >= cluster_threshold #TODO: should the cluster and coref share the same threshold?
+    # for i in range(bs):
+    cur_cluster_bool = cluster_bools[0]
+    cur_coref_logits = coref_logits[0]
+    cur_cluster_bool = np.tile(cur_cluster_bool.reshape([-1, 1]), (1, cur_coref_logits.shape[-1]))
+    cluster_mention_mask = cur_cluster_bool
 
-            if slots:
-                max_bools = torch.max(cur_coref_logits,0)[1].reshape([-1,1]).repeat([1, cur_coref_logits.shape[0]]) == \
-                    torch.arange(cur_coref_logits.shape[0], device=cur_coref_logits.device).reshape([1, -1]).repeat(cur_coref_logits.shape[1], 1)
-                max_bools = max_bools.transpose(0, 1).numpy()
-                coref_bools = cluster_mention_mask & max_bools
-                coref_logits_after_cluster_bool = np.multiply(coref_bools, cur_coref_logits)
-                max_coref_score, max_coref_cluster_ind = coref_logits_after_cluster_bool[0].max(-2) #[gold_mention] choosing the index of the best cluster per gold mention
-                coref_bools = max_coref_score > 0
-            else:
-                if len(mention_logits) > 0:
-                    cur_mention_bools = mention_logits[i].squeeze(-1).numpy() >= cluster_threshold
-                    cur_mention_bools = np.tile(cur_mention_bools.reshape([1, 1, -1]), (1, cur_cluster_bool.shape[1], 1))
-                    cluster_mention_mask = cur_mention_bools & cur_cluster_bool
-                cluster_mention_mask = cluster_mention_mask.astype(int)
+    # if slots:
+    max_bools = torch.max(cur_coref_logits,0)[1].reshape([-1,1]).repeat([1, cur_coref_logits.shape[0]]) == \
+        torch.arange(cur_coref_logits.shape[0], device=cur_coref_logits.device).reshape([1, -1]).repeat(cur_coref_logits.shape[1], 1)
+    max_bools = max_bools.transpose(0, 1).numpy()
+    coref_bools = cluster_mention_mask & max_bools
+    coref_logits_after_cluster_bool = np.multiply(coref_bools, cur_coref_logits)
+    max_coref_score, max_coref_cluster_ind = coref_logits_after_cluster_bool.max(0) #[gold_mention] choosing the index of the best cluster per gold mention
+    coref_bools = max_coref_score > 0
+    # else:
+    #     if len(mention_logits) > 0:
+    #         cur_mention_bools = mention_logits[i].squeeze(-1).numpy() >= cluster_threshold
+    #         cur_mention_bools = np.tile(cur_mention_bools.reshape([1, 1, -1]), (1, cur_cluster_bool.shape[1], 1))
+    #         cluster_mention_mask = cur_mention_bools & cur_cluster_bool
+    #     cluster_mention_mask = cluster_mention_mask.astype(int)
 
-                coref_logits_after_cluster_bool = np.multiply(cluster_mention_mask, cur_coref_logits.unsqueeze(0))
-                max_coref_score, max_coref_cluster_ind = coref_logits_after_cluster_bool[0].max(-2) #[gold_mention] choosing the index of the best cluster per gold mention
-                coref_bools = max_coref_score >= coref_threshold #[gold_mention] is the chosen cluster's score passes the threshold
+    #     coref_logits_after_cluster_bool = np.multiply(cluster_mention_mask, cur_coref_logits.unsqueeze(0))
+    #     max_coref_score, max_coref_cluster_ind = coref_logits_after_cluster_bool[0].max(-2) #[gold_mention] choosing the index of the best cluster per gold mention
+    #     coref_bools = max_coref_score >= coref_threshold #[gold_mention] is the chosen cluster's score passes the threshold
 
-            true_coref_indices = np.where(coref_bools)[0] #indices of the gold mention that their clusters pass threshold
-            max_coref_cluster_ind_filtered = max_coref_cluster_ind[coref_bools] #index of the best clusters per gold mention, if it passes the threshold
+    true_coref_indices = np.where(coref_bools)[0] #indices of the gold mention that their clusters pass threshold
+    max_coref_cluster_ind_filtered = max_coref_cluster_ind[coref_bools] #index of the best clusters per gold mention, if it passes the threshold
 
-            cluster_id_to_tokens = {k: list(v) for k, v in itertools.groupby(sorted(list(zip(true_coref_indices, max_coref_cluster_ind_filtered.numpy())), key=lambda x: x[-1]), lambda x: x[-1])}
+    cluster_id_to_tokens = {k: list(v) for k, v in itertools.groupby(sorted(list(zip(true_coref_indices, max_coref_cluster_ind_filtered.numpy())), key=lambda x: x[-1]), lambda x: x[-1])}
 
-            b_clusters = []
+    b_clusters = []
 
-            for gold_mentions_inds in cluster_id_to_tokens.values():
-                current_cluster = []
-                for mention_id in gold_mentions_inds:
-                    try:
-                        current_cluster.append(gold_mentions[i][mention_id[0]])
-                    except:
-                        print('here')
-                if len(current_cluster) > 1:
-                    b_clusters.append(current_cluster)
-            if len(b_clusters) > 0:
-                clusters.append(b_clusters)
+    for gold_mentions_inds in cluster_id_to_tokens.values():
+        current_cluster = []
+        for mention_id in gold_mentions_inds:
+            try:
+                current_cluster.append(gold_mentions[0][mention_id[0]])
+            except:
+                print('here')
+        if len(current_cluster) > 1:
+            b_clusters.append(current_cluster)
 
-    if clusters == []:
-        return [[]]
-    return clusters
+    return b_clusters
 
 def calc_best_avg_f1(all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, \
     all_mentions, coref_threshold, cluster_threshold, thresh_delta, slots):
@@ -350,25 +350,20 @@ def calc_best_avg_f1(all_cluster_logits, all_coref_logits, all_mention_logits, a
     best_coref_threshold = None
     best_cluster_threshold = None
     if thresh_delta == 0.2:
-        thresh_coref_start = 0.05
-        thresh_coref_end = 1
         thresh_cluster_start = 0.05
         thresh_cluster_end = 1
     else:
-        thresh_coref_start = max(0.01, coref_threshold - 2*thresh_delta)
-        thresh_coref_end = min(1, coref_threshold + 2.5*thresh_delta)
         thresh_cluster_start = max(0.01, cluster_threshold - 2*thresh_delta)
         thresh_cluster_end = min(1, cluster_threshold + 2.5*thresh_delta)
-    for coref_threshold in tqdm(np.arange(thresh_coref_start, thresh_coref_end, thresh_delta), desc='Searching for best threshold'):
-        for cluster_threshold in np.arange(thresh_cluster_start, thresh_cluster_end, thresh_delta):
-            p, r, f1, pm, rm, f1m, pmp, rmp, f1mp, metrics = evaluate_by_threshold(\
-                all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, \
-                    coref_threshold, cluster_threshold, all_mentions, slots)
-            if f1 > best[-1]:
-                best = pmp, rmp, f1mp, pm, rm, f1m, p,r,f1
-                best_metrics = metrics
-                best_coref_threshold = coref_threshold
-                best_cluster_threshold = cluster_threshold
+    for cluster_threshold in np.arange(thresh_cluster_start, thresh_cluster_end, thresh_delta):
+        p, r, f1, pm, rm, f1m, pmp, rmp, f1mp, metrics = evaluate_by_threshold(\
+            all_cluster_logits, all_coref_logits, all_mention_logits, all_gold_clusters, \
+                coref_threshold, cluster_threshold, all_mentions, slots)
+        if f1 > best[-1]:
+            best = pmp, rmp, f1mp, pm, rm, f1m, p,r,f1
+            best_metrics = metrics
+            best_coref_threshold = coref_threshold
+            best_cluster_threshold = cluster_threshold
 
     return best + (best_coref_threshold, best_cluster_threshold,) + (best_metrics,)
 
@@ -379,11 +374,7 @@ def evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_mention_logi
     metrics = [0] * 5
     for i, (cluster_logits, coref_logits, gold_clusters, mentions) in enumerate(
             zip(all_cluster_logits, all_coref_logits, all_gold_clusters, all_mentions)):
-        if len(all_mention_logits) > 0:
-            mention_logits = all_mention_logits[i]
-            predicted_clusters = calc_predicted_clusters(cluster_logits.unsqueeze(0), coref_logits.unsqueeze(0), mention_logits.unsqueeze(0), coref_threshold, cluster_threshold, [mentions], slots)
-        else:
-            predicted_clusters = calc_predicted_clusters(cluster_logits.unsqueeze(0), coref_logits.unsqueeze(0), [], coref_threshold, cluster_threshold, [mentions], slots)
+        predicted_clusters = calc_predicted_clusters(cluster_logits.unsqueeze(0), coref_logits.unsqueeze(0), cluster_threshold, [mentions], slots)
         # prec_correct_mentions, prec_gold, prec_junk, prec_correct_gold_clusters, prec_correct_predict_clusters = \
         #     get_more_metrics(predicted_clusters, gold_clusters, gold_mentions)  #TODO: predicted_clusters[0]?
         # metrics[0] += prec_correct_mentions / len(all_cluster_logits)
@@ -391,11 +382,11 @@ def evaluate_by_threshold(all_cluster_logits, all_coref_logits, all_mention_logi
         # metrics[2] += prec_junk / len(all_cluster_logits)
         # metrics[3] += prec_correct_gold_clusters / len(all_cluster_logits)
         # metrics[4] += prec_correct_predict_clusters / len(all_cluster_logits)
-        cluster_evaluator.update(predicted_clusters, [gold_clusters])
+        cluster_evaluator.update([predicted_clusters], [gold_clusters])
         gold_mentions_e = [[[]]] if [gold_clusters] == [[]] or [gold_clusters] == [()] else \
             [[[m for d in c for m in d]] for c in [gold_clusters]]
-        predicted_mentions_e = [[[]]] if predicted_clusters == [[]] or predicted_clusters == [()] else [
-            [[m for d in c for m in d]] for c in predicted_clusters]
+        predicted_mentions_e = [[[]]] if [predicted_clusters] == [[]] or [predicted_clusters] == [()] else [
+            [[m for d in c for m in d]] for c in [predicted_clusters]]
         mention_evaluator.update(predicted_mentions_e, gold_mentions_e)
         men_propos_evaluator.update([[mentions]], gold_mentions_e)
     p, r, f1 = cluster_evaluator.get_prf()

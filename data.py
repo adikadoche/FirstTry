@@ -144,11 +144,13 @@ def get_dataset(args, tokenizer, evaluate=False):
 
 def collate_fn(batch):
     batch_concat = {}
-    for key in batch[0].keys():
-        batch_concat[key] = [0] * len(batch)
-        for i in range(len(batch)):
-            batch_concat[key][i] = batch[i][key]
-    return batch_concat
+    if len(batch) > 1:
+        for key in batch[0].keys():
+            batch_concat[key] = [0] * len(batch)
+            for i in range(len(batch)):
+                batch_concat[key][i] = batch[i][key]
+        return batch_concat
+    return batch[0]
 
 def get_data_objects(args, data_file_path, is_training):
     if is_training:
@@ -171,7 +173,7 @@ def get_data_objects(args, data_file_path, is_training):
                              pin_memory=not args.no_cuda, collate_fn=collate_fn, num_workers=args.num_workers,
                              worker_init_fn=lambda worker_id: np.random.seed(torch.initial_seed() % 2**32))
 
-    return dataset, sampler, loader, batch_size
+    return dataset, dataset.avg_spans, loader, batch_size
 
 def flatten_list_of_lists(lst):
     return [elem for sublst in lst for elem in sublst]
