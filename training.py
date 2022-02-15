@@ -419,7 +419,7 @@ def eval_train(train_dataloader, eval_dataset, args, model, cluster_threshold, c
             men_propos_train_evaluator.update([predicted_mentions_list], gold_mentions_e)
 
         all_gold_mentions += [mentions_list]
-        all_input_ids += torch.masked_select(input_ids, input_mask).reshape(1, -1)    
+        all_input_ids += [batch['cased_words']]
         all_gold_clusters += gold_clusters
             
         all_cluster_logits_cuda += [cl.detach().clone() for cl in cluster_logits]

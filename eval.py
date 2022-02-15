@@ -185,7 +185,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", c
             predicted_mentions_list = model.sp.predict(batch, outputs['words'], [outputs['mentions'].detach().cpu().numpy()])[0]
 
         all_mentions += [mentions_list]
-        all_input_ids += torch.masked_select(input_ids, input_mask).reshape(1, -1)
+        all_input_ids += [batch['cased_words']]
         # gold_clusters = [[(m[0],m[1]) for m in batch["span_clusters"][j]] for j in range(len(batch["span_clusters"]))]
         gold_clusters = [[(m,m) for m in batch["word_clusters"][j]] for j in range(len(batch["word_clusters"]))]
         all_gold_clusters += [gold_clusters]
