@@ -252,9 +252,9 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset, train
     start_time = time.time()
     for epoch in train_iterator:
         epoch_iterator = tqdm(train_loader, desc="Iteration in Epoch {}".format(epoch), disable=args.local_rank not in [-1, 0], leave=False)
-        # global_step = train_one_epoch(   
-        #     model, criterion, epoch_iterator, optimizer, scaler, args, skip_steps, recent_losses, recent_losses_parts, global_step,
-        #     lr_scheduler, train_avg_span)
+        global_step = train_one_epoch(   
+            model, criterion, epoch_iterator, optimizer, scaler, args, skip_steps, recent_losses, recent_losses_parts, global_step,
+            lr_scheduler, train_avg_span)
 
         if args.lr_drop_interval == 'epoch':
             lr_scheduler.step()  # Update learning rate schedule
