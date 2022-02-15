@@ -49,7 +49,7 @@ class DETR(nn.Module):
         self.bert_emb = self.bert.config.hidden_size
         self.we = WordEncoder(self.bert_emb).to(args.device)
         self.rough_scorer = RoughScorer(self.bert.config, args.topk_lambda).to(args.device)
-        self.sp = SpanPredictor(self.bert_emb).to(args.device)
+        # self.sp = SpanPredictor(self.bert_emb).to(args.device)
 
         self.num_queries = num_queries
         # self.transformer = transformer
@@ -144,8 +144,8 @@ class DETR(nn.Module):
         out['words'] = self.we(doc, input_emb[subword_mask_tensor])
         top_rough_scores, out['mentions'], out['cost_is_mention'] = \
             self.rough_scorer(out['words'], doc['word_clusters'])
-        out['mentions_scores'], out['span_scores'], out['span_y'] = \
-            self.sp.get_training_predict(doc, out['words'], out['mentions'])
+        # out['span_scores'], out['span_y'] = \
+        #     self.sp.get_training_data(doc, out['words'])
         # mentions = words[out['coref_indices']]
         # start_mentions = torch.matmul(out['mentions_scores'][:,:,0].softmax(1), out['words'])
         # end_mentions = torch.matmul(out['mentions_scores'][:,:,1].softmax(1), out['words'])
@@ -368,7 +368,8 @@ class MatchingLoss(nn.Module):
 
         targets_clusters = targets['clusters']
         costs = []
-        costs_parts = {'loss_is_cluster':[], 'loss_is_mention':[], 'loss_coref':[], 'loss_junk':[], 'loss_span':[]}
+        # costs_parts = {'loss_is_cluster':[], 'loss_is_mention':[], 'loss_coref':[], 'loss_junk':[], 'loss_span':[]}
+        costs_parts = {'loss_is_cluster':[], 'loss_is_mention':[], 'loss_coref':[], 'loss_junk':[]}
         # Compute the average number of target boxes accross all nodes, for normalization purposes
         coref_logits = outputs["coref_logits"]  # [num_queries+num_junk_queries, tokens]
         cluster_logits = outputs["cluster_logits"].squeeze() # [num_queries+num_junk_queries]
@@ -435,17 +436,17 @@ class MatchingLoss(nn.Module):
             cost_junk += F.binary_cross_entropy(log_outcluster_dists, torch.zeros_like(log_outcluster_dists), \
                 reduction='sum') / junkgold_denom
 
-        if outputs['span_y']:
-            cost_span = (torch.nn.CrossEntropyLoss(reduction="sum")(outputs['span_scores'][:, :, 0], outputs['span_y'][0])
-                        + torch.nn.CrossEntropyLoss(reduction="sum")(outputs['span_scores'][:, :, 1], outputs['span_y'][1]))
-        else:
-            cost_span = torch.tensor(0., device=coref_logits.device)
+        # if outputs['span_y']:
+        #     cost_span = (torch.nn.CrossEntropyLoss(reduction="sum")(outputs['span_scores'][:, :, 0], outputs['span_y'][0])
+        #                 + torch.nn.CrossEntropyLoss(reduction="sum")(outputs['span_scores'][:, :, 1], outputs['span_y'][1]))
+        # else:
+        #     cost_span = torch.tensor(0., device=coref_logits.device)
 
         costs_parts['loss_is_cluster'].append(self.cost_is_cluster * cost_is_cluster.detach().cpu())
         costs_parts['loss_is_mention'].append(self.cost_is_mention * cost_is_mention.detach().cpu())
         costs_parts['loss_coref'].append(self.cost_coref * cost_coref.detach().cpu())
         costs_parts['loss_junk'].append(self.cost_coref * cost_junk.detach().cpu())
-        costs_parts['loss_span'].append(cost_span.detach().cpu())
+        # costs_parts['loss_span'].append(cost_span.detach().cpu())
         total_cost = self.cost_coref * cost_coref + self.cost_is_cluster * cost_is_cluster + \
             self.cost_is_mention * cost_is_mention + self.cost_coref * cost_junk
         costs.append(total_cost)

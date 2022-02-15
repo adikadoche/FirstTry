@@ -26,7 +26,7 @@
                 "--model_type",
                 "longformer",
                 "--bert_model",
-                "allenai/longformer-base-4096",
+                "roberta-large",
                 // "--train_file", "/home/gamir/datasets/e2e-coref/train.english.jsonlines",
                 // "--predict_file", "/home/gamir/datasets/e2e-coref/dev.english.jsonlines",
                 "--train_file", "/home/gamir/adiz/datasets/wl-ontonotes/english_train_head.jsonlines",

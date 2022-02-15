@@ -73,8 +73,8 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
         loss, loss_parts = criterion(outputs, {'clusters':gold_matrix}, \
             dist_matrix, goldgold_dist_mask, junkgold_dist_mask)
-        loss_parts['loss_span'][0] = loss_parts['loss_span'][0] / train_avg_span / 2
-        loss[0] += loss_parts['loss_span'][0]
+        # loss_parts['loss_span'][0] = loss_parts['loss_span'][0] / train_avg_span / 2
+        # loss[0] += loss_parts['loss_span'][0]
 
         if args.n_gpu > 1 or args.train_batch_size > 1:
             loss = loss.mean()  # mean() to average on multi-gpu parallel training
@@ -404,21 +404,21 @@ def eval_train(train_dataloader, eval_dataset, args, model, cluster_threshold, c
                 outputs['cluster_logits'], outputs['coref_logits'].clone()
             mentions_list = outputs['mentions']
             mentions_list = mentions_list.detach().cpu().numpy()
-            mentions_list = [(m, m) for m in mentions_list]
+            mentions_list = [[(m, m) for m in mentions_list]]
             # gold_clusters = [[[(m[0],m[1]) for m in batch["span_clusters"][j]] for j in range(len(batch["span_clusters"]))]]
             gold_clusters = [[[(m,m) for m in batch["word_clusters"][j]] for j in range(len(batch["word_clusters"]))]]
-            predicted_mentions_list = [model.sp.predict(batch, outputs['words'], [outputs['mentions'].detach().cpu().numpy()])[0]]
+            # predicted_mentions_list = [model.sp.predict(batch, outputs['words'], [outputs['mentions'].detach().cpu().numpy()])[0]]
 
-            predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), cluster_threshold, predicted_mentions_list, args.slots)
+            predicted_clusters = calc_predicted_clusters(cluster_logits.cpu().detach(), coref_logits.cpu().detach(), cluster_threshold, mentions_list, args.slots)
             cluster_train_evaluator.update([predicted_clusters], gold_clusters)
             gold_mentions_e = [[[]]] if gold_clusters == [[]] or gold_clusters == [()] else \
                 [[[m for d in c for m in d]] for c in gold_clusters]
             predicted_mentions_e = [[[]]] if [predicted_clusters] == [[]] or [predicted_clusters] == [()] else [
                 [[m for d in c for m in d]] for c in [predicted_clusters]]
             mention_train_evaluator.update(predicted_mentions_e, gold_mentions_e)
-            men_propos_train_evaluator.update([predicted_mentions_list], gold_mentions_e)
+            men_propos_train_evaluator.update([mentions_list], gold_mentions_e)
 
-        all_gold_mentions += [mentions_list]
+        all_gold_mentions += mentions_list
         all_input_ids += [batch['cased_words']]
         all_gold_clusters += gold_clusters
             

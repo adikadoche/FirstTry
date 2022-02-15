@@ -173,8 +173,8 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", c
 
             loss, loss_parts = criterion(outputs, {'clusters':gold_matrix}, \
                 dist_matrix, goldgold_dist_mask, junkgold_dist_mask)
-            loss_parts['loss_span'][0] = loss_parts['loss_span'][0] / eval_avg_span / 2
-            loss[0] += loss_parts['loss_span'][0]
+            # loss_parts['loss_span'][0] = loss_parts['loss_span'][0] / eval_avg_span / 2
+            # loss[0] += loss_parts['loss_span'][0]
             losses.append(loss.mean().detach().cpu())
             for key in loss_parts.keys():
                 if key in losses_parts.keys() and len(losses_parts[key]) > 0:
@@ -182,7 +182,7 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", c
                 else:
                     losses_parts[key] = loss_parts[key]
             batch_sizes.append(loss.shape[0]) 
-            predicted_mentions_list = model.sp.predict(batch, outputs['words'], [outputs['mentions'].detach().cpu().numpy()])[0]
+            # predicted_mentions_list = model.sp.predict(batch, outputs['words'], [outputs['mentions'].detach().cpu().numpy()])[0]
 
         all_mentions += [mentions_list]
         all_input_ids += [batch['cased_words']]
