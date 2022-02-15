@@ -252,9 +252,9 @@ def train(args, model, criterion, train_loader, eval_loader, eval_dataset, train
     start_time = time.time()
     for epoch in train_iterator:
         epoch_iterator = tqdm(train_loader, desc="Iteration in Epoch {}".format(epoch), disable=args.local_rank not in [-1, 0], leave=False)
-        global_step = train_one_epoch(   
-            model, criterion, epoch_iterator, optimizer, scaler, args, skip_steps, recent_losses, recent_losses_parts, global_step,
-            lr_scheduler, train_avg_span)
+        # global_step = train_one_epoch(   
+        #     model, criterion, epoch_iterator, optimizer, scaler, args, skip_steps, recent_losses, recent_losses_parts, global_step,
+        #     lr_scheduler, train_avg_span)
 
         if args.lr_drop_interval == 'epoch':
             lr_scheduler.step()  # Update learning rate schedule
@@ -418,7 +418,7 @@ def eval_train(train_dataloader, eval_dataset, args, model, cluster_threshold, c
             men_propos_train_evaluator.update([predicted_mentions_list], gold_mentions_e)
 
         all_gold_mentions += predicted_mentions_list
-        all_input_ids += input_ids    
+        all_input_ids += torch.masked_select(input_ids, input_mask).reshape(1, -1)    
         all_gold_clusters += gold_clusters
             
         all_cluster_logits_cuda += [cl.detach().clone() for cl in cluster_logits]
