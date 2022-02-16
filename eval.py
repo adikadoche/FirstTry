@@ -159,13 +159,13 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", c
         # max_mentions = max_mentions.repeat([input_ids.shape[0], 1])
             
         with torch.no_grad():
-            outputs = model(batch, input_ids, input_mask, subword_mask_tensor)
+            outputs = model(batch, input_ids, input_mask)
             cluster_logits, coref_logits = \
                 outputs['cluster_logits'], outputs['coref_logits'].clone()
             mentions_list = outputs['mentions']
             mentions_list = mentions_list.detach().cpu().numpy()
-            mentions_list = [(m, m) for m in mentions_list]
-            gold_mentions_list = [(m, m) for j in range(len(batch['word_clusters'])) for m in batch["word_clusters"][j]]
+            mentions_list = [(m[0], m[1]) for m in mentions_list]
+            gold_mentions_list = [(m[0], m[1]) for j in range(len(batch['span_clusters'])) for m in batch["span_clusters"][j]]
 
             gold_matrix, outputs['coref_logits'], dist_matrix, goldgold_dist_mask, junkgold_dist_mask = \
                 create_target_and_predict_matrix( \
@@ -185,9 +185,10 @@ def evaluate(args, eval_dataloader, eval_dataset, model, criterion, prefix="", c
             # predicted_mentions_list = model.sp.predict(batch, outputs['words'], [outputs['mentions'].detach().cpu().numpy()])[0]
 
         all_mentions += [mentions_list]
-        all_input_ids += [batch['cased_words']]
-        # gold_clusters = [[(m[0],m[1]) for m in batch["span_clusters"][j]] for j in range(len(batch["span_clusters"]))]
-        gold_clusters = [[(m,m) for m in batch["word_clusters"][j]] for j in range(len(batch["word_clusters"]))]
+        # all_input_ids += [batch['cased_words']]
+        all_input_ids += torch.masked_select(input_ids, input_mask).reshape(1,-1)
+        gold_clusters = [[(m[0],m[1]) for m in batch["span_clusters"][j]] for j in range(len(batch["span_clusters"]))]
+        # gold_clusters = [[(m,m) for m in batch["word_clusters"][j]] for j in range(len(batch["word_clusters"]))]
         all_gold_clusters += [gold_clusters]
 
         all_cluster_logits_cuda += [cl.detach().clone() for cl in cluster_logits]

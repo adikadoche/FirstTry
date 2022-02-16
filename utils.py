@@ -204,7 +204,7 @@ def create_gold_matrix(device, doc_len, num_queries, gold_clusters, gold_mention
     return gold_per_token_batch
 
 def create_target_and_predict_matrix(gold_mentions_list, mentions_list, outputs, doc, num_queries):
-    gold_clusters = [[(m, m) for m in doc["word_clusters"][j]] for j in range(len(doc['word_clusters']))]
+    gold_clusters = [[(m[0], m[1]) for m in doc["span_clusters"][j]] for j in range(len(doc['span_clusters']))]
     gold_per_token = torch.zeros(num_queries, len(gold_mentions_list), device=outputs['coref_logits'].device)
     if num_queries < len(gold_clusters):
         logger.info("in utils, exceeds num_queries with length {}".format(len(gold_clusters)))
