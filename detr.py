@@ -657,5 +657,5 @@ class MenPropose(BertPreTrainedModel):
  
         cost_is_mention = cost_gold + F.binary_cross_entropy(junk_probs, torch.zeros_like(junk_probs))
        
-        return (mention_start_ids, mention_end_ids, span_mask, sequence_output, cost_is_mention.unsqueeze(0))
+        return (mention_start_ids, mention_end_ids, span_mask, sequence_output, cost_is_mention)
  
